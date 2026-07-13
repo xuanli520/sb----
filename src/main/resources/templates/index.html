@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" xmlns:th="https://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Spring Boot training project with a rotating ASCII globe">
+    <title>HelloWorld | Spring Boot Training</title>
+    <link rel="stylesheet" th:href="@{/css/site.css}">
+</head>
+<body>
+<main class="app-shell">
+    <header class="topline" aria-label="Project identity">
+        <div class="brand">
+            <span class="brand-dot" aria-hidden="true"></span>
+            <span>SPRING BOOT</span>
+        </div>
+        <p class="rendered-at" th:text="|SERVER RENDERED ${renderedAt}|">SERVER RENDERED</p>
+    </header>
+
+    <section class="world-stage" aria-labelledby="hello-title">
+        <div class="globe-frame" role="img" aria-label="An animated rotating ASCII globe">
+            <pre class="ascii-globe" id="asciiGlobe" th:text="${initialGlobe}">ASCII globe</pre>
+        </div>
+        <p class="stage-index">PRACTICE PROJECT / 01</p>
+        <h1 id="hello-title" th:text="${greeting}">HelloWorld</h1>
+        <p class="subtitle">A server-rendered Spring Boot experience</p>
+    </section>
+
+    <footer class="baseline">
+        <span>CN.EDU.TRAINING</span>
+        <span class="baseline-status"><i aria-hidden="true"></i> ONLINE</span>
+    </footer>
+</main>
+
+<script defer th:src="@{/js/globe.js}"></script>
+</body>
+</html>

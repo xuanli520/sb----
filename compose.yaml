@@ -1,0 +1,13 @@
+services:
+  globe-hello:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: globe-hello:local
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      TZ: Asia/Shanghai
+    init: true
+    restart: unless-stopped
