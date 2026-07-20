@@ -1,13 +1,65 @@
 services:
-  globe-hello:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    image: globe-hello:local
-    ports:
-      - "${APP_PORT:-8080}:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: docker
       TZ: Asia/Shanghai
-    init: true
+      NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/novel_platform?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: novel
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        API_PROXY_TARGET: http://backend:8080
+        AUTH__JWT_SECRET: ${AUTH__JWT_SECRET:?AUTH__JWT_SECRET is required}
+        NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
+    environment:
+      API_PROXY_TARGET: http://backend:8080
+      AUTH__JWT_SECRET: ${AUTH__JWT_SECRET:?AUTH__JWT_SECRET is required}
+      NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
+      NOVEL_DEV_LOGIN_ENABLED: "false"
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: novel_platform
+      MYSQL_USER: novel
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  mysql-data:
+  redis-data:

@@ -1,65 +1,36 @@
-# Globe Hello
+# 阅界小说平台
 
-A Docker Compose based Spring Boot training project. It serves one server-rendered
-Thymeleaf page with a rotating ASCII globe and a HelloWorld message. The Java
-backend generates each character frame and sends it to the page through Server-Sent
-Events (SSE). No CDN, Canvas, WebGL, separate frontend project, or runtime external
-asset is required.
+小说平台采用一个 Spring Boot 领域后端和一个基于 `xuanli520/douyin_dashboard_frontend` 指定提交的 Next.js 前端。用户端、作者端和运营端共享版本化 REST 契约；浏览器经 Next BFF 调用受保护 API，后端不接受浏览器伪造的身份头。
 
-## Run
+## 本地开发
 
 ```bash
-MAVEN_OPTS=-Djava.net.preferIPv4Stack=true mvn --batch-mode --no-transfer-progress package
+mvn --batch-mode --no-transfer-progress test
+cd apps/web && npm ci --ignore-scripts
+JWT_SECRET=development-only-test-secret API_PROXY_TARGET=http://localhost:8080 NOVEL_INTERNAL_API_KEY=local-novel-internal-key npm run dev
+```
+
+在另一个终端启动 API：
+
+```bash
+NOVEL_INTERNAL_API_KEY=local-novel-internal-key mvn -pl apps/backend spring-boot:run
+```
+
+打开 `http://localhost:3000`。开发模式提供清晰标识的读者、作者、站长演示会话；生产模式默认禁用该入口，必须接入真实认证供应商。
+
+## 验证
+
+```bash
+mvn --batch-mode --no-transfer-progress test
+cd apps/web && npm run lint && npm run typecheck && npm run test && npm run build && npm run test:e2e
+```
+
+## 容器
+
+复制 `.env.example` 到本地 `.env` 并替换全部秘密值，然后运行：
+
+```bash
 docker compose up --build
 ```
 
-The JAR is assembled by the configured WSL Java/Maven toolchain and Docker
-Compose is the application runtime. This keeps the runtime image small and
-avoids dependency downloads while the container starts.
-
-Open `http://localhost:8080`, then stop the service with:
-
-```bash
-docker compose down
-```
-
-Use another host port when 8080 is busy:
-
-```bash
-APP_PORT=8081 docker compose up --build
-```
-
-## Local development
-
-The WSL toolchain is OpenJDK 21 and Maven 3.9.9. A global shell profile is
-installed at `/etc/profile.d/java-maven.sh` so a new login shell receives
-`JAVA_HOME`, `MAVEN_HOME`, and `M2_HOME` automatically.
-
-The project includes a credential-free Maven mirror in `.mvn/settings.xml`; Maven
-loads it automatically through `.mvn/maven.config` for repeatable dependency
-downloads in this WSL environment.
-
-```bash
-mvn test
-mvn spring-boot:run
-```
-
-## Project layout
-
-```text
-src/main/java/       Spring Boot application and MVC controllers
-src/main/resources/  Thymeleaf template, CSS, and locally served JavaScript
-Dockerfile           Multi-stage production image build
-compose.yaml         Standard runtime entry point
-```
-
-## Visual references and licensing
-
-The ASCII globe renderer was independently implemented after researching the
-mathematical terminal-animation approach in C and the classic rotating-planet
-visual treatment in Xplanet. No third-party source code, image, or graphics
-library is included. The renderer uses original procedural continent, cloud,
-lighting, and latitude/longitude rules to compose ASCII characters server-side.
-
-- https://www.a1k0n.net/2011/07/20/donut-math.html
-- https://xplanet.sourceforge.io/
+`compose.yaml` 提供 Next.js、后端、MySQL 和 Redis 的目标拓扑。当前开发演示数据仍驻留内存；迁移至 MySQL/Flyway 是生产接入前的必要后续工作，详见 `docs/`。

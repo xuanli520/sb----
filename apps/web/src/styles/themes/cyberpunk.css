@@ -1,0 +1,490 @@
+/**
+ * 赛博朋克主题 - 彩蛋主题
+ * 保留原有的科技感赛博朋克风格
+ * 深色背景 + 霓虹光效
+ * 支持暗/亮模式切换
+ */
+
+:root[data-theme="cyberpunk"] {
+  /* Font Family - Monospace accent via global mono variable */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  
+  /* Base Colors - Dark Mode Default */
+  --background: #030213;
+  --foreground: #f8fafc;
+
+  /* Card */
+  --card: #0a101f;
+  --card-foreground: #f8fafc;
+
+  /* Popover */
+  --popover: #0a101f;
+  --popover-foreground: #f8fafc;
+
+  /* Brand Colors - Mint & Peach */
+  --primary: #C8FDE6;
+  --primary-foreground: #0f172a;
+
+  --secondary: #F4D5BD;
+  --secondary-foreground: #0f172a;
+
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+
+  --accent: #1e293b;
+  --accent-foreground: #f8fafc;
+
+  --destructive: #7f1d1d;
+  --destructive-foreground: #f8fafc;
+
+  --border: #1e293b;
+  --input: #1e293b;
+  --input-background: #0a101f;
+  --switch-background: #334155;
+
+  --ring: #C8FDE6;
+
+  --radius: 0.625rem;
+
+  /* Charts */
+  --chart-1: #C8FDE6;
+  --chart-2: #F4D5BD;
+  --chart-3: #2dd4bf;
+  --chart-4: #fb923c;
+  --chart-5: #475569;
+
+  /* Sidebar - Cyberpunk Style */
+  --sidebar: #0a101f;
+  --sidebar-foreground: #f8fafc;
+  --sidebar-primary: #C8FDE6;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #C8FDE6;
+
+  /* Status Colors - Dark Mode */
+  --success: #34d399;
+  --success-glow: rgba(52, 211, 153, 0.6);
+  --warning: #fbbf24;
+  --warning-glow: rgba(251, 191, 36, 0.6);
+  --danger: #f87171;
+  --danger-glow: rgba(248, 113, 113, 0.6);
+  --primary-high: #22d3ee;
+
+  /* Cyberpunk Specific */
+  --cyber-bg: #020617;
+  --cyber-glass: rgba(2, 6, 23, 0.6);
+  --cyber-border: rgba(6, 182, 212, 0.3);
+  --cyber-text: #94a3b8;
+  --cyber-glow: #22d3ee;
+  --glow-primary: rgba(200, 253, 230, 0.5);
+  --glow-secondary: rgba(244, 213, 189, 0.5);
+}
+
+/* Light mode override for cyberpunk */
+:root[data-theme="cyberpunk"]:not(.dark) {
+  --background: #ffffff;
+  --foreground: #0f172a;
+
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  --primary: #C8FDE6;
+  --primary-foreground: #0f172a;
+
+  --secondary: #F4D5BD;
+  --secondary-foreground: #0f172a;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+
+  --accent: #F4D5BD;
+  --accent-foreground: #0f172a;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --input-background: #f8fafc;
+
+  --ring: #C8FDE6;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #C8FDE6;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #0f172a;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #C8FDE6;
+
+  /* Status Colors - Light Mode */
+  --success: #10b981;
+  --success-glow: rgba(16, 185, 129, 0.5);
+  --warning: #f59e0b;
+  --warning-glow: rgba(245, 158, 11, 0.5);
+  --danger: #ef4444;
+  --danger-glow: rgba(239, 68, 68, 0.5);
+  --primary-high: #22d3ee;
+
+  /* Cyberpunk Specific - Light */
+  --cyber-bg: #F8FAFC;
+  --cyber-glass: rgba(255, 255, 255, 0.9);
+  --cyber-border: rgba(226, 232, 240, 0.8);
+  --cyber-text: #334155;
+  --cyber-glow: rgba(59, 130, 246, 0.5);
+}
+
+/* Cyberpunk Theme Transitions */
+/* Exclude sidebar elements so their own transitions (width, opacity) are not overridden */
+:root[data-theme="cyberpunk"] *:not(.toaster):not(.toaster *):not(.sidebar-cyberpunk):not(.sidebar-cyberpunk *) {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 300ms;
+}
+
+:root[data-theme="cyberpunk"] [data-radix-popper-content-wrapper] {
+  transition: none;
+}
+
+/* Cyberpunk Sidebar Specific Styles */
+/* These transitions are explicitly defined here and NOT overridden by the global rule above */
+:root[data-theme="cyberpunk"] .sidebar-cyberpunk {
+  width: 80px;
+  transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root[data-theme="cyberpunk"] .sidebar-cyberpunk:hover {
+  width: 240px;
+}
+
+:root[data-theme="cyberpunk"] .sidebar-cyberpunk .menu-text {
+  opacity: 0;
+  transition: opacity 280ms ease;
+  pointer-events: none;
+}
+
+:root[data-theme="cyberpunk"] .sidebar-cyberpunk:hover .menu-text {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+:root[data-theme="cyberpunk"],
+:root[data-theme="cyberpunk"] * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.28) transparent;
+}
+
+:root[data-theme="cyberpunk"]::-webkit-scrollbar,
+:root[data-theme="cyberpunk"] *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+:root[data-theme="cyberpunk"]::-webkit-scrollbar-track,
+:root[data-theme="cyberpunk"] *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-theme="cyberpunk"]::-webkit-scrollbar-thumb,
+:root[data-theme="cyberpunk"] *::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.24);
+  border-radius: 9999px;
+}
+
+:root[data-theme="cyberpunk"]::-webkit-scrollbar-thumb:hover,
+:root[data-theme="cyberpunk"] *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 23, 42, 0.38);
+}
+
+:root[data-theme="cyberpunk"]::-webkit-scrollbar-button,
+:root[data-theme="cyberpunk"] *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+:root[data-theme="cyberpunk"].dark,
+:root[data-theme="cyberpunk"].dark * {
+  scrollbar-color: rgba(200, 253, 230, 0.45) transparent;
+}
+
+:root[data-theme="cyberpunk"].dark::-webkit-scrollbar-thumb,
+:root[data-theme="cyberpunk"].dark *::-webkit-scrollbar-thumb {
+  background-color: rgba(200, 253, 230, 0.3);
+}
+
+:root[data-theme="cyberpunk"].dark::-webkit-scrollbar-thumb:hover,
+:root[data-theme="cyberpunk"].dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(200, 253, 230, 0.52);
+}
+
+/* Cyberpunk Header Styles */
+:root[data-theme="cyberpunk"] .header-cyberpunk .page-title,
+:root[data-theme="cyberpunk"] .header-cyberpunk .sys-online-text {
+  background: linear-gradient(to right, #0f766e, #0e7490, #9a3412);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 8px rgba(14, 116, 144, 0.22);
+  font-family: var(--font-mono);
+}
+
+:root[data-theme="cyberpunk"].dark .header-cyberpunk .page-title,
+:root[data-theme="cyberpunk"].dark .header-cyberpunk .sys-online-text {
+  background: linear-gradient(to right, #c8fde6, #67e8f9, #fdba74);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 14px rgba(34, 211, 238, 0.35);
+  font-family: var(--font-mono);
+}
+
+:root[data-theme="cyberpunk"] .header-cyberpunk .sys-online-tag {
+  background: rgba(15, 118, 110, 0.08);
+  border: 1px solid rgba(14, 116, 144, 0.32);
+}
+
+:root[data-theme="cyberpunk"].dark .header-cyberpunk .sys-online-tag {
+  background: rgba(200, 253, 230, 0.1);
+  border: 1px solid rgba(200, 253, 230, 0.35);
+}
+
+/* Cyberpunk Glow Effects */
+:root[data-theme="cyberpunk"] .glow-primary {
+  box-shadow: 0 0 20px rgba(200, 253, 230, 0.5);
+}
+
+:root[data-theme="cyberpunk"] .glow-secondary {
+  box-shadow: 0 0 20px rgba(244, 213, 189, 0.5);
+}
+
+/* Cyberpunk Button Styles */
+:root[data-theme="cyberpunk"] .btn-cyberpunk {
+  border-radius: 0.625rem;
+  position: relative;
+  overflow: hidden;
+}
+
+:root[data-theme="cyberpunk"] .btn-cyberpunk::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(200, 253, 230, 0.1), rgba(244, 213, 189, 0.1));
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+:root[data-theme="cyberpunk"] .btn-cyberpunk:hover::before {
+  opacity: 1;
+}
+
+/* Cyberpunk Background Effects */
+:root[data-theme="cyberpunk"] .bg-cyber-gradient {
+  background: radial-gradient(ellipse at top, rgba(26, 44, 78, 0.6), transparent 50%),
+              radial-gradient(ellipse at bottom right, rgba(200, 253, 230, 0.1), transparent 40%);
+}
+
+:root[data-theme="cyberpunk"] .bg-glow-top {
+  background: radial-gradient(circle at 50% -20%, rgba(200, 253, 230, 0.15), transparent 50%);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch {
+  width: 100%;
+  background-color: #12314d;
+  border-radius: var(--radius);
+  padding: 0.875rem 1rem;
+  box-shadow: 0 10px 25px -18px rgba(15, 23, 42, 0.95);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-list {
+  gap: 0.5rem;
+  overflow-y: hidden;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 10.75rem;
+  height: 2.75rem;
+  padding: 0 0.875rem;
+  justify-content: space-between;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: rgba(248, 250, 252, 0.08);
+  color: #e2e8f0;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-item:hover {
+  border-color: rgba(186, 230, 253, 0.8);
+  background-color: rgba(248, 250, 252, 0.15);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-item.filter-bar-tab-active {
+  border-color: transparent;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-score {
+  min-width: 2.25rem;
+  text-align: center;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-select {
+  height: 2.5rem;
+  padding: 0 2.2rem 0 0.875rem;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: rgba(248, 250, 252, 0.08);
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #e2e8f0 50%), linear-gradient(135deg, #e2e8f0 50%, transparent 50%);
+  background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-select:hover {
+  border-color: rgba(186, 230, 253, 0.8);
+  background-color: rgba(248, 250, 252, 0.15);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-primary-switch-select:focus-visible {
+  outline: none;
+  border-color: rgba(186, 230, 253, 0.9);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.24);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-container {
+  width: 100%;
+  background-color: #12314d;
+  border-radius: var(--radius);
+  padding: 0.875rem 1rem;
+  box-shadow: 0 10px 25px -18px rgba(15, 23, 42, 0.95);
+  border-color: transparent;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item {
+  min-width: 14rem;
+  justify-content: space-between;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: rgba(248, 250, 252, 0.08);
+  color: #e2e8f0;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item:hover {
+  border-color: rgba(186, 230, 253, 0.8);
+  background-color: rgba(248, 250, 252, 0.15);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item.filter-bar-tab-active {
+  border-color: transparent;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item.filter-bar-tab-risk.filter-bar-tab-active {
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.35);
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch,
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-container {
+  background-color: #0f2135;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-item,
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item {
+  border-color: rgba(71, 85, 105, 0.7);
+  background-color: rgba(15, 23, 42, 0.56);
+  color: #cbd5e1;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-select {
+  border-color: rgba(71, 85, 105, 0.7);
+  background-color: rgba(15, 23, 42, 0.56);
+  color: #cbd5e1;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-select:hover {
+  border-color: rgba(56, 189, 248, 0.65);
+  background-color: rgba(30, 41, 59, 0.78);
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-select:focus-visible {
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-item:hover,
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item:hover {
+  border-color: rgba(56, 189, 248, 0.65);
+  background-color: rgba(30, 41, 59, 0.78);
+  color: #e2e8f0;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-primary-switch-item.filter-bar-tab-active,
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item.filter-bar-tab-active {
+  border-color: rgba(56, 189, 248, 0.4);
+  background-color: #0b1220;
+  color: #e2e8f0;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-enterprise-day {
+  background-color: #12314d;
+  border-color: transparent;
+  box-shadow: 0 10px 25px -18px rgba(15, 23, 42, 0.95);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item {
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: rgba(248, 250, 252, 0.08);
+  color: #e2e8f0;
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item:hover {
+  border-color: rgba(186, 230, 253, 0.8);
+  background-color: rgba(248, 250, 252, 0.15);
+}
+
+:root[data-theme="cyberpunk"] .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item.filter-bar-tab-active {
+  border-color: transparent;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-enterprise-day {
+  background-color: #12314d;
+  border-color: transparent;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item {
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  background-color: rgba(248, 250, 252, 0.08);
+  color: #e2e8f0;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item:hover {
+  border-color: rgba(186, 230, 253, 0.8);
+  background-color: rgba(248, 250, 252, 0.15);
+  color: #e2e8f0;
+}
+
+:root[data-theme="cyberpunk"].dark .metric-detail-sub-switch-item.metric-detail-sub-switch-enterprise-day-item.filter-bar-tab-active {
+  border-color: transparent;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
