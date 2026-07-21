@@ -222,6 +222,8 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
   };
 
   const authenticated = sessionStatus === 'authenticated' && account !== undefined;
+  // A typed-in protected URL must not make an unprivileged account appear to be in that workspace.
+  const activeWorkspace = permittedWorkspaces.has(workspace) ? workspace : 'reader';
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur">
@@ -234,14 +236,14 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
         </Link>
 
         <nav aria-label="小说平台导航" className="hidden items-center gap-1 text-sm md:flex">
-          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} />
+          <NovelNavigationLinks pathname={pathname} workspace={activeWorkspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} />
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
-          <MobileNavigation pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} accountName={account?.name} />
+          <MobileNavigation pathname={pathname} workspace={activeWorkspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} accountName={account?.name} />
           {sessionStatus !== 'checking' ? <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" /> : null}
           {sessionStatus === 'anonymous' ? <AuthenticationActions /> : null}
-          {authenticated && account ? <AccountMenu workspace={workspace} permittedWorkspaces={permittedWorkspaces} account={account} loggingOut={loggingOut} onLogout={logout} /> : null}
+          {authenticated && account ? <AccountMenu workspace={activeWorkspace} permittedWorkspaces={permittedWorkspaces} account={account} loggingOut={loggingOut} onLogout={logout} /> : null}
         </div>
       </div>
       {loggingOut ? <p className="sr-only" role="status">正在退出登录</p> : null}

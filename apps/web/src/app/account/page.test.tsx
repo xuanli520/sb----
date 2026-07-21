@@ -27,7 +27,7 @@ function errorResponse(msg: string) {
 function mockAccountApi(
   authorApplication: unknown | ((requestCount: number) => unknown) = null,
   profileUpdate: (requestCount: number) => Response = () => response({ id: 47, name: '更新后的阅界读者', roles: ['READER'] }),
-  commentsResponse: (requestCount: number) => Response = () => response({
+  commentsResponse: (requestCount: number, endpoint: string) => Response = () => response({
     items: [
       { id: 71, bookId: 7, chapterId: 12, userId: 47, authorName: '阅界读者', content: '这一章的反转很有张力。', status: 'PENDING_REVIEW', createdAt: '2026-07-21T08:30:00Z' },
       { id: 72, bookId: 404, chapterId: null, userId: 47, authorName: '阅界读者', content: '完整的书评会在审核后公开。', status: 'VISIBLE', createdAt: '2026-07-20T08:30:00Z' },
@@ -82,9 +82,9 @@ function mockAccountApi(
           : authorApplication,
       ));
     }
-    if (method === 'GET' && endpoint === 'account/comments?size=20') {
+    if (method === 'GET' && (endpoint === 'account/comments?size=20' || endpoint === 'account/comments?size=20&page=1')) {
       commentsRequestCount += 1;
-      return Promise.resolve(commentsResponse(commentsRequestCount));
+      return Promise.resolve(commentsResponse(commentsRequestCount, endpoint));
     }
     if (method === 'POST' && endpoint === 'account/checkin') {
       return Promise.resolve(response({ points: 90, awarded: 10 }));
@@ -175,6 +175,26 @@ describe('reader account center', () => {
 
     expect(await screen.findByText('重试后可见的书评。')).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/novel/account/comments?size=20')).toHaveLength(2);
+  });
+
+  it('loads the next page of the current reader comments', async () => {
+    const fetchMock = mockAccountApi(null, undefined, (_requestCount, endpoint) => endpoint.endsWith('page=1')
+      ? response({
+        items: [{ id: 75, bookId: 9, chapterId: 4, userId: 47, authorName: '阅界读者', content: '第二页的评论。', status: 'VISIBLE', createdAt: '2026-07-21T10:30:00Z' }],
+        meta: { total: 2, page: 1, size: 1 },
+      })
+      : response({
+        items: [{ id: 74, bookId: 7, chapterId: null, userId: 47, authorName: '阅界读者', content: '第一页的评论。', status: 'PENDING_REVIEW', createdAt: '2026-07-21T09:30:00Z' }],
+        meta: { total: 2, page: 0, size: 1 },
+      }));
+    render(<AccountPage />);
+
+    expect(await screen.findByText('第一页的评论。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '下一页评论' }));
+
+    expect(await screen.findByText('第二页的评论。')).toBeTruthy();
+    expect(screen.getByText('第 2 / 2 页')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/comments?size=20&page=1', expect.anything());
   });
 
   it('shows current membership and book entitlements without making payment claims', async () => {

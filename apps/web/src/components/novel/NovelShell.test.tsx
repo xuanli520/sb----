@@ -70,7 +70,7 @@ describe('NovelShell', () => {
 
   it('uses the inherited sheet primitive to keep navigation reachable on narrow screens', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ msg: 'login required' }) }));
-    render(<NovelShell workspace="author"><p>作者工作台内容</p></NovelShell>);
+    render(<NovelShell workspace="reader"><p>书城内容</p></NovelShell>);
 
     await screen.findByRole('link', { name: '登录' });
     const navigationTrigger = screen.getByRole('button', { name: '打开导航菜单' });
@@ -90,7 +90,7 @@ describe('NovelShell', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<NovelShell workspace="reader"><p>书城内容</p></NovelShell>);
+    render(<NovelShell workspace="author"><p>作者工作台内容</p></NovelShell>);
 
     expect((await screen.findByRole('link', { name: '登录' })).getAttribute('href')).toBe('/login');
     expect(screen.getByRole('link', { name: '注册' }).getAttribute('href')).toBe('/register');
@@ -106,7 +106,7 @@ describe('NovelShell', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<NovelShell workspace="reader"><p>书城内容</p></NovelShell>);
+    render(<NovelShell workspace="author"><p>作者工作台内容</p></NovelShell>);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/profile', expect.anything()));
     expect(screen.getByRole('link', { name: '书城' })).toBeTruthy();
@@ -115,6 +115,10 @@ describe('NovelShell', () => {
     expect(screen.queryByRole('link', { name: '站长中心' })).toBeNull();
     fireEvent.pointerDown(screen.getByRole('button', { name: '当前账户：普通读者，打开账户菜单' }), { button: 0, ctrlKey: false });
     expect((await screen.findByRole('menuitem', { name: '打开读者工作区' })).getAttribute('href')).toBe('/');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: '打开读者工作区' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    expect(await screen.findByText('当前账户：普通读者 · 读者工作区')).toBeTruthy();
   });
 
   it('adds author and administrator workspaces only for their real account roles', async () => {

@@ -672,7 +672,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setSaved(result.saved);
       announce(result.saved ? '已加入书架，可以在登录后继续阅读。' : '已从书架移除。');
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '加入书架失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '加入书架失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -689,7 +689,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setBookmarks((items) => [result, ...items]);
       announce('已添加书签');
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '添加书签失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '添加书签失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -734,7 +734,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       clearBrowserSelection();
       announce(result.status === 'PENDING_REVIEW' ? '划线已保存，分享申请已进入审核。' : '划线已保存。');
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '保存划线失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '保存划线失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -767,7 +767,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         setChapterComments((items) => items.some((item) => item.id === result.id) ? items : [...items, result]);
       }
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '发表评论失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '发表评论失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -781,7 +781,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setRating(value);
       announce(`已为《${detail.book.title}》评分 ${value} 星。`);
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '评分失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '评分失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -795,7 +795,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       const label = type === 'monthly' ? '月票' : '推荐票';
       announce(`${label}已送出，作品当前获得 ${result.count} 张${label}。`);
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '投票失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '投票失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -1268,7 +1268,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         </section>
       </div>
 
-      <div className="mt-5 flex items-center justify-end gap-2 text-sm text-stone-500"><ArrowRight size={15} aria-hidden="true" />阅读进度会在登录读者身份后同步</div>
+      <div className="mt-5 flex items-center justify-end gap-2 text-sm text-stone-500"><ArrowRight size={15} aria-hidden="true" />登录后，阅读进度会同步到你的读者账户</div>
 
       <AlertDialog open={purchaseDialogOpen} onOpenChange={(open) => {
         if (pendingAction !== 'purchase') setPurchaseDialogOpen(open);
