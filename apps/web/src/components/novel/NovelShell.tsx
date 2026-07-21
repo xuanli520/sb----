@@ -5,20 +5,48 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   BookOpenText,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   LibraryBig,
+  Menu,
   PenSquare,
   ShieldCheck,
+  UserRound,
   type LucideIcon,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
+import { Avatar, AvatarFallback } from '@/app/components/ui/avatar';
+import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/app/components/ui/dropdown-menu';
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/app/components/ui/sheet';
+import { Separator } from '@/app/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { novelApi } from '@/features/novel/api';
 
 type DemoRole = 'reader' | 'author' | 'admin';
 type Workspace = DemoRole;
+type AccountProfile = { roles: unknown };
 
 const navigation: Array<{ href: string; label: string; icon: LucideIcon; workspace: Workspace }> = [
   { href: '/', label: '书城', icon: LibraryBig, workspace: 'reader' },
+  { href: '/account', label: '个人中心', icon: UserRound, workspace: 'reader' },
   { href: '/author', label: '作家中心', icon: PenSquare, workspace: 'author' },
   { href: '/novel-admin', label: '运营中心', icon: ShieldCheck, workspace: 'admin' },
 ];
@@ -34,6 +62,20 @@ const demoLabels: Record<DemoRole, string> = {
   author: '作者',
   admin: '站长',
 };
+
+const workspaceInitials: Record<Workspace, string> = {
+  reader: '读',
+  author: '作',
+  admin: '站',
+};
+
+function workspacesForRoles(roles: unknown): Set<Workspace> {
+  const permitted = new Set<Workspace>(['reader']);
+  if (!Array.isArray(roles)) return permitted;
+  if (roles.includes('AUTHOR')) permitted.add('author');
+  if (roles.includes('ADMIN')) permitted.add('admin');
+  return permitted;
+}
 
 const statusStyles: Record<string, { label: string; className: string }> = {
   DRAFT: { label: '草稿', className: 'border-stone-300 bg-stone-100 text-stone-700' },
@@ -64,9 +106,9 @@ export function NovelStatusBadge({ status }: { status: string }) {
   };
 
   return (
-    <span className={`inline-flex items-center border px-2 py-0.5 text-xs font-medium ${meta.className}`}>
+    <Badge variant="outline" className={`rounded-none ${meta.className}`}>
       {meta.label}
-    </span>
+    </Badge>
   );
 }
 
@@ -77,10 +119,10 @@ export function InlineNotice({ tone = 'success', children }: { tone?: 'success' 
     : 'border-emerald-600 bg-emerald-50 text-emerald-800';
 
   return (
-    <p role="status" className={`flex items-start gap-2 border-l-4 px-3 py-2 text-sm ${colors}`}>
+    <Alert role="status" className={`rounded-none border-l-4 px-3 py-2 ${colors}`}>
       <Icon className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
-      <span>{children}</span>
-    </p>
+      <AlertDescription className="text-inherit">{children}</AlertDescription>
+    </Alert>
   );
 }
 
@@ -121,7 +163,22 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
   const router = useRouter();
   const [switchingRole, setSwitchingRole] = useState<DemoRole | null>(null);
   const [error, setError] = useState('');
+  const [permittedWorkspaces, setPermittedWorkspaces] = useState<Set<Workspace>>(() => new Set(['reader']));
   const showDevelopmentControls = process.env.NODE_ENV !== 'production';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void novelApi<AccountProfile>('account/profile')
+      .then((profile) => {
+        if (!cancelled) setPermittedWorkspaces(workspacesForRoles(profile.roles));
+      })
+      .catch(() => {
+        if (!cancelled) setPermittedWorkspaces(new Set(['reader']));
+      });
+
+    return () => { cancelled = true; };
+  }, []);
 
   const switchRole = async (role: DemoRole) => {
     setError('');
@@ -146,7 +203,7 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur">
-      <div className="mx-auto flex min-h-16 max-w-[1200px] flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-16 max-w-[1200px] items-center gap-3 px-4 py-3 sm:gap-5 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2 text-stone-950" aria-label="阅界书城">
           <span className="grid size-8 place-items-center bg-emerald-700 text-white">
             <BookOpenText size={18} aria-hidden="true" />
@@ -154,60 +211,189 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
           <span className="text-lg font-semibold">阅界</span>
         </Link>
 
-        <nav aria-label="小说平台导航" className="order-3 flex w-full items-center gap-1 overflow-x-auto border-t border-stone-200 pt-2 text-sm sm:order-2 sm:w-auto sm:border-0 sm:pt-0">
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            const active = item.workspace === workspace || (item.href !== '/' && pathname?.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-2.5 py-2 font-medium transition-colors ${
-                  active
-                    ? 'border-emerald-700 text-emerald-800'
-                    : 'border-transparent text-stone-600 hover:border-stone-300 hover:text-stone-950'
-                }`}
-              >
-                <Icon size={16} aria-hidden="true" />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav aria-label="小说平台导航" className="hidden items-center gap-1 text-sm md:flex">
+          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} />
         </nav>
 
-        {showDevelopmentControls ? (
-          <div className="ml-auto flex items-center gap-1.5 text-xs">
-            <span className="hidden text-stone-500 lg:inline">开发身份</span>
-            {(Object.keys(demoLabels) as DemoRole[]).map((role) => (
-              <button
-                key={role}
-                type="button"
-                onClick={() => void switchRole(role)}
-                disabled={switchingRole !== null}
-                aria-pressed={workspace === role}
-                className={`border px-2 py-1.5 font-medium transition-colors disabled:cursor-wait disabled:opacity-60 ${
-                  workspace === role
-                    ? 'border-emerald-700 bg-emerald-700 text-white'
-                    : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'
-                }`}
-              >
-                {switchingRole === role ? '切换中' : demoLabels[role]}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div className="ml-auto flex items-center gap-1.5">
+          <MobileNavigation pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} />
+          <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" />
+          <WorkspaceMenu
+            workspace={workspace}
+            showDevelopmentControls={showDevelopmentControls}
+            switchingRole={switchingRole}
+            onSwitchRole={switchRole}
+          />
+        </div>
       </div>
-      {error ? <p className="mx-auto max-w-[1200px] px-4 pb-3 text-xs text-rose-700 sm:px-6 lg:px-8">{error}</p> : null}
+      {switchingRole ? <p className="sr-only" role="status">正在切换至{demoLabels[switchingRole]}身份</p> : null}
+      {error ? <p className="mx-auto max-w-[1200px] px-4 pb-3 text-xs text-rose-700 sm:px-6 lg:px-8" role="status">{error}</p> : null}
     </header>
+  );
+}
+
+function isNavigationActive(item: (typeof navigation)[number], pathname: string | null, workspace: Workspace) {
+  return item.href === '/'
+    ? workspace === 'reader' && !pathname?.startsWith('/account')
+    : pathname === item.href || pathname?.startsWith(`${item.href}/`);
+}
+
+function NovelNavigationLinks({
+  pathname,
+  workspace,
+  permittedWorkspaces,
+  closeOnNavigate = false,
+  mobile = false,
+}: {
+  pathname: string | null;
+  workspace: Workspace;
+  permittedWorkspaces: Set<Workspace>;
+  closeOnNavigate?: boolean;
+  mobile?: boolean;
+}) {
+  return navigation.filter((item) => permittedWorkspaces.has(item.workspace)).map((item) => {
+    const Icon = item.icon;
+    const active = isNavigationActive(item, pathname, workspace);
+    const link = (
+      <Link
+        key={item.href}
+        href={item.href}
+        aria-current={active ? 'page' : undefined}
+        className={mobile
+          ? `inline-flex min-h-10 items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium transition-colors ${
+            active
+              ? 'border-emerald-700 bg-emerald-50 text-emerald-800'
+              : 'border-transparent text-stone-600 hover:border-stone-300 hover:bg-stone-100 hover:text-stone-950'
+          }`
+          : `inline-flex shrink-0 items-center gap-2 border-b-2 px-2.5 py-2 text-sm font-medium transition-colors ${
+            active
+              ? 'border-emerald-700 text-emerald-800'
+              : 'border-transparent text-stone-600 hover:border-stone-300 hover:text-stone-950'
+          }`}
+      >
+        <Icon size={16} aria-hidden="true" />
+        {item.label}
+      </Link>
+    );
+
+    if (closeOnNavigate) {
+      return <SheetClose key={item.href} asChild>{link}</SheetClose>;
+    }
+
+    return link;
+  });
+}
+
+function MobileNavigation({ pathname, workspace, permittedWorkspaces }: { pathname: string | null; workspace: Workspace; permittedWorkspaces: Set<Workspace> }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="rounded-none text-stone-700 hover:bg-stone-100 hover:text-stone-950 md:hidden"
+            aria-label="打开导航菜单"
+            aria-expanded={open}
+            onClick={() => setOpen(true)}
+          >
+            <Menu size={19} aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">导航</TooltipContent>
+      </Tooltip>
+      <SheetContent side="left" className="w-[min(20rem,calc(100vw-3rem))] gap-0 border-stone-200 bg-[#f3f5f1] p-0">
+        <SheetHeader className="border-b border-stone-200 px-5 py-5 pr-12 text-left">
+          <SheetTitle className="text-stone-950">阅界导航</SheetTitle>
+          <SheetDescription className="text-stone-600">选择要进入的工作区</SheetDescription>
+        </SheetHeader>
+        <nav aria-label="移动端小说平台导航" className="flex flex-col gap-1 px-3 py-4">
+          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} closeOnNavigate mobile />
+        </nav>
+        <Separator className="mx-5 w-auto bg-stone-200" />
+        <p className="px-5 py-4 text-xs leading-5 text-stone-500">当前身份：{demoLabels[workspace]}</p>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function WorkspaceMenu({
+  workspace,
+  showDevelopmentControls,
+  switchingRole,
+  onSwitchRole,
+}: {
+  workspace: Workspace;
+  showDevelopmentControls: boolean;
+  switchingRole: DemoRole | null;
+  onSwitchRole: (role: DemoRole) => Promise<void>;
+}) {
+  const workspaceLabel = `${demoLabels[workspace]}工作区`;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 rounded-none border-stone-300 bg-white px-1.5 text-stone-800 hover:border-emerald-700 hover:bg-emerald-50 hover:text-emerald-900"
+          aria-label={`当前工作区：${workspaceLabel}，打开工作区菜单`}
+          aria-busy={switchingRole !== null || undefined}
+        >
+          <Avatar className="size-6 border border-emerald-100 bg-emerald-50 text-xs font-semibold text-emerald-800" aria-hidden="true">
+            <AvatarFallback className="bg-transparent text-inherit">{workspaceInitials[workspace]}</AvatarFallback>
+          </Avatar>
+          <span className="hidden max-w-24 truncate sm:inline">{workspaceLabel}</span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52 border-stone-200 bg-white text-stone-900">
+        <DropdownMenuLabel className="flex flex-col gap-0.5 text-stone-500">
+          <span className="text-xs font-medium">当前工作区</span>
+          <span className="text-sm font-semibold text-stone-950">{workspaceLabel}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuItem asChild>
+          <Link href={demoDestinations[workspace]}>
+            <BookOpenText size={16} aria-hidden="true" />
+            打开{workspaceLabel}
+          </Link>
+        </DropdownMenuItem>
+        {showDevelopmentControls ? (
+          <>
+            <DropdownMenuSeparator className="bg-stone-200" />
+            <DropdownMenuLabel className="text-xs text-stone-500">开发身份</DropdownMenuLabel>
+            {(Object.keys(demoLabels) as DemoRole[]).map((role) => (
+              <DropdownMenuItem
+                key={role}
+                disabled={switchingRole !== null}
+                onSelect={() => void onSwitchRole(role)}
+                className={workspace === role ? 'bg-emerald-50 text-emerald-900 focus:bg-emerald-100 focus:text-emerald-950' : undefined}
+              >
+                <span className="grid size-5 place-items-center border border-current/20 text-[10px] font-semibold" aria-hidden="true">
+                  {workspaceInitials[role]}
+                </span>
+                <span>{switchingRole === role ? '切换中...' : `${demoLabels[role]}身份`}</span>
+                {workspace === role ? <CheckCircle2 className="ml-auto text-emerald-700" size={15} aria-label="当前身份" /> : null}
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 export function BackToBookstore() {
   return (
-    <Link href="/" className="inline-flex items-center gap-1 text-sm font-medium text-stone-600 hover:text-emerald-800">
-      书城
-      <ChevronRight size={15} aria-hidden="true" />
-    </Link>
+    <Button asChild variant="link" size="sm" className="h-auto rounded-none px-0 text-stone-600 hover:text-emerald-800">
+      <Link href="/">
+        书城
+        <ChevronRight size={15} aria-hidden="true" />
+      </Link>
+    </Button>
   );
 }

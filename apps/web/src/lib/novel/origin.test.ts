@@ -41,6 +41,15 @@ describe('novel BFF trusted origin policy', () => {
     }))).toBe(false);
   });
 
+  it('accepts an exact Referer origin when Origin is absent', () => {
+    expect(hasTrustedSameOrigin(request('https://reader.example.test/api/novel/session', {
+      referer: 'https://reader.example.test/account?tab=settings',
+    }))).toBe(true);
+    expect(hasTrustedSameOrigin(request('https://reader.example.test/api/novel/session', {
+      referer: 'https://reader.example.test.attacker.test/account',
+    }))).toBe(false);
+  });
+
   it('allows same-port loopback aliases only outside production', () => {
     const aliasRequest = request('http://localhost:3000/api/novel/session', {
       origin: 'http://127.0.0.1:3000',
@@ -55,5 +64,19 @@ describe('novel BFF trusted origin policy', () => {
 
     vi.stubEnv('NODE_ENV', 'production');
     expect(hasTrustedSameOrigin(aliasRequest)).toBe(false);
+  });
+
+  it('requires an explicit HTTPS public origin in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const requestWithOrigin = request('https://reader.example.test/api/novel/session', {
+      origin: 'https://reader.example.test',
+    });
+    expect(hasTrustedSameOrigin(requestWithOrigin)).toBe(false);
+
+    vi.stubEnv('NOVEL_PUBLIC_ORIGIN', 'http://reader.example.test');
+    expect(hasTrustedSameOrigin(requestWithOrigin)).toBe(false);
+
+    vi.stubEnv('NOVEL_PUBLIC_ORIGIN', 'https://reader.example.test');
+    expect(hasTrustedSameOrigin(requestWithOrigin)).toBe(true);
   });
 });

@@ -1,0 +1,1411 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Novel Platform API",
+    "version": "0.1.0",
+    "description": "Versioned REST contract for the novel platform backend. Browser clients use the same-origin Next BFF: replace the backend prefix `/api/v1` with `/api/novel` for the `public`, `account`, `author`, and `admin` route groups. The BFF owns browser cookies, CSRF validation, and the upstream internal headers; do not call protected backend routes from browser JavaScript directly. `/api/v1/auth/*` is an internal BFF-to-backend contract and is intentionally not exposed by the catch-all browser proxy. This contract describes implemented local platform behavior only. Phone/email verification, WeChat/QQ OAuth, external payment, and production Qwen credentials are not represented as available API integrations."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Backend service. Protected and auth routes require BFF-only headers."
+    }
+  ],
+  "tags": [
+    { "name": "Public discovery", "description": "Anonymous catalog and visible interaction reads." },
+    { "name": "Reader account", "description": "Current-reader profile, reading state, and interactions." },
+    { "name": "Author workspace", "description": "Author-owned catalog, publication, analytics, and interaction reads." },
+    { "name": "Operations", "description": "Administrator-only review, account, taxonomy, code, and editorial operations." },
+    { "name": "Internal BFF session", "description": "Backend endpoints called only by the Next BFF session route." }
+  ],
+  "paths": {
+    "/api/v1/public/books": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "searchPublishedBooks",
+        "summary": "Search and filter published books",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/CatalogPage",
+        "parameters": [
+          { "$ref": "#/components/parameters/SearchQuery" },
+          { "$ref": "#/components/parameters/Category" },
+          { "$ref": "#/components/parameters/CategoryAlias" },
+          { "$ref": "#/components/parameters/SerialStatus" },
+          { "$ref": "#/components/parameters/MinWords" },
+          { "$ref": "#/components/parameters/MaxWords" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/api/v1/public/books/{id}": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getPublishedBook",
+        "summary": "Get one published book with its published chapters and visible comments",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/BookDetail",
+        "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/public/home": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getDiscoveryHome",
+        "summary": "Get editorial discovery-home collections",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/DiscoveryHome",
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/public/hot": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getHotBooks",
+        "summary": "Get hot published books",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/BookList",
+        "parameters": [{ "$ref": "#/components/parameters/Limit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/public/recommendations": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getRecommendedBooks",
+        "summary": "Get editor-selected published books",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/BookList",
+        "parameters": [{ "$ref": "#/components/parameters/Limit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/public/hot-searches": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getPublicHotSearchTerms",
+        "summary": "Get enabled hot-search terms",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/HotSearchTermList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/public/books/{bookId}/comments": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getVisibleComments",
+        "summary": "Page visible comments for one published book",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/CommentPageResponse",
+        "parameters": [
+          { "$ref": "#/components/parameters/PathBookId" },
+          { "$ref": "#/components/parameters/ChapterIdQuery" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/InteractionPageSize" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/public/books/{bookId}/interactions": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getPublicInteractionStats",
+        "summary": "Get visible interaction aggregates for one book",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/InteractionStats",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/public/books/{bookId}/chapters/{chapterId}/annotations": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getVisibleParagraphAnnotations",
+        "summary": "Page publicly approved paragraph annotations",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/PublicAnnotationPageResponse",
+        "parameters": [
+          { "$ref": "#/components/parameters/PathBookId" },
+          { "$ref": "#/components/parameters/PathChapterId" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/InteractionPageSize" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/public/taxonomy/categories": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getPublicCategories",
+        "summary": "Get enabled category vocabulary",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyItemList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/public/taxonomy/tags": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "getPublicTags",
+        "summary": "Get enabled tag vocabulary",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyItemList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" } }
+      }
+    },
+    "/api/v1/account/profile": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getAccountProfile",
+        "summary": "Get the current account profile",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/AccountProfile",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "put": {
+        "tags": ["Reader account"],
+        "operationId": "updateAccountProfile",
+        "summary": "Update the current account display name",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/AccountProfile",
+        "requestBody": { "$ref": "#/components/requestBodies/ProfileUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/entitlements": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getAccountEntitlements",
+        "summary": "Get current membership and book entitlements",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/AccountEntitlements",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/bookshelf": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookshelf",
+        "summary": "Get the current reader bookshelf",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/BookList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/bookshelf/{bookId}": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "toggleBookshelfBook",
+        "summary": "Add or remove one published book from the current bookshelf",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/BookshelfToggleResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/checkin": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "checkIn",
+        "summary": "Claim the daily fixed 10-point check-in award",
+        "description": "The current implementation awards 10 points once per Asia/Shanghai calendar day; it does not expose configurable membership or ticket rules.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/CheckInResult",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/redeem": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "redeemCode",
+        "summary": "Redeem one platform code",
+        "description": "This is a platform redemption flow, not an external payment gateway.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/RedeemResult",
+        "requestBody": { "$ref": "#/components/requestBodies/RedeemRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/wallet": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getWallet",
+        "summary": "Get current points and platform tokens",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/Wallet",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/preferences/reading": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getReadingPreference",
+        "summary": "Get the current reading preference",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/ReadingPreference",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "put": {
+        "tags": ["Reader account"],
+        "operationId": "updateReadingPreference",
+        "summary": "Save the current reading preference",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/ReadingPreference",
+        "requestBody": { "$ref": "#/components/requestBodies/ReadingPreferenceRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/progress": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getReadingProgress",
+        "summary": "Get the current reader progress list",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/ReadingProgressList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "put": {
+        "tags": ["Reader account"],
+        "operationId": "saveReadingProgress",
+        "summary": "Save reading progress for a published chapter",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/ReadingProgress",
+        "requestBody": { "$ref": "#/components/requestBodies/ProgressRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/bookmarks": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookmarks",
+        "summary": "Get the current reader bookmarks for one book",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/BookmarkList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "createBookmark",
+        "summary": "Create a reader bookmark and matching reading progress",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/Bookmark",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/BookmarkRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/comments": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "createComment",
+        "summary": "Create a comment subject to automated/manual review",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/Comment",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/CommentRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/rating": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "rateBook",
+        "summary": "Set the current reader rating for one book",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/RatingResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/RatingRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/votes/{type}": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "voteForBook",
+        "summary": "Record a current-reader book vote",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/VoteResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/VoteType" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/reward": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "rewardBook",
+        "summary": "Reward a book with platform tokens",
+        "description": "`Idempotency-Key` is required, is scoped to this reward operation, and must be 128 characters or fewer. Amounts are platform tokens only, not fiat currency.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/RewardResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "$ref": "#/components/requestBodies/AmountRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/purchase": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "purchaseBook",
+        "summary": "Purchase one book with its server-owned platform-token price",
+        "description": "The optional request body is ignored; clients cannot set a price. This is not an external payment-gateway API.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/PurchaseResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/author-applications": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getCurrentAuthorApplication",
+        "summary": "Get the current account author application, when present",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/NullableAuthorApplication",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "applyForAuthorRole",
+        "summary": "Submit an author application",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/AuthorApplication",
+        "requestBody": { "$ref": "#/components/requestBodies/AuthorApplicationRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/account/comments": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getCurrentAccountComments",
+        "summary": "Page only the current account comments, including moderation state",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/CommentPageResponse",
+        "parameters": [{ "$ref": "#/components/parameters/InteractionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/InteractionPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/annotations": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getCurrentAccountAnnotations",
+        "summary": "Page only the current account paragraph annotations",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/AnnotationPageResponse",
+        "parameters": [
+          { "$ref": "#/components/parameters/BookIdQuery" },
+          { "$ref": "#/components/parameters/ChapterIdQuery" },
+          { "$ref": "#/components/parameters/InteractionStatus" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/InteractionPageSize" }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/chapters/{chapterId}/annotations": {
+      "post": {
+        "tags": ["Reader account"],
+        "operationId": "createParagraphAnnotation",
+        "summary": "Create a private or reviewable paragraph annotation",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/ParagraphAnnotation",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathChapterId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ParagraphAnnotationRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorBooks",
+        "summary": "List books owned by the current author",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/BookList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "createAuthorBook",
+        "summary": "Create an author-owned draft book",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Book",
+        "requestBody": { "$ref": "#/components/requestBodies/BookRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}": {
+      "put": {
+        "tags": ["Author workspace"],
+        "operationId": "updateAuthorBook",
+        "summary": "Update author-owned book metadata",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Book",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/BookUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["Author workspace"],
+        "operationId": "deleteAuthorBook",
+        "summary": "Delete an author-owned book",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/DeleteResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/volumes": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorVolumes",
+        "summary": "List volumes for an author-owned book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/VolumeList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "createAuthorVolume",
+        "summary": "Create a volume for an author-owned book",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Volume",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/VolumeRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/chapters": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorChapters",
+        "summary": "List chapters for an author-owned book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/ChapterList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "createAuthorChapter",
+        "summary": "Create a chapter, optionally submitting it to automatic screening",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Chapter",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ChapterRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/volumes/{volumeId}/chapters": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "createVolumeDraftChapter",
+        "summary": "Create a draft chapter in an author-owned volume",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Chapter",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathVolumeId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/DraftChapterRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/chapters/{chapterId}": {
+      "put": {
+        "tags": ["Author workspace"],
+        "operationId": "updateAuthorChapter",
+        "summary": "Update an author-owned chapter",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Chapter",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathChapterId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ChapterUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["Author workspace"],
+        "operationId": "deleteAuthorChapter",
+        "summary": "Delete an author-owned chapter",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/DeleteResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathChapterId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/chapters/{chapterId}/submit": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "submitAuthorChapter",
+        "summary": "Submit an author-owned chapter to automatic screening",
+        "description": "The returned normalized status can show a review-required state. This is not a browser-accessible Qwen provider API.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Chapter",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathChapterId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/chapters/{chapterId}/schedule": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "scheduleAuthorChapter",
+        "summary": "Schedule a future chapter publication attempt",
+        "description": "The due attempt still follows the configured automatic screening path; scheduling does not bypass moderation.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Chapter",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathChapterId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ScheduleChapterRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/author/scheduled-publications/run": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "runDueAuthorPublications",
+        "summary": "Run due publication processing for the current author",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/DuePublicationResult",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/submit": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "submitAuthorBook",
+        "summary": "Submit a complete author-owned book for administrator review",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Book",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/comments": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorBookComments",
+        "summary": "Page all comment states for an author-owned book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/CommentPageResponse",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/InteractionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/InteractionPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/annotations": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorBookAnnotations",
+        "summary": "Page all paragraph annotation states for an author-owned book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/AnnotationPageResponse",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/InteractionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/InteractionPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/analytics": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorAnalytics",
+        "summary": "Get author-owned FR-08 analytics",
+        "description": "Dates are inclusive `Asia/Shanghai` calendar days. Omitted dates select the service default bounded window. Subscription and retention explicitly report availability rather than inventing values.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/AuthorAnalyticsReport",
+        "parameters": [{ "$ref": "#/components/parameters/BookIdQuery" }, { "$ref": "#/components/parameters/FromDate" }, { "$ref": "#/components/parameters/ToDate" }, { "$ref": "#/components/parameters/BookLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/author/reward-records": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorRewardRecords",
+        "summary": "Page successful token rewards for author-owned books",
+        "description": "`from` and `to` are inclusive `Asia/Shanghai` calendar days. The summary covers every matching successful token reward, not only the requested page. Amounts are tokens only.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/AuthorRewardReport",
+        "parameters": [{ "$ref": "#/components/parameters/BookIdQuery" }, { "$ref": "#/components/parameters/FromDate" }, { "$ref": "#/components/parameters/ToDate" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/AuthorReportPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/reviews": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getPendingBookReviews",
+        "summary": "List books pending administrator review",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/BookList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/reviews/{bookId}": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "reviewBook",
+        "summary": "Approve or reject a pending book review",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/Book",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/BookReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/dashboard": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAdminDashboard",
+        "summary": "Get current operations dashboard counts and audit log",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AdminDashboard",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/author-applications": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAuthorApplications",
+        "summary": "List author applications for review",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AuthorApplicationList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/author-applications/{id}": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "reviewAuthorApplication",
+        "summary": "Approve or reject an author application",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AuthorApplication",
+        "parameters": [{ "$ref": "#/components/parameters/PathId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/sensitive-words": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getSensitiveWords",
+        "summary": "Get local sensitive-word entries",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/StringSet",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "addSensitiveWord",
+        "summary": "Add a local sensitive-word entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/SensitiveWordResult",
+        "requestBody": { "$ref": "#/components/requestBodies/SensitiveWordRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/moderation-audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getModerationAudits",
+        "summary": "Get bounded operator-facing automatic moderation audit records",
+        "description": "Audit records contain normalized, bounded diagnostics. They do not expose a Qwen credential or provider endpoint.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ContentModerationAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/ContentType" }, { "$ref": "#/components/parameters/ModerationLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/moderation-reviews": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getModerationReviews",
+        "summary": "Get human moderation decisions for one book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ContentModerationReviewList",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredBookIdQuery" }, { "$ref": "#/components/parameters/ModerationLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/comments": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAdminComments",
+        "summary": "Page comments for moderation review",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/CommentPageResponse",
+        "parameters": [{ "$ref": "#/components/parameters/InteractionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/InteractionPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/comments/{commentId}/review": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "reviewComment",
+        "summary": "Approve or reject a comment",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/Comment",
+        "parameters": [{ "$ref": "#/components/parameters/PathCommentId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/CommentReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/annotations": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAdminAnnotations",
+        "summary": "Page paragraph annotations for moderation review",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AnnotationPageResponse",
+        "parameters": [{ "$ref": "#/components/parameters/InteractionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/InteractionPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/annotations/{annotationId}/review": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "reviewParagraphAnnotation",
+        "summary": "Approve or reject a shared paragraph annotation",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ParagraphAnnotation",
+        "parameters": [{ "$ref": "#/components/parameters/PathAnnotationId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ParagraphAnnotationReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/accounts": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAdminAccounts",
+        "summary": "Page administrator account projections",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AdminAccountPage",
+        "parameters": [{ "$ref": "#/components/parameters/AccountQuery" }, { "$ref": "#/components/parameters/AccountStatus" }, { "$ref": "#/components/parameters/RoleQuery" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/AdminPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/status": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "setAccountStatus",
+        "summary": "Suspend or restore an account with an audit reason",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AccountStatusChange",
+        "parameters": [{ "$ref": "#/components/parameters/PathAccountId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/AccountStatusRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/users/{accountId}/status": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "setUserStatusCompatibility",
+        "summary": "Compatibility alias for setAccountStatus",
+        "description": "Equivalent to `/api/v1/admin/accounts/{accountId}/status`; new callers should use the accounts path.",
+        "deprecated": true,
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AccountStatusChange",
+        "parameters": [{ "$ref": "#/components/parameters/PathAccountId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/AccountStatusRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/accounts/{accountId}/status-audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getAccountStatusAudits",
+        "summary": "Get bounded account status decision history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/AccountStatusAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/PathAccountId" }, { "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/taxonomy/{type}": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getOperatingTaxonomy",
+        "summary": "Get category or tag taxonomy including disabled entries",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyItemList",
+        "parameters": [{ "$ref": "#/components/parameters/TaxonomyType" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "createOperatingTaxonomy",
+        "summary": "Create a category or tag taxonomy entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyItem",
+        "parameters": [{ "$ref": "#/components/parameters/TaxonomyType" }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaxonomyRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/taxonomy/{type}/{taxonomyId}": {
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "updateOperatingTaxonomy",
+        "summary": "Update a category or tag taxonomy entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyItem",
+        "parameters": [{ "$ref": "#/components/parameters/TaxonomyType" }, { "$ref": "#/components/parameters/PathTaxonomyId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaxonomyRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/taxonomy/{type}/audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getOperatingTaxonomyAudits",
+        "summary": "Get bounded taxonomy change history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/OperatingTaxonomyAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/TaxonomyType" }, { "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/redemption-codes": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getRedemptionCodes",
+        "summary": "Page managed redemption codes",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/RedemptionCodePage",
+        "parameters": [{ "$ref": "#/components/parameters/CodeQuery" }, { "$ref": "#/components/parameters/BatchNo" }, { "$ref": "#/components/parameters/BenefitType" }, { "$ref": "#/components/parameters/RedemptionStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/AdminPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/redemption-codes/generate": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "generateRedemptionCodes",
+        "summary": "Generate a one-benefit redemption-code batch",
+        "description": "Each code can grant exactly one of token, membership-day, or book entitlement benefits.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/GeneratedRedemptionCodeBatch",
+        "requestBody": { "$ref": "#/components/requestBodies/GenerateRedemptionCodeRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/redemption-codes/import": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "importRedemptionCode",
+        "summary": "Import one externally prepared redemption code",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ManagedRedemptionCode",
+        "requestBody": { "$ref": "#/components/requestBodies/ImportRedemptionCodeRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/redemption-codes/{code}/disable": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "disableRedemptionCode",
+        "summary": "Disable an unredeemed redemption code",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ManagedRedemptionCode",
+        "parameters": [{ "$ref": "#/components/parameters/PathCode" }],
+        "requestBody": { "$ref": "#/components/requestBodies/DisableRedemptionCodeRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/editorial/recommendations": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getEditorialRecommendations",
+        "summary": "Get persisted editorial recommendations",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EditorialRecommendationList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "assignEditorialRecommendation",
+        "summary": "Assign a published book to an editorial rank",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EditorialRecommendation",
+        "requestBody": { "$ref": "#/components/requestBodies/RecommendationAssignmentRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/editorial/recommendations/{bookId}": {
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "reorderEditorialRecommendation",
+        "summary": "Change an editorial recommendation rank",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EditorialRecommendation",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/RecommendationRankRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "tags": ["Operations"],
+        "operationId": "removeEditorialRecommendation",
+        "summary": "Remove an editorial recommendation",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/editorial/recommendations/audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getEditorialRecommendationAudits",
+        "summary": "Get bounded editorial recommendation history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EditorialRecommendationAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/hot-searches": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getHotSearchTerms",
+        "summary": "Get all managed hot-search terms",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HotSearchTermList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "createHotSearchTerm",
+        "summary": "Create a managed hot-search term",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HotSearchTerm",
+        "requestBody": { "$ref": "#/components/requestBodies/HotSearchTermCreateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/hot-searches/{termId}": {
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "updateHotSearchTerm",
+        "summary": "Update a managed hot-search term",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HotSearchTerm",
+        "parameters": [{ "$ref": "#/components/parameters/PathTermId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/HotSearchTermUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "tags": ["Operations"],
+        "operationId": "removeHotSearchTerm",
+        "summary": "Remove a managed hot-search term",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "parameters": [{ "$ref": "#/components/parameters/PathTermId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/hot-searches/audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getHotSearchTermAudits",
+        "summary": "Get bounded hot-search change history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HotSearchTermAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["Internal BFF session"],
+        "operationId": "registerBackendSession",
+        "summary": "Create a password account and backend session",
+        "description": "Internal BFF-to-backend route only. The browser uses `POST /api/novel/session` instead. This is username/password registration only; it does not provide phone/email verification or OAuth.",
+        "security": [{ "InternalBffKey": [] }],
+        "x-internal-bff-only": true,
+        "x-response-data-schema": "#/components/schemas/SessionData",
+        "requestBody": { "$ref": "#/components/requestBodies/RegisterRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Internal BFF session"],
+        "operationId": "loginBackendSession",
+        "summary": "Create a backend session from username/password credentials",
+        "description": "Internal BFF-to-backend route only. The browser uses `POST /api/novel/session` instead. Authentication-write rate limiting is enforced by the BFF, not this controller.",
+        "security": [{ "InternalBffKey": [] }],
+        "x-internal-bff-only": true,
+        "x-response-data-schema": "#/components/schemas/SessionData",
+        "requestBody": { "$ref": "#/components/requestBodies/LoginRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": ["Internal BFF session"],
+        "operationId": "getBackendSessionUser",
+        "summary": "Resolve a backend BFF session to its user",
+        "security": [{ "InternalBffKey": [], "BackendBffSession": [] }],
+        "x-internal-bff-only": true,
+        "x-response-data-schema": "#/components/schemas/UserData",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Internal BFF session"],
+        "operationId": "logoutBackendSession",
+        "summary": "Revoke a backend BFF session",
+        "security": [{ "InternalBffKey": [], "BackendBffSession": [] }],
+        "x-internal-bff-only": true,
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BffSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "novel_session",
+        "description": "Opaque browser BFF session cookie. The browser never receives the backend session id."
+      },
+      "CsrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Novel-CSRF",
+        "description": "Required by the BFF on unsafe browser requests and must match its CSRF cookie/session binding."
+      },
+      "InternalBffKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Novel-Internal-Key",
+        "description": "Private BFF-to-backend credential. Never send this header from a browser."
+      },
+      "BackendBffSession": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Novel-Bff-Session",
+        "description": "Server-side backend session credential held by the BFF only. Never expose it to browser code."
+      }
+    },
+    "parameters": {
+      "PathId": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathBookId": { "name": "bookId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathChapterId": { "name": "chapterId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathVolumeId": { "name": "volumeId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathCommentId": { "name": "commentId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathAnnotationId": { "name": "annotationId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathAccountId": { "name": "accountId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathTaxonomyId": { "name": "taxonomyId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathTermId": { "name": "termId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
+      "SearchQuery": { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Literal keyword search." },
+      "Category": { "name": "category", "in": "query", "schema": { "type": "string" } },
+      "CategoryAlias": { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Compatibility alias used only when `category` is blank." },
+      "SerialStatus": { "name": "status", "in": "query", "schema": { "type": "string" } },
+      "MinWords": { "name": "minWords", "in": "query", "schema": { "type": "integer", "minimum": 0 } },
+      "MaxWords": { "name": "maxWords", "in": "query", "schema": { "type": "integer", "minimum": 0 } },
+      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10, "minimum": 1 } },
+      "ChapterIdQuery": { "name": "chapterId", "in": "query", "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "BookIdQuery": { "name": "bookId", "in": "query", "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "RequiredBookIdQuery": { "name": "bookId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "Page": { "name": "page", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0, "maximum": 100000 } },
+      "InteractionPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1 }, "description": "The controller accepts an interaction page size; callers should use a bounded value." },
+      "AuthorReportPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
+      "AdminPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
+      "InteractionStatus": { "name": "status", "in": "query", "schema": { "type": "string" }, "description": "Optional stored comment or annotation status filter." },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+      "VoteType": { "name": "type", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Vote type accepted by the current backend implementation." },
+      "FromDate": { "name": "from", "in": "query", "schema": { "type": "string", "format": "date" } },
+      "ToDate": { "name": "to", "in": "query", "schema": { "type": "string", "format": "date" } },
+      "BookLimit": { "name": "bookLimit", "in": "query", "schema": { "type": "integer", "default": 12, "minimum": 1, "maximum": 50 } },
+      "ContentType": { "name": "contentType", "in": "query", "schema": { "type": "string" } },
+      "ModerationLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } },
+      "AuditLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
+      "AccountQuery": { "name": "query", "in": "query", "schema": { "type": "string" } },
+      "AccountStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["ENABLED", "SUSPENDED", "ALL"] } },
+      "RoleQuery": { "name": "role", "in": "query", "schema": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } },
+      "TaxonomyType": { "name": "type", "in": "path", "required": true, "schema": { "type": "string", "enum": ["CATEGORY", "TAG"] } },
+      "CodeQuery": { "name": "q", "in": "query", "schema": { "type": "string" } },
+      "BatchNo": { "name": "batchNo", "in": "query", "schema": { "type": "string", "maxLength": 64 } },
+      "BenefitType": { "name": "benefitType", "in": "query", "schema": { "type": "string", "enum": ["TOKEN", "MEMBERSHIP", "BOOK"] } },
+      "RedemptionStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["ACTIVE", "REDEEMED", "DISABLED", "EXPIRED"] } }
+    },
+    "requestBodies": {
+      "RegisterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } } },
+      "LoginRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+      "ProfileUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUpdateRequest" } } } },
+      "ReadingPreferenceRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadingPreference" } } } },
+      "ProgressRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProgressRequest" } } } },
+      "BookmarkRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookmarkRequest" } } } },
+      "CommentRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentRequest" } } } },
+      "RatingRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RatingRequest" } } } },
+      "AmountRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AmountRequest" } } } },
+      "AuthorApplicationRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthorApplicationRequest" } } } },
+      "ParagraphAnnotationRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ParagraphAnnotationRequest" } } } },
+      "RedeemRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RedeemRequest" } } } },
+      "BookRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookRequest" } } } },
+      "BookUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookUpdateRequest" } } } },
+      "VolumeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeRequest" } } } },
+      "ChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterRequest" } } } },
+      "DraftChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DraftChapterRequest" } } } },
+      "ChapterUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterUpdateRequest" } } } },
+      "ScheduleChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScheduleChapterRequest" } } } },
+      "BookReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookReviewRequest" } } } },
+      "ReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviewRequest" } } } },
+      "SensitiveWordRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordRequest" } } } },
+      "CommentReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentReviewRequest" } } } },
+      "ParagraphAnnotationReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ParagraphAnnotationReviewRequest" } } } },
+      "AccountStatusRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AccountStatusRequest" } } } },
+      "TaxonomyRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaxonomyRequest" } } } },
+      "GenerateRedemptionCodeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenerateRedemptionCodeRequest" } } } },
+      "ImportRedemptionCodeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ImportRedemptionCodeRequest" } } } },
+      "DisableRedemptionCodeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DisableRedemptionCodeRequest" } } } },
+      "RecommendationAssignmentRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationAssignmentRequest" } } } },
+      "RecommendationRankRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationRankRequest" } } } },
+      "HotSearchTermCreateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HotSearchTermCreateRequest" } } } },
+      "HotSearchTermUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HotSearchTermUpdateRequest" } } } }
+    },
+    "responses": {
+      "Success": { "description": "Successful platform envelope.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiEnvelope" } } } },
+      "BadRequest": { "description": "Invalid request envelope.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Unauthorized": { "description": "Missing, expired, or invalid BFF session/internal BFF credential.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Forbidden": { "description": "Authenticated principal lacks the required role or ownership.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "NotFound": { "description": "Requested resource does not exist or is not visible to the caller.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Conflict": { "description": "Requested state transition conflicts with current durable state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "Unavailable": { "description": "A required internal dependency is unavailable.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+    },
+    "schemas": {
+      "ApiEnvelope": {
+        "type": "object",
+        "required": ["code", "msg", "data"],
+        "properties": { "code": { "type": "integer", "example": 200 }, "msg": { "type": "string", "example": "ok" }, "data": {} }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["code", "msg", "data"],
+        "properties": { "code": { "type": "integer" }, "msg": { "type": "string" }, "data": { "type": "null" } }
+      },
+      "Book": {
+        "type": "object",
+        "required": ["id", "title", "author", "category", "words", "serialStatus", "synopsis", "cover", "status", "authorId", "heat", "purchasePrice"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "author": { "type": "string" }, "category": { "type": "string" }, "words": { "type": "integer" }, "serialStatus": { "type": "string" }, "synopsis": { "type": "string" }, "cover": { "type": "string" }, "status": { "type": "string", "enum": ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "NEEDS_REVIEW", "REJECTED", "OFFLINE"] }, "authorId": { "type": "integer", "format": "int64" }, "heat": { "type": "integer", "format": "int64" }, "purchasePrice": { "type": "integer", "format": "int64", "description": "Server-owned platform-token amount." }
+        }
+      },
+      "BookList": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } },
+      "Volume": { "type": "object", "required": ["id", "bookId", "title", "orderNo", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "orderNo": { "type": "integer" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "VolumeList": { "type": "array", "items": { "$ref": "#/components/schemas/Volume" } },
+      "Chapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": "string" }, "published": { "type": "boolean" }, "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "PUBLISHED", "NEEDS_REVIEW"] }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" } } },
+      "ChapterList": { "type": "array", "items": { "$ref": "#/components/schemas/Chapter" } },
+      "Comment": { "type": "object", "required": ["id", "bookId", "userId", "authorName", "content", "status", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": ["integer", "null"], "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "authorName": { "type": "string" }, "content": { "type": "string" }, "status": { "type": "string", "enum": ["PENDING_REVIEW", "VISIBLE", "REJECTED"] }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "CommentPageResponse": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
+      "ParagraphAnnotation": { "type": "object", "required": ["id", "bookId", "chapterId", "userId", "authorName", "paragraphIndex", "selectionStart", "selectionEnd", "selectedText", "note", "shareIntent", "status", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "authorName": { "type": "string" }, "paragraphIndex": { "type": "integer" }, "selectionStart": { "type": "integer" }, "selectionEnd": { "type": "integer" }, "selectedText": { "type": "string" }, "note": { "type": "string" }, "shareIntent": { "type": "boolean" }, "status": { "type": "string", "enum": ["PRIVATE", "PENDING_REVIEW", "VISIBLE", "REJECTED"] }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "PublicParagraphAnnotation": { "type": "object", "required": ["id", "bookId", "chapterId", "authorName", "paragraphIndex", "selectionStart", "selectionEnd", "selectedText", "note", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "authorName": { "type": "string" }, "paragraphIndex": { "type": "integer" }, "selectionStart": { "type": "integer" }, "selectionEnd": { "type": "integer" }, "selectedText": { "type": "string" }, "note": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "AnnotationPageResponse": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ParagraphAnnotation" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
+      "PublicAnnotationPageResponse": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/PublicParagraphAnnotation" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
+      "PageMeta": { "type": "object", "required": ["total", "page", "size"], "properties": { "total": { "type": "integer", "format": "int64", "minimum": 0 }, "page": { "type": "integer", "minimum": 0 }, "size": { "type": "integer", "minimum": 1 } } },
+      "InteractionStats": { "type": "object", "required": ["visibleCommentCount", "ratingCount", "averageRating", "recommendationVoteCount", "monthlyVoteCount"], "properties": { "visibleCommentCount": { "type": "integer", "format": "int64" }, "ratingCount": { "type": "integer", "format": "int64" }, "averageRating": { "type": "number", "format": "double" }, "recommendationVoteCount": { "type": "integer", "format": "int64" }, "monthlyVoteCount": { "type": "integer", "format": "int64" } } },
+      "OperatingTaxonomyItem": { "type": "object", "required": ["id", "type", "name", "enabled", "sortOrder", "createdAt", "updatedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "type": { "type": "string", "enum": ["CATEGORY", "TAG"] }, "name": { "type": "string" }, "enabled": { "type": "boolean" }, "sortOrder": { "type": "integer" }, "createdByUserId": { "type": ["integer", "null"], "format": "int64" }, "updatedByUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "OperatingTaxonomyItemList": { "type": "array", "items": { "$ref": "#/components/schemas/OperatingTaxonomyItem" } },
+      "HotSearchTerm": { "type": "object", "required": ["id", "term", "enabled", "rank", "createdAt", "updatedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "term": { "type": "string" }, "enabled": { "type": "boolean" }, "rank": { "type": "integer" }, "createdByUserId": { "type": ["integer", "null"], "format": "int64" }, "updatedByUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "HotSearchTermList": { "type": "array", "items": { "$ref": "#/components/schemas/HotSearchTerm" } },
+      "DiscoveryFacets": { "type": "object", "properties": { "categories": { "type": "array", "items": { "type": "string" } }, "serialStatuses": { "type": "array", "items": { "type": "string" } }, "wordCountRanges": { "type": "array", "items": { "$ref": "#/components/schemas/WordCountRange" } } } },
+      "WordCountRange": { "type": "object", "required": ["key", "label"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "minWords": { "type": ["integer", "null"] }, "maxWords": { "type": ["integer", "null"] } } },
+      "CatalogPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "$ref": "#/components/schemas/BookList" }, "meta": { "type": "object", "required": ["total", "facets", "query"], "properties": { "total": { "type": "integer", "format": "int64" }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" }, "query": { "type": "object" } } } } },
+      "BookDetail": { "type": "object", "required": ["book", "chapters", "comments"], "properties": { "book": { "$ref": "#/components/schemas/Book" }, "chapters": { "$ref": "#/components/schemas/ChapterList" }, "comments": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } } } },
+      "DiscoveryHome": { "type": "object", "required": ["carousel", "recommendations", "hot"], "properties": { "carousel": { "$ref": "#/components/schemas/BookList" }, "recommendations": { "$ref": "#/components/schemas/BookList" }, "hot": { "$ref": "#/components/schemas/BookList" }, "hotSearchTerms": { "$ref": "#/components/schemas/HotSearchTermList" }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" } } },
+      "AccountProfile": { "type": "object", "required": ["id", "name", "roles"], "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] }, "uniqueItems": true } } },
+      "AccountEntitlements": { "type": "object", "required": ["membership", "books"], "properties": { "membership": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/MembershipEntitlement" }] }, "books": { "type": "array", "items": { "$ref": "#/components/schemas/BookEntitlement" } } } },
+      "MembershipEntitlement": { "type": "object", "required": ["expiresAt", "active"], "properties": { "expiresAt": { "type": "string", "format": "date-time" }, "active": { "type": "boolean" } } },
+      "BookEntitlement": { "type": "object", "required": ["bookId", "bookTitle", "sourceType", "sourceReference", "purchaseAmount", "amountUnit", "acquiredAt"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "sourceType": { "type": "string" }, "sourceReference": { "type": "string" }, "purchaseAmount": { "type": "integer", "format": "int64" }, "amountUnit": { "type": "string", "const": "TOKEN" }, "acquiredAt": { "type": "string", "format": "date-time" } } },
+      "ReadingPreference": { "type": "object", "required": ["theme", "font", "fontSize", "lineHeight", "brightness", "pageMode"], "properties": { "theme": { "type": "string", "enum": ["paper", "night", "sepia"] }, "font": { "type": "string", "minLength": 1 }, "fontSize": { "type": "integer", "minimum": 14, "maximum": 32 }, "lineHeight": { "type": "integer", "minimum": 120, "maximum": 260 }, "brightness": { "type": "integer", "minimum": 10, "maximum": 100 }, "pageMode": { "type": "string", "enum": ["slide", "cover", "simulation"] } } },
+      "ReadingProgress": { "type": "object", "required": ["bookId", "chapterId", "offset", "updatedAt"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "ReadingProgressList": { "type": "array", "items": { "$ref": "#/components/schemas/ReadingProgress" } },
+      "Bookmark": { "type": "object", "required": ["id", "bookId", "chapterId", "offset", "note", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "note": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "BookmarkList": { "type": "array", "items": { "$ref": "#/components/schemas/Bookmark" } },
+      "Wallet": { "type": "object", "required": ["points", "tokens"], "properties": { "points": { "type": "integer", "format": "int64" }, "tokens": { "type": "integer", "format": "int64" } } },
+      "BookshelfToggleResult": { "type": "object", "required": ["saved"], "properties": { "saved": { "type": "boolean" } } },
+      "CheckInResult": { "type": "object", "required": ["points", "awarded"], "properties": { "points": { "type": "integer", "format": "int64" }, "awarded": { "type": "integer", "const": 10 } } },
+      "RedeemResult": { "type": "object", "description": "Current redemption result fields are benefit-dependent.", "additionalProperties": true },
+      "RatingResult": { "type": "object", "required": ["average"], "properties": { "average": { "type": "number", "format": "double" } } },
+      "VoteResult": { "type": "object", "additionalProperties": true },
+      "RewardResult": { "type": "object", "additionalProperties": true, "description": "Reward result includes server-derived balance/state fields." },
+      "PurchaseResult": { "type": "object", "additionalProperties": true, "description": "Purchase result includes server-derived entitlement/balance state." },
+      "AuthorApplication": { "type": "object", "required": ["id", "userId", "penName", "statement", "status", "reason", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "penName": { "type": "string" }, "statement": { "type": "string" }, "status": { "type": "string" }, "reason": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "decidedAt": { "type": ["string", "null"], "format": "date-time" }, "decidedByUserId": { "type": ["integer", "null"], "format": "int64" } } },
+      "NullableAuthorApplication": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/AuthorApplication" }] },
+      "AuthorApplicationList": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorApplication" } },
+      "DeleteResult": { "type": "object", "required": ["id", "deleted"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true } } },
+      "DuePublicationResult": { "type": "object", "required": ["processed", "published", "needsReview"], "properties": { "processed": { "type": "integer", "minimum": 0 }, "published": { "$ref": "#/components/schemas/ChapterList" }, "needsReview": { "$ref": "#/components/schemas/ChapterList" } } },
+      "AuthorAnalyticsReport": { "type": "object", "required": ["summary", "dailyTrend", "bookMetrics", "availability", "meta"], "properties": { "summary": { "$ref": "#/components/schemas/AuthorAnalyticsSummary" }, "dailyTrend": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsTrendPoint" } }, "bookMetrics": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsBookMetric" } }, "availability": { "$ref": "#/components/schemas/AuthorAnalyticsAvailability" }, "meta": { "$ref": "#/components/schemas/AuthorAnalyticsMetadata" } } },
+      "AuthorAnalyticsSummary": { "type": "object", "required": ["currentFavoriteCount", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "activeReaderCount", "completedReaderBookCount", "averageReadThroughPercent", "amountUnit"], "properties": { "currentFavoriteCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64" }, "activeReaderCount": { "type": "integer", "format": "int64" }, "completedReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
+      "AuthorAnalyticsTrendPoint": { "type": "object", "required": ["date", "favoriteAddCount", "purchaseCount", "purchaseTokenAmount"], "properties": { "date": { "type": "string", "format": "date" }, "favoriteAddCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" } } },
+      "AuthorAnalyticsBookMetric": { "type": "object", "required": ["bookId", "bookTitle", "currentFavoriteCount", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "averageReadThroughPercent"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "currentFavoriteCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double" } } },
+      "AuthorAnalyticsAvailability": { "type": "object", "required": ["subscription", "retention"], "properties": { "subscription": { "$ref": "#/components/schemas/MetricAvailability" }, "retention": { "$ref": "#/components/schemas/MetricAvailability" } } },
+      "MetricAvailability": { "type": "object", "required": ["available", "reason"], "properties": { "available": { "type": "boolean" }, "reason": { "type": "string" } } },
+      "AuthorAnalyticsMetadata": { "type": "object", "required": ["from", "to", "timeZone", "dateBoundary", "maximumWindowDays", "bookMetricTotal", "returnedBookMetricLimit", "bookMetricsTruncated", "shelfTrendInclusion", "purchaseInclusion", "readThroughDefinition"], "properties": { "from": { "type": "string", "format": "date" }, "to": { "type": "string", "format": "date" }, "timeZone": { "type": "string", "const": "Asia/Shanghai" }, "dateBoundary": { "type": "string", "const": "FROM_INCLUSIVE_TO_INCLUSIVE" }, "maximumWindowDays": { "type": "integer" }, "bookMetricTotal": { "type": "integer", "format": "int64" }, "returnedBookMetricLimit": { "type": "integer" }, "bookMetricsTruncated": { "type": "boolean" }, "shelfTrendInclusion": { "type": "string" }, "purchaseInclusion": { "type": "string" }, "readThroughDefinition": { "type": "string" } } },
+      "AuthorRewardReport": { "type": "object", "required": ["items", "summary", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorRewardRecord" } }, "summary": { "$ref": "#/components/schemas/AuthorRewardSummary" }, "meta": { "$ref": "#/components/schemas/AuthorRewardMetadata" } } },
+      "AuthorRewardRecord": { "type": "object", "required": ["id", "bookId", "bookTitle", "rewarderUserId", "tokenAmount", "rewardedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "rewarderUserId": { "type": "integer", "format": "int64" }, "tokenAmount": { "type": "integer", "format": "int64" }, "rewardedAt": { "type": "string", "format": "date-time" } } },
+      "AuthorRewardSummary": { "type": "object", "required": ["rewardCount", "totalTokens", "amountUnit"], "properties": { "rewardCount": { "type": "integer", "format": "int64" }, "totalTokens": { "type": "integer", "format": "int64" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
+      "AuthorRewardMetadata": { "type": "object", "required": ["total", "page", "size", "timeZone", "dateBoundary", "recordInclusion"], "properties": { "total": { "type": "integer", "format": "int64" }, "page": { "type": "integer" }, "size": { "type": "integer" }, "bookId": { "type": ["integer", "null"], "format": "int64" }, "from": { "type": ["string", "null"], "format": "date" }, "to": { "type": ["string", "null"], "format": "date" }, "timeZone": { "type": "string", "const": "Asia/Shanghai" }, "dateBoundary": { "type": "string", "const": "FROM_INCLUSIVE_TO_INCLUSIVE" }, "recordInclusion": { "type": "string", "const": "SUCCESSFUL_BOOK_REWARD_DEBIT_ONLY" } } },
+      "ContentModerationAudit": { "type": "object", "required": ["id", "contentType", "contentId", "contentVersionHash", "trigger", "provider", "model", "decision", "reason", "policyVersion", "promptVersion", "inputCharacters", "requestId", "rawResponse", "errorSummary", "simulated", "startedAt", "completedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "contentType": { "type": "string" }, "contentId": { "type": "integer", "format": "int64" }, "contentVersionHash": { "type": "string" }, "trigger": { "type": "string", "enum": ["CHAPTER_SUBMISSION", "SCHEDULED_PUBLICATION", "PUBLISHED_CHAPTER_REVISION"] }, "provider": { "type": "string" }, "model": { "type": "string" }, "decision": { "type": "string", "enum": ["PASS", "MANUAL_REVIEW", "REJECT", "LOCAL_SENSITIVE_WORD", "MODEL_UNAVAILABLE", "MODEL_ERROR", "INVALID_OUTPUT", "SIMULATED_PASS"] }, "reason": { "type": "string" }, "policyVersion": { "type": "string" }, "promptVersion": { "type": "string" }, "inputCharacters": { "type": "integer" }, "requestId": { "type": "string" }, "rawResponse": { "type": "string" }, "errorSummary": { "type": "string" }, "simulated": { "type": "boolean" }, "startedAt": { "type": "string", "format": "date-time" }, "completedAt": { "type": "string", "format": "date-time" } } },
+      "ContentModerationAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/ContentModerationAudit" } },
+      "ContentModerationReview": { "type": "object", "required": ["id", "bookId", "moderationAuditId", "reviewerUserId", "decision", "reason", "reviewedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "moderationAuditId": { "type": "integer", "format": "int64" }, "reviewerUserId": { "type": "integer", "format": "int64" }, "decision": { "type": "string", "enum": ["APPROVED", "REJECTED"] }, "reason": { "type": "string" }, "reviewedAt": { "type": "string", "format": "date-time" } } },
+      "ContentModerationReviewList": { "type": "array", "items": { "$ref": "#/components/schemas/ContentModerationReview" } },
+      "AdminDashboard": { "type": "object", "required": ["activeReaders", "todayReads", "publishedBooks", "pendingReviews", "auditLog"], "properties": { "activeReaders": { "type": "integer" }, "todayReads": { "type": "integer" }, "publishedBooks": { "type": "integer" }, "pendingReviews": { "type": "integer" }, "auditLog": { "type": "array", "items": {} } } },
+      "AdminAccount": { "type": "object", "required": ["id", "loginName", "displayName", "roles", "enabled", "createdAt", "updatedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "loginName": { "type": "string" }, "displayName": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } }, "enabled": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "AdminAccountPage": { "type": "object", "required": ["items", "total", "page", "size"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AdminAccount" } }, "total": { "type": "integer", "format": "int64" }, "page": { "type": "integer" }, "size": { "type": "integer" } } },
+      "AccountStatusAudit": { "type": "object", "required": ["id", "accountId", "previousEnabled", "enabled", "reason", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "accountId": { "type": "integer", "format": "int64" }, "previousEnabled": { "type": "boolean" }, "enabled": { "type": "boolean" }, "reason": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "AccountStatusAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/AccountStatusAudit" } },
+      "AccountStatusChange": { "type": "object", "required": ["userId", "enabled", "account", "changed", "audit"], "properties": { "userId": { "type": "integer", "format": "int64" }, "enabled": { "type": "boolean" }, "account": { "$ref": "#/components/schemas/AdminAccount" }, "changed": { "type": "boolean" }, "audit": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/AccountStatusAudit" }] } } },
+      "OperatingTaxonomyAudit": { "type": "object", "required": ["id", "taxonomyId", "type", "action", "details", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "taxonomyId": { "type": "integer", "format": "int64" }, "type": { "type": "string" }, "action": { "type": "string" }, "details": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "OperatingTaxonomyAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/OperatingTaxonomyAudit" } },
+      "ManagedRedemptionCode": { "type": "object", "required": ["code", "batchNo", "benefitType", "tokenAmount", "membershipDays", "status", "createdAt"], "properties": { "code": { "type": "string" }, "batchNo": { "type": "string" }, "benefitType": { "type": "string", "enum": ["TOKEN", "MEMBERSHIP", "BOOK"] }, "tokenAmount": { "type": "integer", "format": "int64" }, "bookId": { "type": ["integer", "null"], "format": "int64" }, "membershipDays": { "type": "integer" }, "status": { "type": "string", "enum": ["ACTIVE", "REDEEMED", "DISABLED", "EXPIRED"] }, "expiresAt": { "type": ["string", "null"], "format": "date-time" }, "redeemedByUserId": { "type": ["integer", "null"], "format": "int64" }, "redeemedAt": { "type": ["string", "null"], "format": "date-time" }, "createdByUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" }, "disabledByUserId": { "type": ["integer", "null"], "format": "int64" }, "disabledAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "RedemptionCodePage": { "type": "object", "required": ["items", "page", "size", "total"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/ManagedRedemptionCode" } }, "page": { "type": "integer" }, "size": { "type": "integer" }, "total": { "type": "integer", "format": "int64" } } },
+      "GeneratedRedemptionCodeBatch": { "type": "object", "required": ["batchNo", "codes"], "properties": { "batchNo": { "type": "string" }, "codes": { "type": "array", "items": { "$ref": "#/components/schemas/ManagedRedemptionCode" } } } },
+      "EditorialRecommendation": { "type": "object", "required": ["book", "rank"], "properties": { "book": { "$ref": "#/components/schemas/Book" }, "rank": { "type": "integer" } } },
+      "EditorialRecommendationList": { "type": "array", "items": { "$ref": "#/components/schemas/EditorialRecommendation" } },
+      "EditorialRecommendationAudit": { "type": "object", "required": ["id", "bookId", "action", "details", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "action": { "type": "string" }, "previousRank": { "type": ["integer", "null"] }, "rank": { "type": ["integer", "null"] }, "details": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "EditorialRecommendationAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/EditorialRecommendationAudit" } },
+      "HotSearchTermAudit": { "type": "object", "required": ["id", "termId", "term", "action", "details", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "termId": { "type": "integer", "format": "int64" }, "term": { "type": "string" }, "action": { "type": "string" }, "previousRank": { "type": ["integer", "null"] }, "rank": { "type": ["integer", "null"] }, "details": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "HotSearchTermAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/HotSearchTermAudit" } },
+      "StringSet": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+      "SensitiveWordResult": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string" } } },
+      "EmptyData": { "type": "null" },
+      "UserData": { "type": "object", "required": ["id", "name", "roles"], "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } } } },
+      "SessionData": { "type": "object", "required": ["sessionId", "user", "expiresAt"], "properties": { "sessionId": { "type": "string", "description": "BFF-only backend session identifier; must not be written to browser cookies." }, "user": { "$ref": "#/components/schemas/UserData" }, "expiresAt": { "type": "string", "format": "date-time" } } },
+      "RegisterRequest": { "type": "object", "required": ["username", "displayName", "password"], "properties": { "username": { "type": "string", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true } }, "additionalProperties": false },
+      "LoginRequest": { "type": "object", "required": ["username", "password"], "properties": { "username": { "type": "string", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true } }, "additionalProperties": false },
+      "ProfileUpdateRequest": { "type": "object", "required": ["displayName"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
+      "ProgressRequest": { "type": "object", "required": ["bookId", "chapterId", "offset"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+      "BookmarkRequest": { "type": "object", "required": ["chapterId", "offset"], "properties": { "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "note": { "type": "string" } }, "additionalProperties": false },
+      "CommentRequest": { "type": "object", "required": ["content"], "properties": { "chapterId": { "type": ["integer", "null"], "format": "int64" }, "content": { "type": "string", "minLength": 1, "maxLength": 4000 } }, "additionalProperties": false },
+      "RatingRequest": { "type": "object", "required": ["rating"], "properties": { "rating": { "type": "integer" } }, "additionalProperties": false },
+      "AmountRequest": { "type": "object", "required": ["amount"], "properties": { "amount": { "type": "integer" } }, "additionalProperties": false },
+      "AuthorApplicationRequest": { "type": "object", "required": ["penName", "statement"], "properties": { "penName": { "type": "string", "minLength": 1, "maxLength": 128 }, "statement": { "type": "string", "minLength": 1, "maxLength": 4000 } }, "additionalProperties": false },
+      "ParagraphAnnotationRequest": { "type": "object", "required": ["paragraphIndex", "selectionStart", "selectionEnd", "selectedText", "shareIntent"], "properties": { "paragraphIndex": { "type": "integer" }, "selectionStart": { "type": "integer" }, "selectionEnd": { "type": "integer" }, "selectedText": { "type": "string", "minLength": 1, "maxLength": 2000 }, "note": { "type": "string", "maxLength": 2000 }, "shareIntent": { "type": "boolean" } }, "additionalProperties": false },
+      "RedeemRequest": { "type": "object", "required": ["code"], "properties": { "code": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+      "BookRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
+      "BookUpdateRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 }, "serialStatus": { "type": "string", "maxLength": 32 }, "cover": { "type": "string", "maxLength": 1024 } }, "additionalProperties": false },
+      "VolumeRequest": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 } }, "additionalProperties": false },
+      "ChapterRequest": { "type": "object", "required": ["title", "content", "submit"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "submit": { "type": "boolean" }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
+      "DraftChapterRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
+      "ChapterUpdateRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
+      "ScheduleChapterRequest": { "type": "object", "required": ["publishAt"], "properties": { "publishAt": { "type": "string", "format": "date-time", "description": "A future instant." } }, "additionalProperties": false },
+      "ReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
+      "BookReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
+      "SensitiveWordRequest": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 } }, "additionalProperties": false },
+      "CommentReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
+      "ParagraphAnnotationReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
+      "AccountStatusRequest": { "type": "object", "required": ["enabled", "reason"], "properties": { "enabled": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
+      "TaxonomyRequest": { "type": "object", "required": ["name", "enabled", "sortOrder"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128 }, "enabled": { "type": "boolean" }, "sortOrder": { "type": "integer", "minimum": 0, "maximum": 100000 } }, "additionalProperties": false },
+      "GenerateRedemptionCodeRequest": { "type": "object", "required": ["quantity"], "properties": { "quantity": { "type": "integer", "minimum": 1, "maximum": 1000 }, "batchNo": { "type": "string", "maxLength": 64 }, "codePrefix": { "type": "string", "maxLength": 20 }, "tokenAmount": { "type": "integer", "minimum": 0 }, "membershipDays": { "type": "integer", "minimum": 0, "maximum": 36500 }, "bookId": { "type": "integer", "format": "int64", "minimum": 1 }, "expiresAt": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
+      "ImportRedemptionCodeRequest": { "type": "object", "required": ["code", "batchNo"], "properties": { "code": { "type": "string", "minLength": 4, "maxLength": 64 }, "batchNo": { "type": "string", "minLength": 1, "maxLength": 64 }, "tokenAmount": { "type": "integer", "minimum": 0 }, "membershipDays": { "type": "integer", "minimum": 0, "maximum": 36500 }, "bookId": { "type": "integer", "format": "int64", "minimum": 1 }, "expiresAt": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
+      "DisableRedemptionCodeRequest": { "type": "object", "properties": { "reason": { "type": "string", "maxLength": 512 } }, "additionalProperties": false },
+      "RecommendationAssignmentRequest": { "type": "object", "required": ["bookId"], "properties": { "bookId": { "type": "integer", "format": "int64", "minimum": 1 }, "rank": { "type": "integer", "minimum": 1, "maximum": 100000 } }, "additionalProperties": false },
+      "RecommendationRankRequest": { "type": "object", "required": ["rank"], "properties": { "rank": { "type": "integer", "minimum": 1, "maximum": 100000 } }, "additionalProperties": false },
+      "HotSearchTermCreateRequest": { "type": "object", "required": ["term", "enabled"], "properties": { "term": { "type": "string", "minLength": 1, "maxLength": 100 }, "enabled": { "type": "boolean" }, "rank": { "type": "integer", "minimum": 1, "maximum": 100000 } }, "additionalProperties": false },
+      "HotSearchTermUpdateRequest": { "type": "object", "required": ["term", "enabled", "rank"], "properties": { "term": { "type": "string", "minLength": 1, "maxLength": 100 }, "enabled": { "type": "boolean" }, "rank": { "type": "integer", "minimum": 1, "maximum": 100000 } }, "additionalProperties": false }
+    }
+  }
+}

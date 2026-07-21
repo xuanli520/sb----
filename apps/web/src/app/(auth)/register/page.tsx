@@ -4,6 +4,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BookOpenText, Eye, EyeOff, LoaderCircle } from 'lucide-react';
 import { FormEvent, useState } from 'react';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
+import { Button } from '@/app/components/ui/button';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
 
 type SessionResponse = {
   code?: number;
@@ -97,12 +101,12 @@ export default function RegisterPage() {
               <h1 id="register-title" className="mt-2 text-3xl font-semibold text-stone-950">把喜欢的故事留在身边</h1>
               <p className="mt-3 text-sm leading-6 text-stone-600">新账户会自动登录，并从书城开始你的阅读记录。</p>
 
-              {error ? <p role="alert" className="mt-6 border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p> : null}
+              {error ? <Alert variant="destructive" className="mt-6 rounded-none border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-rose-800"><AlertDescription className="text-inherit">{error}</AlertDescription></Alert> : null}
 
               <form className="mt-7 space-y-4" onSubmit={submit} noValidate>
                 <div>
-                  <label htmlFor="register-display-name" className="block text-sm font-medium text-stone-800">显示名称</label>
-                  <input
+                  <Label htmlFor="register-display-name" className="text-stone-800">显示名称</Label>
+                  <Input
                     id="register-display-name"
                     name="displayName"
                     type="text"
@@ -110,13 +114,13 @@ export default function RegisterPage() {
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
                     disabled={submitting}
-                    className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-stone-400 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                    className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 placeholder:text-stone-400 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     placeholder="你希望被怎样称呼"
                   />
                 </div>
                 <div>
-                  <label htmlFor="register-username" className="block text-sm font-medium text-stone-800">用户名</label>
-                  <input
+                  <Label htmlFor="register-username" className="text-stone-800">用户名</Label>
+                  <Input
                     id="register-username"
                     name="username"
                     type="text"
@@ -124,17 +128,17 @@ export default function RegisterPage() {
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
                     disabled={submitting}
-                    className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-stone-400 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                    className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 placeholder:text-stone-400 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     placeholder="name@example.com"
                   />
                 </div>
                 <div>
                   <div className="flex items-center justify-between gap-3">
-                    <label htmlFor="register-password" className="block text-sm font-medium text-stone-800">密码</label>
+                    <Label htmlFor="register-password" className="text-stone-800">密码</Label>
                     <span className="text-xs text-stone-500">12 至 128 位</span>
                   </div>
                   <div className="relative mt-2">
-                    <input
+                    <Input
                       id="register-password"
                       name="password"
                       type={showPassword ? 'text' : 'password'}
@@ -142,24 +146,26 @@ export default function RegisterPage() {
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       disabled={submitting}
-                      className="w-full border border-stone-300 bg-white px-3 py-2.5 pr-11 text-sm outline-none transition-colors focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                      className="h-11 rounded-none border-stone-300 bg-white px-3 pr-11 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       title={showPassword ? '隐藏密码' : '显示密码'}
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPassword((visible) => !visible)}
                       disabled={submitting}
-                      className="absolute inset-y-0 right-0 grid w-10 place-items-center text-stone-500 hover:text-emerald-800 disabled:cursor-wait"
+                      className="absolute inset-y-0 right-0 size-10 rounded-none text-stone-500 hover:bg-transparent hover:text-emerald-800 disabled:cursor-wait"
                     >
                       {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="register-password-confirmation" className="block text-sm font-medium text-stone-800">确认密码</label>
+                  <Label htmlFor="register-password-confirmation" className="text-stone-800">确认密码</Label>
                   <div className="relative mt-2">
-                    <input
+                    <Input
                       id="register-password-confirmation"
                       name="passwordConfirmation"
                       type={showPasswordConfirmation ? 'text' : 'password'}
@@ -167,28 +173,30 @@ export default function RegisterPage() {
                       value={passwordConfirmation}
                       onChange={(event) => setPasswordConfirmation(event.target.value)}
                       disabled={submitting}
-                      className="w-full border border-stone-300 bg-white px-3 py-2.5 pr-11 text-sm outline-none transition-colors focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                      className="h-11 rounded-none border-stone-300 bg-white px-3 pr-11 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       title={showPasswordConfirmation ? '隐藏密码' : '显示密码'}
                       aria-label={showPasswordConfirmation ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPasswordConfirmation((visible) => !visible)}
                       disabled={submitting}
-                      className="absolute inset-y-0 right-0 grid w-10 place-items-center text-stone-500 hover:text-emerald-800 disabled:cursor-wait"
+                      className="absolute inset-y-0 right-0 size-10 rounded-none text-stone-500 hover:bg-transparent hover:text-emerald-800 disabled:cursor-wait"
                     >
                       {showPasswordConfirmation ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                <button
+                <Button
                   type="submit"
                   disabled={submitting}
-                  className="inline-flex w-full items-center justify-center gap-2 bg-emerald-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-500"
+                  className="h-auto w-full rounded-none bg-emerald-700 px-4 py-3 hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-500"
                 >
                   {submitting ? <LoaderCircle className="animate-spin" size={18} aria-hidden="true" /> : null}
                   {submitting ? '正在创建账户...' : '创建账户'}
-                </button>
+                </Button>
               </form>
             </div>
             <p className="text-sm text-stone-600">已有账户？ <Link href="/login" className="font-semibold text-emerald-800 hover:text-emerald-950">登录</Link></p>

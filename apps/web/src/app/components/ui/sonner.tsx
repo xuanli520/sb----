@@ -1,14 +1,11 @@
 'use client';
 
-import { Toaster as Sonner, ToasterProps } from 'sonner';
-import { useThemeStore } from '@/stores/themeStore';
+import { Toaster as Sonner, type ToasterProps } from 'sonner';
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { colorMode } = useThemeStore();
-
   return (
     <Sonner
-      theme={colorMode as ToasterProps['theme']}
+      theme="light"
       className="toaster group"
       position="top-center"
       richColors

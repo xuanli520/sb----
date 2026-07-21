@@ -1,16 +1,59 @@
 package cn.edu.training.novel.api;
 
 import cn.edu.training.novel.domain.*;
+import cn.edu.training.novel.service.CatalogDiscoveryService;
 import cn.edu.training.novel.service.NovelStore;
-import java.util.*;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/public")
 public class PublicController {
     private final NovelStore store;
-    public PublicController(NovelStore store) { this.store=store; }
-    @GetMapping("/books") ApiResponse<Map<String,Object>> books(@RequestParam(required=false) String q,@RequestParam(required=false) String category,@RequestParam(required=false) String status) { List<Book> items=store.published(q,category,status); return ApiResponse.ok(Map.of("items",items,"meta",Map.of("total",items.size()))); }
-    @GetMapping("/books/{id}") ApiResponse<Map<String,Object>> book(@PathVariable long id) { return ApiResponse.ok(Map.of("book",store.publishedBook(id),"chapters",store.publishedChapters(id),"comments",store.comments(id))); }
-    @GetMapping("/home") ApiResponse<Map<String,Object>> home() { List<Book> books=store.published(null,null,null); return ApiResponse.ok(Map.of("carousel",books.stream().limit(2).toList(),"recommendations",books,"hot",books.stream().limit(3).toList(),"categories",List.of("科幻","悬疑","古言"))); }
+    private final CatalogDiscoveryService discovery;
+
+    public PublicController(NovelStore store, CatalogDiscoveryService discovery) {
+        this.store = store;
+        this.discovery = discovery;
+    }
+
+    @GetMapping("/books")
+    ApiResponse<CatalogDiscoveryService.CatalogPage> books(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false, name = "status") String serialStatus,
+            @RequestParam(required = false) Integer minWords,
+            @RequestParam(required = false) Integer maxWords) {
+        // `type` is a documented compatibility alias for clients which call a category a type.
+        String selectedCategory = category == null || category.isBlank() ? type : category;
+        return ApiResponse.ok(discovery.books(q, selectedCategory, serialStatus, minWords, maxWords));
+    }
+
+    @GetMapping("/books/{id}")
+    ApiResponse<java.util.Map<String, Object>> book(@PathVariable long id) {
+        return ApiResponse.ok(java.util.Map.of(
+                "book", store.publishedBook(id),
+                "chapters", store.publishedChapters(id),
+                "comments", store.comments(id)));
+    }
+
+    @GetMapping("/home")
+    ApiResponse<CatalogDiscoveryService.DiscoveryHome> home() {
+        return ApiResponse.ok(discovery.home());
+    }
+
+    @GetMapping("/hot")
+    ApiResponse<java.util.List<Book>> hot(@RequestParam(defaultValue = "10") int limit) {
+        return ApiResponse.ok(discovery.hot(limit));
+    }
+
+    @GetMapping("/recommendations")
+    ApiResponse<java.util.List<Book>> recommendations(@RequestParam(defaultValue = "10") int limit) {
+        return ApiResponse.ok(discovery.recommendations(limit));
+    }
+
+    @GetMapping("/hot-searches")
+    ApiResponse<java.util.List<HotSearchTerm>> hotSearchTerms() {
+        return ApiResponse.ok(discovery.hotSearchTerms());
+    }
 }

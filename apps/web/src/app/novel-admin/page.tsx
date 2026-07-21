@@ -1,21 +1,150 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Check, ClipboardCheck, Clock3, Plus, ShieldAlert, ShieldCheck, Users, X } from 'lucide-react';
+import { BookOpen, Check, ClipboardCheck, Clock3, MessageSquareText, Plus, ShieldAlert, ShieldCheck, TextQuote, Users, X } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
+import { Skeleton } from '@/app/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
-import { Book, novelApi } from '@/features/novel/api';
+import { AdminOperationsPanels } from '@/components/novel/AdminOperationsPanels';
+import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
+import { Book, ParagraphAnnotation, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
 type Application = { id: number; penName: string; statement: string; status: string };
+type Comment = { id: number; bookId: number; chapterId: number | null; userId: number; authorName: string; content: string; status: string; createdAt: string };
+type CommentPage = { items: Comment[]; meta: { total: number; page: number; size: number } };
+type RedemptionCode = {
+  code: string;
+  batchNo: string;
+  benefitType: string;
+  tokenAmount: number;
+  bookId: number | null;
+  membershipDays: number;
+  status: string;
+  expiresAt: string | null;
+  redeemedByUserId: number | null;
+  redeemedAt: string | null;
+};
+type RedemptionCodePage = { items: RedemptionCode[]; page: number; size: number; total: number };
+type GeneratedRedemptionCodeBatch = { batchNo: string; codes: RedemptionCode[] };
+type RedemptionBenefitsDraft = { tokenAmount: string; membershipDays: string; bookId: string; expiresAt: string };
 type Notice = { message: string; tone: 'success' | 'error' };
+
+const emptyRedemptionBenefits: RedemptionBenefitsDraft = { tokenAmount: '', membershipDays: '', bookId: '', expiresAt: '' };
+
+function optionalInteger(value: string, label: string, minimum: number) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum) throw new Error(`${label}必须是${minimum === 0 ? '非负' : '正'}整数。`);
+  return parsed;
+}
+
+function redemptionBenefitsPayload(values: RedemptionBenefitsDraft) {
+  const tokenAmount = optionalInteger(values.tokenAmount, '代币数量', 0);
+  const membershipDays = optionalInteger(values.membershipDays, '会员天数', 0);
+  const bookId = optionalInteger(values.bookId, '书籍 ID', 1);
+  const expiresAt = values.expiresAt ? new Date(values.expiresAt) : undefined;
+  if (expiresAt && Number.isNaN(expiresAt.getTime())) throw new Error('到期时间格式无效。');
+  if (!(tokenAmount || membershipDays || bookId)) throw new Error('请至少填写一种兑换权益。');
+  return {
+    tokenAmount: tokenAmount || undefined,
+    membershipDays: membershipDays || undefined,
+    bookId,
+    expiresAt: expiresAt?.toISOString(),
+  };
+}
+
+function formatRedemptionBenefits(code: RedemptionCode) {
+  const benefits = [
+    code.tokenAmount > 0 ? `${code.tokenAmount.toLocaleString('zh-CN')} 代币` : '',
+    code.membershipDays > 0 ? `${code.membershipDays} 天会员` : '',
+    code.bookId ? `书籍 #${code.bookId}` : '',
+  ].filter(Boolean);
+  return benefits.join(' + ') || code.benefitType;
+}
+
+function formatRedemptionTime(value: string | null) {
+  if (!value) return '永久有效';
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(timestamp);
+}
+
+function RedemptionStatusBadge({ status }: { status: string }) {
+  const meta = {
+    ACTIVE: { label: '可使用', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+    REDEEMED: { label: '已核销', className: 'border-sky-200 bg-sky-50 text-sky-800' },
+    DISABLED: { label: '已禁用', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+    EXPIRED: { label: '已到期', className: 'border-stone-300 bg-stone-100 text-stone-700' },
+  }[status] ?? { label: status, className: 'border-stone-300 bg-stone-100 text-stone-700' };
+
+  return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
+}
+
+function RedemptionBenefitFields({
+  prefix,
+  values,
+  onChange,
+}: {
+  prefix: string;
+  values: RedemptionBenefitsDraft;
+  onChange: (field: keyof RedemptionBenefitsDraft, value: string) => void;
+}) {
+  const idPrefix = prefix === '生成' ? 'generate' : 'import';
+  return (
+    <fieldset className="mt-4 border-t border-stone-100 pt-4">
+      <legend className="px-0 text-sm font-medium text-stone-800">兑换权益</legend>
+      <p className="mt-1 text-xs leading-5 text-stone-500">代币、会员和书籍可组合，至少填写一项。</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div>
+          <Label htmlFor={`${idPrefix}-token-amount`} className="text-stone-700">{prefix}代币数量</Label>
+          <Input id={`${idPrefix}-token-amount`} aria-label={`${prefix}代币数量`} type="number" min="0" step="1" inputMode="numeric" value={values.tokenAmount} onChange={(event) => onChange('tokenAmount', event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="例如 100" />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-membership-days`} className="text-stone-700">{prefix}会员天数</Label>
+          <Input id={`${idPrefix}-membership-days`} aria-label={`${prefix}会员天数`} type="number" min="0" max="36500" step="1" inputMode="numeric" value={values.membershipDays} onChange={(event) => onChange('membershipDays', event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="例如 30" />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-book-id`} className="text-stone-700">{prefix}书籍 ID</Label>
+          <Input id={`${idPrefix}-book-id`} aria-label={`${prefix}书籍 ID`} type="number" min="1" step="1" inputMode="numeric" value={values.bookId} onChange={(event) => onChange('bookId', event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="例如 7" />
+        </div>
+      </div>
+      <div className="mt-3 max-w-xs">
+        <Label htmlFor={`${idPrefix}-expires-at`} className="text-stone-700">{prefix}到期时间</Label>
+        <Input id={`${idPrefix}-expires-at`} aria-label={`${prefix}到期时间`} type="datetime-local" value={values.expiresAt} onChange={(event) => onChange('expiresAt', event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+      </div>
+    </fieldset>
+  );
+}
 
 export default function NovelAdminPage() {
   const [dashboard, setDashboard] = useState<Dashboard>();
   const [reviews, setReviews] = useState<Book[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [commentReviews, setCommentReviews] = useState<Comment[]>([]);
+  const [commentReviewTotal, setCommentReviewTotal] = useState(0);
+  const [commentReasons, setCommentReasons] = useState<Record<number, string>>({});
+  const [annotationReviews, setAnnotationReviews] = useState<ParagraphAnnotation[]>([]);
+  const [annotationReviewTotal, setAnnotationReviewTotal] = useState(0);
+  const [annotationReasons, setAnnotationReasons] = useState<Record<number, string>>({});
   const [words, setWords] = useState<string[]>([]);
   const [word, setWord] = useState('');
+  const [redemptionCodes, setRedemptionCodes] = useState<RedemptionCode[]>([]);
+  const [redemptionCodeTotal, setRedemptionCodeTotal] = useState(0);
+  const [generateQuantity, setGenerateQuantity] = useState('10');
+  const [generateBatchNo, setGenerateBatchNo] = useState('');
+  const [generatePrefix, setGeneratePrefix] = useState('NVC');
+  const [generateBenefits, setGenerateBenefits] = useState<RedemptionBenefitsDraft>(emptyRedemptionBenefits);
+  const [importCode, setImportCode] = useState('');
+  const [importBatchNo, setImportBatchNo] = useState('');
+  const [importBenefits, setImportBenefits] = useState<RedemptionBenefitsDraft>(emptyRedemptionBenefits);
+  const [generatedBatch, setGeneratedBatch] = useState<GeneratedRedemptionCodeBatch>();
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
@@ -23,16 +152,25 @@ export default function NovelAdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextDashboard, nextReviews, nextApplications, nextWords] = await Promise.all([
+      const [nextDashboard, nextReviews, nextApplications, nextWords, nextCommentReviews, nextAnnotationReviews, nextRedemptionCodes] = await Promise.all([
         novelApi<Dashboard>('admin/dashboard', 'admin'),
         novelApi<Book[]>('admin/reviews', 'admin'),
         novelApi<Application[]>('admin/author-applications', 'admin'),
         novelApi<string[]>('admin/sensitive-words', 'admin'),
+        novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin'),
+        novelApi<ParagraphAnnotationPage>('admin/annotations?status=PENDING_REVIEW&size=20', 'admin'),
+        novelApi<RedemptionCodePage>('admin/redemption-codes?size=20', 'admin'),
       ]);
       setDashboard(nextDashboard);
       setReviews(nextReviews);
       setApplications(nextApplications);
       setWords(nextWords);
+      setCommentReviews(nextCommentReviews.items);
+      setCommentReviewTotal(nextCommentReviews.meta.total);
+      setAnnotationReviews(nextAnnotationReviews.items);
+      setAnnotationReviewTotal(nextAnnotationReviews.meta.total);
+      setRedemptionCodes(nextRedemptionCodes.items);
+      setRedemptionCodeTotal(nextRedemptionCodes.total);
     } catch (reason) {
       setNotice({ message: reason instanceof Error ? reason.message : '运营数据暂时无法加载。', tone: 'error' });
     } finally {
@@ -76,6 +214,50 @@ export default function NovelAdminPage() {
     }
   };
 
+  const decideComment = async (comment: Comment, approve: boolean) => {
+    setPendingAction(`comment-${comment.id}`);
+    const reason = commentReasons[comment.id]?.trim() || (approve ? '内容符合社区规范' : '不符合社区规范');
+    try {
+      await novelApi<Comment>(`admin/comments/${comment.id}/review`, 'admin', {
+        method: 'POST',
+        body: JSON.stringify({ approve, reason }),
+      });
+      setCommentReasons((current) => {
+        const next = { ...current };
+        delete next[comment.id];
+        return next;
+      });
+      announce(approve ? '评论已通过并对读者可见' : '评论已驳回');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '评论审核失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const decideAnnotation = async (annotation: ParagraphAnnotation, approve: boolean) => {
+    setPendingAction(`annotation-${annotation.id}`);
+    const reason = annotationReasons[annotation.id]?.trim() || (approve ? '划线分享符合社区规范' : '划线分享不符合社区规范');
+    try {
+      await novelApi<ParagraphAnnotation>(`admin/annotations/${annotation.id}/review`, 'admin', {
+        method: 'POST',
+        body: JSON.stringify({ approve, reason }),
+      });
+      setAnnotationReasons((current) => {
+        const next = { ...current };
+        delete next[annotation.id];
+        return next;
+      });
+      announce(approve ? '段评与划线已通过并对读者可见' : '段评与划线已驳回');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '段评审核失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
   const addWord = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedWord = word.trim();
@@ -88,6 +270,112 @@ export default function NovelAdminPage() {
       await load();
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '添加敏感词失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const changeGenerateBenefit = (field: keyof RedemptionBenefitsDraft, value: string) => {
+    setGenerateBenefits((current) => ({ ...current, [field]: value }));
+  };
+
+  const changeImportBenefit = (field: keyof RedemptionBenefitsDraft, value: string) => {
+    setImportBenefits((current) => ({ ...current, [field]: value }));
+  };
+
+  const generateRedemptionCodes = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    let benefits: ReturnType<typeof redemptionBenefitsPayload>;
+    let quantity: number | undefined;
+    try {
+      quantity = optionalInteger(generateQuantity, '生成数量', 1);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '生成数量无效。', 'error');
+      return;
+    }
+    if (!quantity || quantity > 1000) {
+      announce('生成数量必须为 1 到 1000 之间的整数。', 'error');
+      return;
+    }
+    if (!generateBatchNo.trim()) {
+      announce('请填写生成批次，方便后续追踪和筛选。', 'error');
+      return;
+    }
+    try {
+      benefits = redemptionBenefitsPayload(generateBenefits);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '兑换权益配置无效。', 'error');
+      return;
+    }
+
+    setPendingAction('redemption-generate');
+    try {
+      const batch = await novelApi<GeneratedRedemptionCodeBatch>('admin/redemption-codes/generate', 'admin', {
+        method: 'POST',
+        body: JSON.stringify({
+          quantity,
+          batchNo: generateBatchNo.trim(),
+          codePrefix: generatePrefix.trim() || undefined,
+          ...benefits,
+        }),
+      });
+      setGeneratedBatch(batch);
+      setGenerateBenefits(emptyRedemptionBenefits);
+      announce(`批次 ${batch.batchNo} 已生成 ${batch.codes.length} 个兑换码`);
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '生成兑换码失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const importRedemptionCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    let benefits: ReturnType<typeof redemptionBenefitsPayload>;
+    if (!importCode.trim() || !importBatchNo.trim()) {
+      announce('请填写兑换码和导入批次。', 'error');
+      return;
+    }
+    try {
+      benefits = redemptionBenefitsPayload(importBenefits);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '兑换权益配置无效。', 'error');
+      return;
+    }
+
+    setPendingAction('redemption-import');
+    try {
+      const imported = await novelApi<RedemptionCode>('admin/redemption-codes/import', 'admin', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: importCode.trim(),
+          batchNo: importBatchNo.trim(),
+          ...benefits,
+        }),
+      });
+      setImportCode('');
+      setImportBenefits(emptyRedemptionBenefits);
+      announce(`兑换码 ${imported.code} 已导入批次 ${imported.batchNo}`);
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '导入兑换码失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const disableRedemptionCode = async (code: RedemptionCode) => {
+    setPendingAction(`redemption-disable-${code.code}`);
+    try {
+      await novelApi<RedemptionCode>(`admin/redemption-codes/${encodeURIComponent(code.code)}/disable`, 'admin', {
+        method: 'POST',
+        body: JSON.stringify({ reason: '运营中心手动停用' }),
+      });
+      announce(`兑换码 ${code.code} 已禁用`);
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '停用兑换码失败，请稍后重试。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -106,17 +394,121 @@ export default function NovelAdminPage() {
         eyebrow="运营中心"
         title="内容与运营，清晰可追溯。"
         description="集中处理作品上线、作者准入与内容规则；关键操作会记录到审计链。"
-        actions={<Link href="/" className="inline-flex items-center gap-2 border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><BookOpen size={16} aria-hidden="true" />查看书城</Link>}
+        actions={<Button asChild variant="outline" size="sm" className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><Link href="/"><BookOpen size={16} aria-hidden="true" />查看书城</Link></Button>}
       />
 
       {notice ? <div className="mt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
 
       <section className="mt-7 grid gap-px overflow-hidden border border-stone-200 bg-stone-200 sm:grid-cols-2 xl:grid-cols-4" aria-label="运营概览">
-        {loading && metrics.length === 0 ? [0, 1, 2, 3].map((item) => <div key={item} className="h-32 animate-pulse bg-white" />) : null}
+        {loading && metrics.length === 0 ? [0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-32 rounded-none bg-white" />) : null}
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return <div key={metric.name} className="bg-white px-5 py-5"><Icon size={18} className="text-emerald-700" aria-hidden="true" /><strong className="mt-3 block text-2xl font-semibold text-stone-950">{metric.value.toLocaleString('zh-CN')}</strong><span className="mt-1 block text-sm text-stone-700">{metric.name}</span><span className="mt-1 block text-xs text-stone-500">{metric.note}</span></div>;
         })}
+      </section>
+
+      <section className="mt-7" aria-labelledby="redemption-code-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">权益运营</p>
+            <h2 id="redemption-code-heading" className="mt-1 text-xl font-semibold text-stone-950">兑换码管理</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">批量发放、单码导入与未核销码停用都保留在运营审计中。</p>
+          </div>
+          <span className="text-sm text-stone-500">{redemptionCodeTotal ? `共 ${redemptionCodeTotal.toLocaleString('zh-CN')} 个兑换码` : '尚未创建兑换码'}</span>
+        </div>
+
+        {generatedBatch ? (
+          <Alert role="status" className="mt-5 rounded-none border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-950">
+            <AlertDescription className="text-inherit">
+              <p className="font-medium">批次 {generatedBatch.batchNo} 已生成 {generatedBatch.codes.length} 个兑换码，请在离开页面前保存。</p>
+              <div className="mt-3 flex flex-wrap gap-2" aria-label="刚生成的兑换码">
+                {generatedBatch.codes.map((code) => <code key={code.code} className="border border-emerald-200 bg-white px-2 py-1 font-mono text-xs text-emerald-950">{code.code}</code>)}
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="mt-5 grid gap-6 2xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,.8fr)]">
+          <div className="min-w-0 border border-stone-200 bg-white">
+            <div className="flex flex-col gap-2 border-b border-stone-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="font-semibold text-stone-950">最近兑换码</h3>
+              <span className="text-xs text-stone-500">显示最近 20 条记录</span>
+            </div>
+            {loading && redemptionCodes.length === 0 ? <div className="p-5"><Skeleton className="h-40 rounded-none bg-stone-100" /></div> : null}
+            {!loading && redemptionCodes.length === 0 ? <div className="px-5 py-12 text-center"><ClipboardCheck className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有兑换码</p><p className="mt-1 text-sm text-stone-500">可通过右侧表单生成批次或导入已有兑换码。</p></div> : null}
+            {redemptionCodes.length > 0 ? (
+              <Table className="min-w-[820px] text-stone-700">
+                  <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead scope="col" className="px-4 py-3 font-medium">兑换码</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 font-medium">状态</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 font-medium">批次</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 font-medium">权益</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 font-medium">到期</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 font-medium">已核销</TableHead>
+                      <TableHead scope="col" className="px-4 py-3 text-right font-medium">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="text-stone-700">
+                    {redemptionCodes.map((code) => {
+                      const canDisable = code.status === 'ACTIVE' && !code.redeemedAt;
+                      return (
+                        <TableRow key={code.code} className="border-stone-100 hover:bg-stone-50">
+                          <TableCell className="whitespace-nowrap px-4 py-4"><code className="font-mono text-xs font-medium text-stone-950">{code.code}</code></TableCell>
+                          <TableCell className="px-4 py-4"><RedemptionStatusBadge status={code.status} /></TableCell>
+                          <TableCell className="whitespace-nowrap px-4 py-4 text-xs font-medium text-stone-800">{code.batchNo}</TableCell>
+                          <TableCell className="max-w-48 px-4 py-4 leading-5 text-stone-700">{formatRedemptionBenefits(code)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-600">{formatRedemptionTime(code.expiresAt)}</TableCell>
+                          <TableCell className="px-4 py-4 text-xs leading-5 text-stone-600">{code.redeemedAt ? <><span>用户 #{code.redeemedByUserId ?? '未知'}</span><br /><time dateTime={code.redeemedAt}>{formatRedemptionTime(code.redeemedAt)}</time></> : '未核销'}</TableCell>
+                          <TableCell className="px-4 py-4 text-right">
+                            {canDisable ? <Button type="button" variant="outline" size="sm" aria-label={`禁用 ${code.code}`} onClick={() => void disableRedemptionCode(code)} disabled={pendingAction === `redemption-disable-${code.code}`} className="h-auto rounded-none border-rose-200 bg-white px-2.5 py-1.5 text-rose-700 hover:border-rose-500 hover:text-rose-800">禁用</Button> : <span className="text-xs text-stone-400">{code.status === 'REDEEMED' ? '已核销' : '不可停用'}</span>}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+              </Table>
+            ) : null}
+          </div>
+
+          <div className="space-y-6">
+            <form onSubmit={generateRedemptionCodes} className="border border-stone-200 bg-white p-5">
+              <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-emerald-700">批量发放</p><h3 className="mt-1 text-lg font-semibold text-stone-950">生成兑换码</h3></div><Plus className="text-emerald-700" size={20} aria-hidden="true" /></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div>
+                  <Label htmlFor="generate-quantity" className="text-stone-700">生成数量</Label>
+                  <Input id="generate-quantity" aria-label="生成数量" type="number" min="1" max="1000" required value={generateQuantity} onChange={(event) => setGenerateQuantity(event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+                </div>
+                <div>
+                  <Label htmlFor="generate-batch-no" className="text-stone-700">生成批次</Label>
+                  <Input id="generate-batch-no" aria-label="生成批次" required maxLength={64} value={generateBatchNo} onChange={(event) => setGenerateBatchNo(event.target.value.toUpperCase())} className="mt-2 h-10 rounded-none border-stone-300 bg-white font-mono text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="SUMMER-2026" />
+                </div>
+                <div>
+                  <Label htmlFor="generate-prefix" className="text-stone-700">码前缀</Label>
+                  <Input id="generate-prefix" aria-label="码前缀" maxLength={20} value={generatePrefix} onChange={(event) => setGeneratePrefix(event.target.value.toUpperCase())} className="mt-2 h-10 rounded-none border-stone-300 bg-white font-mono text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="NVC" />
+                </div>
+              </div>
+              <RedemptionBenefitFields prefix="生成" values={generateBenefits} onChange={changeGenerateBenefit} />
+              <Button type="submit" disabled={pendingAction === 'redemption-generate'} className="mt-5 h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><Plus size={15} aria-hidden="true" />生成兑换码</Button>
+            </form>
+
+            <form onSubmit={importRedemptionCode} className="border border-stone-200 bg-white p-5">
+              <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-emerald-700">单码录入</p><h3 className="mt-1 text-lg font-semibold text-stone-950">导入兑换码</h3></div><ClipboardCheck className="text-emerald-700" size={20} aria-hidden="true" /></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="import-code" className="text-stone-700">导入兑换码</Label>
+                  <Input id="import-code" aria-label="导入兑换码" required maxLength={64} value={importCode} onChange={(event) => setImportCode(event.target.value.toUpperCase())} className="mt-2 h-10 rounded-none border-stone-300 bg-white font-mono text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="PARTNER-2026-A1B2" />
+                </div>
+                <div>
+                  <Label htmlFor="import-batch-no" className="text-stone-700">导入批次</Label>
+                  <Input id="import-batch-no" aria-label="导入批次" required maxLength={64} value={importBatchNo} onChange={(event) => setImportBatchNo(event.target.value.toUpperCase())} className="mt-2 h-10 rounded-none border-stone-300 bg-white font-mono text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="PARTNER-2026" />
+                </div>
+              </div>
+              <RedemptionBenefitFields prefix="导入" values={importBenefits} onChange={changeImportBenefit} />
+              <Button type="submit" disabled={pendingAction === 'redemption-import'} className="mt-5 h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><ClipboardCheck size={15} aria-hidden="true" />导入单个码</Button>
+            </form>
+          </div>
+        </div>
       </section>
 
       <section className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,.8fr)]">
@@ -128,7 +520,7 @@ export default function NovelAdminPage() {
             </div>
             <span className="text-sm text-stone-500">完整作品上线前必须由站长决定</span>
           </div>
-          {loading ? <div className="p-5"><div className="h-24 animate-pulse bg-stone-100" /></div> : null}
+          {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
           {!loading && reviews.length === 0 ? <div className="px-5 py-12 text-center"><ClipboardCheck className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核作品</p><p className="mt-1 text-sm text-stone-500">新提交的完整作品会在这里出现。</p></div> : null}
           {!loading && reviews.length > 0 ? (
             <div className="divide-y divide-stone-100">
@@ -141,8 +533,8 @@ export default function NovelAdminPage() {
                       <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-600">{book.synopsis}</p>
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <button type="button" onClick={() => void decideBook(book, false)} disabled={pendingAction === `book-${book.id}`} className="inline-flex items-center gap-1 border border-rose-200 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:border-rose-500 disabled:opacity-50"><X size={15} aria-hidden="true" />驳回</button>
-                      <button type="button" onClick={() => void decideBook(book, true)} disabled={pendingAction === `book-${book.id}`} className="inline-flex items-center gap-1 bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"><Check size={15} aria-hidden="true" />批准上线</button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void decideBook(book, false)} disabled={pendingAction === `book-${book.id}`} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800"><X size={15} aria-hidden="true" />驳回</Button>
+                      <Button type="button" size="sm" onClick={() => void decideBook(book, true)} disabled={pendingAction === `book-${book.id}`} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><Check size={15} aria-hidden="true" />批准上线</Button>
                     </div>
                   </div>
                 </article>
@@ -159,28 +551,99 @@ export default function NovelAdminPage() {
         </aside>
       </section>
 
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="comment-review-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">互动审核</p>
+            <h2 id="comment-review-heading" className="mt-1 text-xl font-semibold text-stone-950">待审核评论</h2>
+          </div>
+          <span className="text-sm text-stone-500">{commentReviewTotal ? `${commentReviewTotal.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示命中规则的评论'}</span>
+        </div>
+        {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+        {!loading && commentReviews.length === 0 ? <div className="px-5 py-12 text-center"><MessageSquareText className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核评论</p><p className="mt-1 text-sm text-stone-500">命中内容规则的评论会在这里等待处理。</p></div> : null}
+        {!loading && commentReviews.length > 0 ? (
+          <div className="divide-y divide-stone-100">
+            {commentReviews.map((comment) => (
+              <article key={comment.id} className="grid gap-4 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.55fr)]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">{comment.authorName}</h3><NovelStatusBadge status={comment.status} /></div>
+                  <p className="mt-1 text-xs text-stone-500">作品 #{comment.bookId}{comment.chapterId ? ` · 章节评论 #${comment.chapterId}` : ' · 书评'}</p>
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700">{comment.content}</p>
+                </div>
+                <div className="border-t border-stone-100 pt-4 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                  <Label htmlFor={`comment-reason-${comment.id}`} className="text-stone-700">审核说明</Label>
+                  <Input id={`comment-reason-${comment.id}`} aria-label={`审核说明 ${comment.id}`} value={commentReasons[comment.id] ?? ''} onChange={(event) => setCommentReasons((current) => ({ ...current, [comment.id]: event.target.value }))} disabled={pendingAction === `comment-${comment.id}`} className="mt-2 h-10 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="可补充审核说明" />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => void decideComment(comment, false)} disabled={pendingAction === `comment-${comment.id}`} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800"><X size={15} aria-hidden="true" />驳回</Button>
+                    <Button type="button" size="sm" onClick={() => void decideComment(comment, true)} disabled={pendingAction === `comment-${comment.id}`} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><Check size={15} aria-hidden="true" />通过</Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="annotation-review-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">互动审核</p>
+            <h2 id="annotation-review-heading" className="mt-1 text-xl font-semibold text-stone-950">待审核段评与划线</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">读者申请公开的划线会在站长审核通过后显示在章节旁。</p>
+          </div>
+          <span className="text-sm text-stone-500">{annotationReviewTotal ? `${annotationReviewTotal.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示申请公开的段评'}</span>
+        </div>
+        {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+        {!loading && annotationReviews.length === 0 ? <div className="px-5 py-12 text-center"><TextQuote className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核段评与划线</p><p className="mt-1 text-sm text-stone-500">申请公开的读者划线会在这里等待处理。</p></div> : null}
+        {!loading && annotationReviews.length > 0 ? (
+          <div className="divide-y divide-stone-100">
+            {annotationReviews.map((annotation) => (
+              <article key={annotation.id} className="grid gap-4 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.55fr)]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">{annotation.authorName}</h3><NovelStatusBadge status={annotation.status} /></div>
+                  <p className="mt-1 text-xs text-stone-500">作品 #{annotation.bookId} · 章节 #{annotation.chapterId} · 第 {annotation.paragraphIndex + 1} 段</p>
+                  <blockquote className="mt-3 border-l-2 border-emerald-600 bg-emerald-50 px-3 py-3 text-sm leading-6 text-stone-800"><TextQuote className="mr-2 inline text-emerald-700" size={16} aria-hidden="true" />{annotation.selectedText}</blockquote>
+                  {annotation.note ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700"><span className="font-medium text-stone-800">读者附言：</span>{annotation.note}</p> : null}
+                </div>
+                <div className="border-t border-stone-100 pt-4 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                  <Label htmlFor={`annotation-reason-${annotation.id}`} className="text-stone-700">审核说明</Label>
+                  <Input id={`annotation-reason-${annotation.id}`} aria-label={`段评审核说明 ${annotation.id}`} value={annotationReasons[annotation.id] ?? ''} onChange={(event) => setAnnotationReasons((current) => ({ ...current, [annotation.id]: event.target.value }))} disabled={pendingAction === `annotation-${annotation.id}`} className="mt-2 h-10 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="可补充审核说明" />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" aria-label={`驳回段评 ${annotation.id}`} onClick={() => void decideAnnotation(annotation, false)} disabled={pendingAction === `annotation-${annotation.id}`} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800"><X size={15} aria-hidden="true" />驳回</Button>
+                    <Button type="button" size="sm" aria-label={`通过段评 ${annotation.id}`} onClick={() => void decideAnnotation(annotation, true)} disabled={pendingAction === `annotation-${annotation.id}`} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><Check size={15} aria-hidden="true" />通过</Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
       <section className="mt-7 grid gap-6 xl:grid-cols-2">
         <div className="border border-stone-200 bg-white">
           <div className="border-b border-stone-200 px-5 py-5"><p className="text-xs font-semibold text-emerald-700">作者申请</p><h2 className="mt-1 text-xl font-semibold text-stone-950">创作者准入</h2></div>
-          {loading ? <div className="p-5"><div className="h-20 animate-pulse bg-stone-100" /></div> : null}
+          {loading ? <div className="p-5"><Skeleton className="h-20 rounded-none bg-stone-100" /></div> : null}
           {!loading && applications.length === 0 ? <p className="px-5 py-10 text-sm text-stone-500">当前没有待处理申请。</p> : null}
-          {!loading && applications.length > 0 ? <div className="divide-y divide-stone-100">{applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><h3 className="font-semibold text-stone-950">{application.penName}</h3><NovelStatusBadge status={application.status} /></div><p className="mt-2 text-sm leading-6 text-stone-600">{application.statement}</p></div><div className="flex shrink-0 gap-2"><button type="button" onClick={() => void decideApplication(application, false)} disabled={pendingAction === `application-${application.id}`} className="border border-rose-200 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:border-rose-500 disabled:opacity-50">驳回</button><button type="button" onClick={() => void decideApplication(application, true)} disabled={pendingAction === `application-${application.id}`} className="bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">通过</button></div></article>)}</div> : null}
+          {!loading && applications.length > 0 ? <div className="divide-y divide-stone-100">{applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><h3 className="font-semibold text-stone-950">{application.penName}</h3><NovelStatusBadge status={application.status} /></div><p className="mt-2 text-sm leading-6 text-stone-600">{application.statement}</p></div><div className="flex shrink-0 gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void decideApplication(application, false)} disabled={pendingAction === `application-${application.id}`} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800">驳回</Button><Button type="button" size="sm" onClick={() => void decideApplication(application, true)} disabled={pendingAction === `application-${application.id}`} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800">通过</Button></div></article>)}</div> : null}
         </div>
 
         <form onSubmit={addWord} className="border border-stone-200 bg-white p-5">
           <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-emerald-700">内容规则</p><h2 className="mt-1 text-xl font-semibold text-stone-950">敏感词库</h2></div><ShieldAlert className="text-emerald-700" size={20} aria-hidden="true" /></div>
           <p className="mt-3 text-sm leading-6 text-stone-600">词条命中时，章节会进入人工复核，而不会自动上线。</p>
-          <label className="mt-5 block text-sm font-medium text-stone-700">敏感词
+          <div className="mt-5">
+            <Label htmlFor="sensitive-word" className="text-stone-700">敏感词</Label>
             <span className="mt-2 flex">
-              <input aria-label="敏感词" required value={word} onChange={(event) => setWord(event.target.value)} className="min-w-0 flex-1 border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-700" placeholder="输入需要拦截的词条" />
-              <button type="submit" disabled={pendingAction === 'word'} className="inline-flex shrink-0 items-center gap-1 bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"><Plus size={15} aria-hidden="true" />添加</button>
+              <Input id="sensitive-word" aria-label="敏感词" required value={word} onChange={(event) => setWord(event.target.value)} className="h-11 min-w-0 flex-1 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="输入需要拦截的词条" />
+              <Button type="submit" disabled={pendingAction === 'word'} className="h-11 shrink-0 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800"><Plus size={15} aria-hidden="true" />添加</Button>
             </span>
-          </label>
+          </div>
           <div className="mt-5 flex flex-wrap gap-2" aria-label="当前敏感词">
-            {words.length ? words.map((item) => <span key={item} className="border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-900">{item}</span>) : <p className="text-sm text-stone-500">暂未配置词条</p>}
+            {words.length ? words.map((item) => <Badge key={item} variant="outline" className="rounded-none border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-900">{item}</Badge>) : <p className="text-sm text-stone-500">暂未配置词条</p>}
           </div>
         </form>
       </section>
+      <EditorialOperationsPanel />
+      <AdminOperationsPanels />
     </NovelShell>
   );
 }

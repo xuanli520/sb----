@@ -1,5 +1,6 @@
 package cn.edu.training.novel.service;
 
+import cn.edu.training.novel.config.BootstrapAdminProperties;
 import cn.edu.training.novel.domain.Role;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -119,10 +120,31 @@ public class AuthService {
     }
 
     @Transactional
-    public void setEnabled(long accountId, boolean enabled) {
-        jdbc.update("UPDATE novel_account SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", enabled, accountId);
+    public boolean setEnabled(long accountId, boolean enabled) {
+        int updated = jdbc.update(
+                "UPDATE novel_account SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                enabled,
+                accountId);
+        if (updated != 1) {
+            throw new java.util.NoSuchElementException("account not found");
+        }
         if (!enabled) {
             jdbc.update("UPDATE novel_login_session SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = ? AND revoked_at IS NULL", accountId);
+        }
+        return enabled;
+    }
+
+    /**
+     * Account enablement is the only persisted source of a real user's lifecycle state. Absent
+     * account rows are allowed for explicit development identities and legacy test principals.
+     */
+    public void requireEnabled(long accountId) {
+        List<Boolean> states = jdbc.query(
+                "SELECT enabled FROM novel_account WHERE id = ?",
+                (resultSet, rowNumber) -> resultSet.getBoolean(1),
+                accountId);
+        if (!states.isEmpty() && !states.getFirst()) {
+            throw new SecurityException("account is disabled");
         }
     }
 
@@ -133,6 +155,56 @@ public class AuthService {
         Set<Role> roles = EnumSet.copyOf(account.get().roles());
         roles.add(role);
         jdbc.update("UPDATE novel_account SET roles = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", serializeRoles(roles), accountId);
+    }
+
+    /**
+     * Creates the configured first administrator or adds {@link Role#ADMIN} to an existing account.
+     * Existing credentials must match the deployment secret before any role or enablement change is
+     * applied, so a typo or stale environment variable cannot take over an unrelated account.
+     */
+    @Transactional
+    public BootstrapAdminResult bootstrapAdministrator(BootstrapAdminProperties.ConfiguredAdmin configuredAdmin) {
+        String loginName = normalizeLoginName(configuredAdmin.username());
+        Optional<AccountRow> existing = findAccountByLoginName(loginName);
+        if (existing.isEmpty()) {
+            try {
+                jdbc.update(
+                        "INSERT INTO novel_account(login_name, display_name, password_hash, roles, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                        loginName,
+                        configuredAdmin.displayName(),
+                        passwordEncoder.encode(configuredAdmin.password()),
+                        serializeRoles(Set.of(Role.READER, Role.ADMIN)));
+                return BootstrapAdminResult.CREATED;
+            } catch (DataIntegrityViolationException ignored) {
+                // Another application node may have initialized the same unique login concurrently.
+                // Re-read it below and apply the same credential verification before any upgrade.
+                existing = findAccountByLoginName(loginName);
+                if (existing.isEmpty()) {
+                    throw new IllegalStateException("configured bootstrap administrator could not be persisted");
+                }
+            }
+        }
+
+        AccountRow account = existing.orElseThrow();
+        if (!passwordEncoder.matches(configuredAdmin.password(), account.passwordHash())) {
+            throw new IllegalStateException(
+                    "configured bootstrap administrator credentials do not match the existing account");
+        }
+        EnumSet<Role> upgradedRoles = EnumSet.noneOf(Role.class);
+        upgradedRoles.addAll(account.roles());
+        upgradedRoles.add(Role.ADMIN);
+        boolean changed = !account.enabled()
+                || !account.displayName().equals(configuredAdmin.displayName())
+                || !upgradedRoles.equals(account.roles());
+        if (!changed) {
+            return BootstrapAdminResult.UNCHANGED;
+        }
+        jdbc.update(
+                "UPDATE novel_account SET display_name = ?, roles = ?, enabled = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                configuredAdmin.displayName(),
+                serializeRoles(upgradedRoles),
+                account.id());
+        return BootstrapAdminResult.UPGRADED;
     }
 
     private AuthenticatedSession createBffSession(AccountRow account) {
@@ -222,6 +294,12 @@ public class AuthService {
     }
 
     public record AuthenticatedSession(String bffSessionId, CurrentUser user, Instant expiresAt) {}
+
+    public enum BootstrapAdminResult {
+        CREATED,
+        UPGRADED,
+        UNCHANGED
+    }
 
     private record AccountRow(long id, String loginName, String displayName, String passwordHash, Set<Role> roles, boolean enabled) {}
 }

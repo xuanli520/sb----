@@ -1,4 +1,24 @@
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - edge
+      - application
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    restart: unless-stopped
+
   backend:
     build:
       context: .
@@ -6,36 +26,86 @@ services:
     environment:
       TZ: Asia/Shanghai
       NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
+      # Optional first production administrator. These three values must be supplied together;
+      # blank values intentionally leave bootstrap disabled.
+      NOVEL_BOOTSTRAP_ADMIN_USERNAME: ${NOVEL_BOOTSTRAP_ADMIN_USERNAME:-}
+      NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
+      NOVEL_BOOTSTRAP_ADMIN_PASSWORD: ${NOVEL_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # Qwen is backend-only and disabled by default. Supply all provider values through the
+      # deployment environment when enabling it; no model credential is passed to the web service.
+      NOVEL_RUNTIME_MODE: ${NOVEL_RUNTIME_MODE:-PRODUCTION}
+      NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED: ${NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED:-false}
+      QWEN_AUDIT_ENABLED: ${QWEN_AUDIT_ENABLED:-false}
+      QWEN_AUDIT_BASE_URL: ${QWEN_AUDIT_BASE_URL:-}
+      QWEN_AUDIT_MODEL: ${QWEN_AUDIT_MODEL:-}
+      QWEN_AUDIT_TIMEOUT: ${QWEN_AUDIT_TIMEOUT:-PT20S}
+      QWEN_AUDIT_MAX_RETRIES: ${QWEN_AUDIT_MAX_RETRIES:-0}
+      QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE: ${QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE:-60}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/novel_platform?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: novel
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
+    expose:
+      - "8080"
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+    networks:
+      - application
+      - mysql
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
     restart: unless-stopped
+
   web:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
       args:
         API_PROXY_TARGET: http://backend:8080
-        AUTH__JWT_SECRET: ${AUTH__JWT_SECRET:?AUTH__JWT_SECRET is required}
-        NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
     environment:
       API_PROXY_TARGET: http://backend:8080
-      AUTH__JWT_SECRET: ${AUTH__JWT_SECRET:?AUTH__JWT_SECRET is required}
       NOVEL_INTERNAL_API_KEY: ${NOVEL_INTERNAL_API_KEY:?NOVEL_INTERNAL_API_KEY is required}
+      # Browser cookies contain only opaque IDs. The mapping to the backend credential is shared
+      # by all web replicas through Redis; process-local memory is never enabled in production.
+      NOVEL_SESSION_STORE: redis
+      NOVEL_SESSION_REDIS_URL: ${NOVEL_SESSION_REDIS_URL:-redis://redis:6379/0}
+      NOVEL_SESSION_REDIS_PREFIX: ${NOVEL_SESSION_REDIS_PREFIX:-novel:bff:session:}
+      NOVEL_SESSION_TTL_SECONDS: ${NOVEL_SESSION_TTL_SECONDS:-28800}
+      # Auth POSTs use independent Redis keys and fail closed rather than bypassing anti-abuse
+      # protection. The URL defaults to the session Redis service when not overridden.
+      NOVEL_AUTH_RATE_LIMIT_ENABLED: ${NOVEL_AUTH_RATE_LIMIT_ENABLED:-true}
+      NOVEL_AUTH_RATE_LIMIT_REDIS_URL: ${NOVEL_AUTH_RATE_LIMIT_REDIS_URL:-redis://redis:6379/0}
+      NOVEL_AUTH_RATE_LIMIT_REDIS_PREFIX: ${NOVEL_AUTH_RATE_LIMIT_REDIS_PREFIX:-novel:bff:auth-rate-limit:}
+      NOVEL_AUTH_RATE_LIMIT_LOGIN_LIMIT: ${NOVEL_AUTH_RATE_LIMIT_LOGIN_LIMIT:-10}
+      NOVEL_AUTH_RATE_LIMIT_REGISTER_LIMIT: ${NOVEL_AUTH_RATE_LIMIT_REGISTER_LIMIT:-5}
+      NOVEL_AUTH_RATE_LIMIT_WINDOW_SECONDS: ${NOVEL_AUTH_RATE_LIMIT_WINDOW_SECONDS:-900}
+      # Keep false unless a trusted ingress overwrites X-Forwarded-For for every request.
+      NOVEL_AUTH_RATE_LIMIT_TRUSTED_PROXY_HEADERS: ${NOVEL_AUTH_RATE_LIMIT_TRUSTED_PROXY_HEADERS:-false}
+      NOVEL_PUBLIC_ORIGIN: ${NOVEL_PUBLIC_ORIGIN:?NOVEL_PUBLIC_ORIGIN is required}
       NOVEL_DEV_LOGIN_ENABLED: "false"
-    ports:
-      - "${WEB_PORT:-3000}:3000"
+    expose:
+      - "3000"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - application
+      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
     restart: unless-stopped
+
   mysql:
     image: mysql:8.4
     environment:
@@ -45,6 +115,8 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
     volumes:
       - mysql-data:/var/lib/mysql
+    networks:
+      - mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
@@ -55,6 +127,8 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
+    networks:
+      - redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -63,3 +137,12 @@ services:
 volumes:
   mysql-data:
   redis-data:
+
+networks:
+  edge:
+  application:
+    internal: true
+  mysql:
+    internal: true
+  redis:
+    internal: true

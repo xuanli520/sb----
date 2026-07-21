@@ -9,11 +9,13 @@ function loopback(hostname: string) {
  * only for local Next development, where Next can canonicalize 127.0.0.1 to localhost.
  */
 export function hasTrustedSameOrigin(request: NextRequest) {
-  const origin = request.headers.get('origin');
-  if (!origin) return false;
+  // Browsers send Origin for fetch/XHR writes. Referer is a strict same-origin fallback for
+  // compatible form navigations, never an unchecked URL prefix comparison.
+  const source = request.headers.get('origin') || request.headers.get('referer');
+  if (!source) return false;
   let actual: URL;
   try {
-    actual = new URL(origin);
+    actual = new URL(source);
   } catch {
     return false;
   }
@@ -21,13 +23,17 @@ export function hasTrustedSameOrigin(request: NextRequest) {
   const configuredOrigin = process.env.NOVEL_PUBLIC_ORIGIN;
   if (configuredOrigin) {
     try {
-      return actual.origin === new URL(configuredOrigin).origin;
+      const configured = new URL(configuredOrigin);
+      if (process.env.NODE_ENV === 'production' && configured.protocol !== 'https:') return false;
+      return actual.origin === configured.origin;
     } catch {
       return false;
     }
   }
-  if (actual.origin === request.nextUrl.origin) return true;
+  // Production must name its public HTTPS origin explicitly. Trusting an arbitrary Host header
+  // behind a reverse proxy weakens the CSRF boundary and is not a deployable D-12 configuration.
   if (process.env.NODE_ENV === 'production') return false;
+  if (actual.origin === request.nextUrl.origin) return true;
 
   const host = request.headers.get('host');
   if (!host) return false;

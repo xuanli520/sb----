@@ -68,8 +68,8 @@ class WalletPersistenceIntegrationTest {
         store.redeem(74, "WELCOME100");
 
         List<Attempt> attempts = runConcurrently(
-                () -> store.purchase(74, 1, 30),
-                () -> store.purchase(74, 1, 30));
+                () -> store.purchase(74, 1),
+                () -> store.purchase(74, 1));
 
         assertThat(attempts).allMatch(Attempt::succeeded);
         assertThat(attempts).allSatisfy(attempt -> {
@@ -87,21 +87,22 @@ class WalletPersistenceIntegrationTest {
     void failedDebitRollsBackReservedEntitlementAndRewardRecord() {
         store.redeem(75, "WELCOME100");
 
-        assertThatThrownBy(() -> store.purchase(75, 1, 101))
+        jdbc.update("UPDATE novel_book SET purchase_price = 101 WHERE id = 1");
+        assertThatThrownBy(() -> store.purchase(75, 1))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("insufficient tokens");
         assertThat(store.tokenBalance(75)).isEqualTo(100);
         assertThat(singleLong("SELECT COUNT(*) FROM novel_book_entitlement WHERE user_id = 75 AND book_id = 1")).isZero();
         assertThat(singleLong("SELECT COUNT(*) FROM novel_token_ledger WHERE user_id = 75")).isEqualTo(1L);
 
-        assertThatThrownBy(() -> store.reward(75, 1, 101))
+        assertThatThrownBy(() -> store.reward(75, 1, 101, "reward-insufficient"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("insufficient tokens");
         assertThat(store.tokenBalance(75)).isEqualTo(100);
         assertThat(singleLong("SELECT COUNT(*) FROM novel_reward_record WHERE rewarder_user_id = 75")).isZero();
         assertThat(singleLong("SELECT COUNT(*) FROM novel_token_ledger WHERE user_id = 75")).isEqualTo(1L);
 
-        Map<String, Object> reward = store.reward(75, 1, 20);
+        Map<String, Object> reward = store.reward(75, 1, 20, "reward-insufficient");
         assertThat(reward).containsEntry("bookId", 1L).containsEntry("amount", 20).containsEntry("balance", 80);
         assertThat(singleLong("SELECT amount FROM novel_reward_record WHERE rewarder_user_id = 75")).isEqualTo(20L);
         assertThat(singleLong("SELECT author_id FROM novel_reward_record WHERE rewarder_user_id = 75")).isEqualTo(2L);

@@ -7,7 +7,10 @@ RUN mvn --batch-mode --no-transfer-progress -pl apps/backend -am package -DskipT
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-RUN useradd --system --create-home --uid 10001 novel
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --uid 10001 novel
 COPY --from=build /workspace/apps/backend/target/novel-platform-api-0.1.0.jar /app/app.jar
 USER novel
 EXPOSE 8080

@@ -1,0 +1,251 @@
+package cn.edu.training.novel;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import cn.edu.training.novel.domain.Role;
+import cn.edu.training.novel.service.AdminOperationsService;
+import cn.edu.training.novel.service.AuthService;
+import com.jayway.jsonpath.JsonPath;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.web.servlet.MockMvc;
+
+@SpringBootTest(properties = {
+        "novel.internal-api-key=local-novel-internal-key",
+        "novel.development-auth-enabled=true",
+        "novel.scheduled-publication.enabled=false",
+        "spring.datasource.url=jdbc:h2:mem:admin_operations_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
+})
+@AutoConfigureMockMvc
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
+class AdminOperationsIntegrationTest {
+    private static final String INTERNAL_KEY = "local-novel-internal-key";
+    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
+
+    @Autowired MockMvc mvc;
+    @Autowired AuthService authService;
+    @Autowired AdminOperationsService adminOperationsService;
+    @Autowired JdbcTemplate jdbc;
+
+    @Test
+    void administratorCanFilterSuspendAuditAndReactivateAccountWithoutRestoringOldSession() throws Exception {
+        AuthService.AuthenticatedSession target = authService.register(
+                "managed.reader@example.test",
+                "运营管理读者",
+                "correct-horse-battery-staple");
+
+        mvc.perform(get("/api/v1/admin/accounts")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .param("query", "管理读者"))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/v1/admin/accounts")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .param("query", "managed.reader")
+                        .param("status", "ENABLED")
+                        .param("role", "READER")
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(target.user().id()))
+                .andExpect(jsonPath("$.data.items[0].loginName").value("managed.reader@example.test"))
+                .andExpect(jsonPath("$.data.items[0].enabled").value(true));
+
+        mvc.perform(post("/api/v1/admin/accounts/{accountId}/status", target.user().id())
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false,\"reason\":\"重复发布违规内容，暂停账号\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changed").value(true))
+                .andExpect(jsonPath("$.data.account.enabled").value(false))
+                .andExpect(jsonPath("$.data.audit.previousEnabled").value(true))
+                .andExpect(jsonPath("$.data.audit.enabled").value(false))
+                .andExpect(jsonPath("$.data.audit.operatorUserId").value(1))
+                .andExpect(jsonPath("$.data.audit.reason").value("重复发布违规内容，暂停账号"));
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_login_session WHERE account_id = ? AND revoked_at IS NOT NULL",
+                Integer.class,
+                target.user().id())).isEqualTo(1);
+        mvc.perform(get("/api/v1/account/profile")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", target.bffSessionId()))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/auth/login")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"managed.reader@example.test\",\"password\":\"correct-horse-battery-staple\"}"))
+                .andExpect(status().isUnauthorized());
+
+        mvc.perform(get("/api/v1/admin/accounts")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .param("status", "SUSPENDED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(target.user().id()));
+        mvc.perform(get("/api/v1/admin/accounts/{accountId}/status-audits", target.user().id())
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].reason").value("重复发布违规内容，暂停账号"))
+                .andExpect(jsonPath("$.data[0].operatorUserId").value(1));
+
+        mvc.perform(post("/api/v1/admin/users/{accountId}/status", target.user().id())
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"reason\":\"申诉复核通过，恢复账号\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changed").value(true))
+                .andExpect(jsonPath("$.data.account.enabled").value(true));
+
+        // Reactivation never revives a revoked opaque token; the reader must authenticate again.
+        mvc.perform(get("/api/v1/account/profile")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", target.bffSessionId()))
+                .andExpect(status().isUnauthorized());
+        String newLogin = mvc.perform(post("/api/v1/auth/login")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"managed.reader@example.test\",\"password\":\"correct-horse-battery-staple\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String replacementSession = JsonPath.read(newLogin, "$.data.sessionId");
+        mvc.perform(get("/api/v1/account/profile")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", replacementSession))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void taxonomyIsAdminManagedAuditedAndOnlyEnabledItemsReachPublicDiscovery() throws Exception {
+        mvc.perform(get("/api/v1/admin/taxonomy/CATEGORY")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/public/taxonomy/categories"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].name").value("科幻"));
+
+        String creation = mvc.perform(post("/api/v1/admin/taxonomy/TAG")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"悬念\",\"enabled\":true,\"sortOrder\":12}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.type").value("TAG"))
+                .andExpect(jsonPath("$.data.name").value("悬念"))
+                .andReturn().getResponse().getContentAsString();
+        Number tagId = JsonPath.read(creation, "$.data.id");
+
+        mvc.perform(get("/api/v1/public/taxonomy/tags"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].name").value("悬念"));
+        mvc.perform(put("/api/v1/admin/taxonomy/TAG/{tagId}", tagId.longValue())
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"悬念\",\"enabled\":false,\"sortOrder\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(false))
+                .andExpect(jsonPath("$.data.sortOrder").value(3));
+        mvc.perform(get("/api/v1/public/taxonomy/tags"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+        mvc.perform(get("/api/v1/admin/taxonomy/TAG/audits")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].action").value("UPDATED"))
+                .andExpect(jsonPath("$.data[0].operatorUserId").value(1));
+
+        mvc.perform(post("/api/v1/admin/taxonomy/CATEGORY")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"科幻\",\"enabled\":true,\"sortOrder\":100}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void fixedOrderAdminLocksPreserveOneEnabledAdministratorUnderConcurrentSuspensions() throws Exception {
+        long firstAdmin = registerAdministrator("first.admin@example.test", "第一管理员");
+        long secondAdmin = registerAdministrator("second.admin@example.test", "第二管理员");
+
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> results = new ArrayList<>();
+            results.add(workers.submit(() -> suspendWhenReleased(firstAdmin, ready, start)));
+            results.add(workers.submit(() -> suspendWhenReleased(secondAdmin, ready, start)));
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            long successes = 0;
+            for (Future<Boolean> result : results) {
+                if (result.get(10, TimeUnit.SECONDS)) {
+                    successes++;
+                }
+            }
+            assertThat(successes).isEqualTo(1);
+        } finally {
+            start.countDown();
+            workers.shutdownNow();
+            assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_account WHERE enabled = TRUE AND roles LIKE '%ADMIN%'",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_account_status_audit WHERE enabled = FALSE",
+                Integer.class)).isEqualTo(1);
+    }
+
+    private long registerAdministrator(String loginName, String displayName) {
+        AuthService.AuthenticatedSession account = authService.register(
+                loginName,
+                displayName,
+                "correct-horse-battery-staple");
+        authService.grantRole(account.user().id(), Role.ADMIN);
+        return account.user().id();
+    }
+
+    private boolean suspendWhenReleased(long accountId, CountDownLatch ready, CountDownLatch start) {
+        ready.countDown();
+        try {
+            if (!start.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("concurrent suspension did not start");
+            }
+            adminOperationsService.changeAccountStatus(1L, accountId, false, "并发封禁测试");
+            return true;
+        } catch (IllegalStateException expected) {
+            return false;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("concurrent suspension was interrupted", exception);
+        }
+    }
+}

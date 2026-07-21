@@ -7,8 +7,14 @@ import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.ContentModerationService;
+import cn.edu.training.novel.service.ContentModerationReviewService;
+import cn.edu.training.novel.service.InteractionRepository;
 import cn.edu.training.novel.service.NovelStore;
+import cn.edu.training.novel.service.OperationsRepository;
+import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
+import cn.edu.training.novel.service.AuthService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +31,11 @@ class CatalogPersistenceIntegrationTest {
     @Autowired NovelStore store;
     @Autowired AuditTrail auditTrail;
     @Autowired WalletRepository walletRepository;
+    @Autowired ReaderRepository readerRepository;
+    @Autowired OperationsRepository operationsRepository;
+    @Autowired AuthService authService;
+    @Autowired ContentModerationService contentModerationService;
+    @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired JdbcTemplate jdbcTemplate;
 
     @Test
@@ -40,7 +51,16 @@ class CatalogPersistenceIntegrationTest {
                 .isEqualTo(1);
 
         CatalogRepository reloadedRepository = new CatalogRepository(jdbcTemplate);
-        NovelStore recreatedStore = new NovelStore(auditTrail, reloadedRepository, walletRepository);
+        NovelStore recreatedStore = new NovelStore(
+                auditTrail,
+                reloadedRepository,
+                walletRepository,
+                readerRepository,
+                new InteractionRepository(jdbcTemplate),
+                operationsRepository,
+                authService,
+                contentModerationService,
+                contentModerationReviewService);
         Book reloadedBook = recreatedStore.book(draft.id());
         List<Chapter> reloadedChapters = reloadedRepository.findChaptersByBookId(draft.id());
 
@@ -48,11 +68,13 @@ class CatalogPersistenceIntegrationTest {
         assertThat(reloadedBook.status()).isEqualTo(BookStatus.PENDING_REVIEW);
         assertThat(reloadedChapters).containsExactly(chapter);
 
-        recreatedStore.review(draft.id(), true, "人工审核通过");
+        recreatedStore.review(1L, draft.id(), true, "人工审核通过");
 
         assertThat(reloadedRepository.findPublished("持久化", "科幻", "连载中"))
                 .extracting(Book::id)
                 .contains(draft.id());
         assertThat(recreatedStore.publishedChapters(draft.id())).containsExactly(chapter);
+        assertThat(new AuditTrail(jdbcTemplate).recent())
+                .anyMatch(action -> action.contains("review book=" + draft.id()));
     }
 }

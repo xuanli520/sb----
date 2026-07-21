@@ -1,0 +1,13 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: novel_backup_smoke
+      MYSQL_USER: novel
+      MYSQL_PASSWORD: smoke-user-password
+      MYSQL_ROOT_PASSWORD: smoke-root-password
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

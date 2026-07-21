@@ -28,7 +28,11 @@ describe('novel authentication pages', () => {
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!);
 
-    expect(screen.getByRole('alert').textContent).toContain('请输入 3 至 120 位的用户名、邮箱或账号。');
+    expect(screen.getByLabelText('用户名或邮箱').getAttribute('data-slot')).toBe('input');
+    expect(screen.getByRole('button', { name: '登录' }).getAttribute('data-slot')).toBe('button');
+    const alert = screen.getByRole('alert');
+    expect(alert.getAttribute('data-slot')).toBe('alert');
+    expect(alert.textContent).toContain('请输入 3 至 120 位的用户名、邮箱或账号。');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -1,0 +1,20 @@
+spring:
+  ai:
+    # Test classpath configuration shadows the main application.yml, so preserve the production
+    # zero-model default here as well. No test context may construct a remote provider client.
+    model:
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+
+novel:
+  runtime-mode: TEST
+  audit:
+    moderation:
+      # Test-only, explicit development simulation. It exercises the normal pass lifecycle without
+      # constructing or calling a remote Qwen client. Production configuration remains fail closed.
+      development-simulation-enabled: true

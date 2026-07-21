@@ -4,6 +4,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { BookOpenText, Eye, EyeOff, LoaderCircle } from 'lucide-react';
 import { FormEvent, useState } from 'react';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
+import { Button } from '@/app/components/ui/button';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
 
 type SessionResponse = {
   code?: number;
@@ -93,12 +97,12 @@ export default function LoginPage() {
               <h2 id="login-title" className="mt-2 text-3xl font-semibold text-stone-950">欢迎回来</h2>
               <p className="mt-3 text-sm leading-6 text-stone-600">使用账号登录，继续阅读与管理书架。</p>
 
-              {error ? <p role="alert" className="mt-6 border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p> : null}
+              {error ? <Alert variant="destructive" className="mt-6 rounded-none border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-rose-800"><AlertDescription className="text-inherit">{error}</AlertDescription></Alert> : null}
 
               <form className="mt-7 space-y-5" onSubmit={submit} noValidate>
                 <div>
-                  <label htmlFor="login-username" className="block text-sm font-medium text-stone-800">用户名或邮箱</label>
-                  <input
+                  <Label htmlFor="login-username" className="text-stone-800">用户名或邮箱</Label>
+                  <Input
                     id="login-username"
                     name="username"
                     type="text"
@@ -106,17 +110,17 @@ export default function LoginPage() {
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
                     disabled={submitting}
-                    className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-stone-400 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                    className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 placeholder:text-stone-400 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     placeholder="name@example.com"
                   />
                 </div>
                 <div>
                   <div className="flex items-center justify-between gap-3">
-                    <label htmlFor="login-password" className="block text-sm font-medium text-stone-800">密码</label>
+                    <Label htmlFor="login-password" className="text-stone-800">密码</Label>
                     <span className="text-xs text-stone-500">12 至 128 位</span>
                   </div>
                   <div className="relative mt-2">
-                    <input
+                    <Input
                       id="login-password"
                       name="password"
                       type={showPassword ? 'text' : 'password'}
@@ -124,28 +128,30 @@ export default function LoginPage() {
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       disabled={submitting}
-                      className="w-full border border-stone-300 bg-white px-3 py-2.5 pr-11 text-sm outline-none transition-colors focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700 disabled:cursor-wait disabled:bg-stone-100"
+                      className="h-11 rounded-none border-stone-300 bg-white px-3 pr-11 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       title={showPassword ? '隐藏密码' : '显示密码'}
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPassword((visible) => !visible)}
                       disabled={submitting}
-                      className="absolute inset-y-0 right-0 grid w-10 place-items-center text-stone-500 hover:text-emerald-800 disabled:cursor-wait"
+                      className="absolute inset-y-0 right-0 size-10 rounded-none text-stone-500 hover:bg-transparent hover:text-emerald-800 disabled:cursor-wait"
                     >
                       {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                <button
+                <Button
                   type="submit"
                   disabled={submitting}
-                  className="inline-flex w-full items-center justify-center gap-2 bg-emerald-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-500"
+                  className="h-auto w-full rounded-none bg-emerald-700 px-4 py-3 hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-500"
                 >
                   {submitting ? <LoaderCircle className="animate-spin" size={18} aria-hidden="true" /> : null}
                   {submitting ? '正在登录...' : '登录'}
-                </button>
+                </Button>
               </form>
             </div>
             <p className="text-sm text-stone-600">还没有账户？ <Link href="/register" className="font-semibold text-emerald-800 hover:text-emerald-950">创建账户</Link></p>

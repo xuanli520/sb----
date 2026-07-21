@@ -9,23 +9,69 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Coins,
+  Highlighter,
   MessageSquare,
   Moon,
   SlidersHorizontal,
   Star,
   Sun,
   Ticket,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/app/components/ui/alert-dialog';
+import { Button } from '@/app/components/ui/button';
+import { Checkbox } from '@/app/components/ui/checkbox';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import { ScrollArea } from '@/app/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/app/components/ui/sheet';
+import { Slider } from '@/app/components/ui/slider';
+import { Textarea } from '@/app/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { InlineNotice, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
-import { Book, novelApi } from '@/features/novel/api';
+import { AccountEntitlements, Book, ParagraphAnnotation, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Chapter = { id: number; title: string; content: string; published: boolean; orderNo: number };
 type Comment = { id: number; authorName: string; content: string; status: string };
 type BookmarkItem = { id: number; chapterId: number; offset: number; note: string; createdAt: string };
 type Detail = { book: Book; chapters: Chapter[]; comments: Comment[] };
-type Preference = { theme: 'paper' | 'sepia' | 'night'; font: string; fontSize: number; lineHeight: number; brightness: number; pageMode: 'slide' | 'cover' | 'simulation' };
+type ReaderFont = 'serif' | 'sans';
+type Preference = { theme: 'paper' | 'sepia' | 'night'; font: ReaderFont; fontSize: number; lineHeight: number; brightness: number; pageMode: 'slide' | 'cover' | 'simulation' };
+type ReadingProgress = { bookId: number; chapterId: number; offset: number; updatedAt: string };
 type Notice = { message: string; tone: 'success' | 'error' };
+type RewardResult = { bookId: number; amount: number; balance: number };
+type PurchaseResult = { bookId: number; purchased: boolean; balance: number };
+type RewardState = 'idle' | 'pending' | 'success' | 'error';
+type RewardAttempt = { bookId: number; amount: number; idempotencyKey: string };
+type ParagraphAnnotationDraft = {
+  chapterId: number;
+  paragraphIndex: number;
+  selectionStart: number;
+  selectionEnd: number;
+  selectedText: string;
+};
+type PageTurnDirection = 'forward' | 'backward';
+type ReaderTheme = { page: string; text: string; muted: string; border: string };
+type ChapterTransition = {
+  id: number;
+  chapter: Chapter;
+  direction: PageTurnDirection;
+  mode: Preference['pageMode'];
+};
+
+const chapterTransitionDuration = 460;
+const maxRewardAmount = 2_147_483_647;
 
 const defaultPreference: Preference = {
   theme: 'paper',
@@ -42,7 +88,16 @@ const themeOptions: Array<{ value: Preference['theme']; label: string; className
   { value: 'night', label: '夜读', className: 'bg-[#1e2825] text-stone-100' },
 ];
 
-const readerTheme: Record<Preference['theme'], { page: string; text: string; muted: string; border: string }> = {
+const readerFontFamily: Record<ReaderFont, string> = {
+  serif: '"Songti SC", "STSong", "SimSun", serif',
+  sans: '"PingFang SC", "Microsoft YaHei", Arial, sans-serif',
+};
+
+function normalizePreference(value: Preference): Preference {
+  return { ...value, font: value.font === 'sans' ? 'sans' : 'serif' };
+}
+
+const readerTheme: Record<Preference['theme'], ReaderTheme> = {
   paper: { page: '#fffdf7', text: '#292821', muted: '#716f63', border: '#e4dfd1' },
   sepia: { page: '#f1e4c8', text: '#453d30', muted: '#736957', border: '#d9c8a9' },
   night: { page: '#1e2825', text: '#e8ece6', muted: '#a9b4ad', border: '#3b4b45' },
@@ -52,19 +107,346 @@ function preferenceLabel(mode: Preference['pageMode']) {
   return { slide: '滑动翻页', cover: '覆盖翻页', simulation: '仿真翻页' }[mode];
 }
 
+function transitionEffect(mode: Preference['pageMode']) {
+  return { slide: 'paired-slide', cover: 'cover-reveal', simulation: 'page-turn' }[mode];
+}
+
+function isInteractiveTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && Boolean(target.closest('a, button, input, textarea, select, [role="button"], [role="combobox"], [contenteditable="true"]'));
+}
+
+function rewardAmountFrom(value: string): number | undefined {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return undefined;
+
+  const amount = Number(normalized);
+  return Number.isSafeInteger(amount) && amount > 0 && amount <= maxRewardAmount ? amount : undefined;
+}
+
+function formatTokenAmount(value: number) {
+  return value.toLocaleString('zh-CN');
+}
+
+function purchaseFailureMessage(reason: unknown) {
+  const message = reason instanceof Error ? reason.message : '获取整本阅读权益失败，请稍后重试。';
+  return /insufficient tokens/i.test(message)
+    ? '代币余额不足，请先在个人中心兑换代币。'
+    : message;
+}
+
+function createIdempotencyKey() {
+  const browserCrypto = globalThis.crypto;
+  if (typeof browserCrypto?.randomUUID === 'function') return browserCrypto.randomUUID();
+  if (typeof browserCrypto?.getRandomValues !== 'function') throw new Error('当前浏览器无法安全创建打赏请求。');
+
+  const bytes = browserCrypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function chapterParagraphs(content: string) {
+  return content.replace(/\r\n?/g, '\n').split('\n').filter((paragraph) => paragraph.length > 0);
+}
+
+function annotationHighlightClass(status: ParagraphAnnotation['status']) {
+  return {
+    PRIVATE: 'bg-amber-200/80 text-inherit',
+    PENDING_REVIEW: 'bg-sky-200/80 text-inherit',
+    VISIBLE: 'bg-emerald-200/80 text-inherit',
+    REJECTED: 'bg-stone-200 text-inherit decoration-stone-500 line-through',
+  }[status];
+}
+
+function highlightedParagraph(
+  paragraph: string,
+  paragraphIndex: number,
+  annotations: ParagraphAnnotation[],
+) {
+  const anchors = annotations.filter((annotation) => annotation.paragraphIndex === paragraphIndex
+    && annotation.selectionStart >= 0
+    && annotation.selectionEnd <= paragraph.length
+    && annotation.selectionEnd > annotation.selectionStart
+    && paragraph.slice(annotation.selectionStart, annotation.selectionEnd) === annotation.selectedText);
+  if (anchors.length === 0) return paragraph;
+
+  const boundaries = Array.from(new Set([
+    0,
+    paragraph.length,
+    ...anchors.flatMap((annotation) => [annotation.selectionStart, annotation.selectionEnd]),
+  ])).sort((left, right) => left - right);
+
+  return boundaries.slice(0, -1).map((start, index) => {
+    const end = boundaries[index + 1] ?? paragraph.length;
+    const matching = anchors.filter((annotation) => annotation.selectionStart <= start && annotation.selectionEnd >= end);
+    const text = paragraph.slice(start, end);
+    if (matching.length === 0) return <span key={`${start}-${end}`}>{text}</span>;
+    const latest = matching.reduce((current, annotation) => annotation.id > current.id ? annotation : current);
+    return (
+      <mark
+        key={`${start}-${end}-${latest.id}`}
+        data-annotation-status={latest.status}
+        className={annotationHighlightClass(latest.status)}
+      >
+        {text}
+      </mark>
+    );
+  });
+}
+
+function selectedParagraphAnchor(
+  paragraphElement: HTMLParagraphElement,
+  chapterId: number,
+  paragraphIndex: number,
+  paragraph: string,
+): ParagraphAnnotationDraft | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return undefined;
+  const range = selection.getRangeAt(0);
+  const contains = (node: Node | null) => node === paragraphElement || (node !== null && paragraphElement.contains(node));
+  if (!contains(range.startContainer) || !contains(range.endContainer)) return undefined;
+
+  try {
+    const offset = (node: Node, value: number) => {
+      const prefix = document.createRange();
+      prefix.selectNodeContents(paragraphElement);
+      prefix.setEnd(node, value);
+      return prefix.toString().length;
+    };
+    const selectionStart = offset(range.startContainer, range.startOffset);
+    const selectionEnd = offset(range.endContainer, range.endOffset);
+    const selectedText = paragraph.slice(selectionStart, selectionEnd);
+    if (selectionEnd <= selectionStart || !selectedText.trim() || selectedText !== range.toString()) return undefined;
+    return { chapterId, paragraphIndex, selectionStart, selectionEnd, selectedText };
+  } catch {
+    return undefined;
+  }
+}
+
+function clearBrowserSelection() {
+  if (typeof window !== 'undefined') window.getSelection?.()?.removeAllRanges();
+}
+
+function ChapterCopy({
+  bookTitle,
+  chapter,
+  theme,
+  headingId,
+  compact = false,
+  annotations = [],
+  onParagraphSelection,
+}: {
+  bookTitle: string;
+  chapter: Chapter;
+  theme: ReaderTheme;
+  headingId?: string;
+  compact?: boolean;
+  annotations?: ParagraphAnnotation[];
+  onParagraphSelection?: (paragraphIndex: number, paragraph: string, element: HTMLParagraphElement) => void;
+}) {
+  const headingClassName = compact ? 'mt-3 text-2xl font-semibold leading-tight' : 'mt-3 text-3xl font-semibold leading-tight';
+  const paragraphs = chapterParagraphs(chapter.content);
+
+  return (
+    <>
+      <p className="text-xs font-semibold text-emerald-700">{bookTitle} · 第 {chapter.orderNo} 章</p>
+      {headingId ? <h1 id={headingId} className={headingClassName}>{chapter.title}</h1> : <p className={headingClassName}>{chapter.title}</p>}
+      <div className={compact ? 'mt-8 space-y-6' : 'mt-10 space-y-7'}>
+        {paragraphs.map((paragraph, index) => (
+          <p
+            key={`${paragraph}-${index}`}
+            data-paragraph-index={index}
+            className={`max-w-2xl ${onParagraphSelection ? 'cursor-text select-text' : ''}`}
+            onMouseUp={onParagraphSelection ? (event) => onParagraphSelection(index, paragraph, event.currentTarget) : undefined}
+          >
+            {highlightedParagraph(paragraph, index, annotations)}
+          </p>
+        ))}
+      </div>
+      {!compact ? <p className="mt-16 border-t pt-5 text-sm" style={{ borderColor: theme.border, color: theme.muted }}>本章阅读完毕</p> : null}
+    </>
+  );
+}
+
+function ChapterDirectoryList({
+  chapters,
+  activeChapterId,
+  onSelect,
+  className,
+}: {
+  chapters: Chapter[];
+  activeChapterId: number;
+  onSelect: (chapter: Chapter) => void;
+  className: string;
+}) {
+  return (
+    <ol className={className}>
+      {chapters.map((item) => (
+        <li key={item.id}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onSelect(item)}
+            aria-current={item.id === activeChapterId ? 'page' : undefined}
+            className={`h-auto w-full justify-start rounded-none px-2 py-2.5 text-left transition-colors ${item.id === activeChapterId ? 'bg-emerald-50 font-semibold text-emerald-900 hover:bg-emerald-50 hover:text-emerald-900' : 'text-stone-600 hover:bg-stone-50 hover:text-stone-950'}`}
+          >
+            <span className="w-5 shrink-0 text-xs text-stone-400">{item.orderNo}</span>
+            <span className="truncate">{item.title}</span>
+          </Button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+const readerTransitionStyles = `
+  @keyframes yuejie-reader-slide-enter-forward {
+    from { opacity: 0.32; transform: translate3d(12%, 0, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes yuejie-reader-slide-enter-backward {
+    from { opacity: 0.32; transform: translate3d(-12%, 0, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes yuejie-reader-slide-leave-forward {
+    from { opacity: 1; transform: translate3d(0, 0, 0); }
+    to { opacity: 0.2; transform: translate3d(-12%, 0, 0); }
+  }
+  @keyframes yuejie-reader-slide-leave-backward {
+    from { opacity: 1; transform: translate3d(0, 0, 0); }
+    to { opacity: 0.2; transform: translate3d(12%, 0, 0); }
+  }
+  @keyframes yuejie-reader-cover-forward {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-100%, 0, 0); }
+  }
+  @keyframes yuejie-reader-cover-backward {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(100%, 0, 0); }
+  }
+  @keyframes yuejie-reader-page-turn-forward {
+    from { opacity: 1; transform: rotateY(0deg); }
+    to { opacity: 0.16; transform: rotateY(-92deg); }
+  }
+  @keyframes yuejie-reader-page-turn-backward {
+    from { opacity: 1; transform: rotateY(0deg); }
+    to { opacity: 0.16; transform: rotateY(92deg); }
+  }
+  .yuejie-reader-page-surface {
+    isolation: isolate;
+    perspective: 1400px;
+  }
+  .yuejie-reader-transition {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    overflow: hidden;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+  .yuejie-reader-current[data-transition-effect="paired-slide"][data-transition-direction="forward"] {
+    animation: yuejie-reader-slide-enter-forward 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .yuejie-reader-current[data-transition-effect="paired-slide"][data-transition-direction="backward"] {
+    animation: yuejie-reader-slide-enter-backward 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="paired-slide"][data-transition-direction="forward"] {
+    animation: yuejie-reader-slide-leave-forward 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="paired-slide"][data-transition-direction="backward"] {
+    animation: yuejie-reader-slide-leave-backward 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="cover-reveal"] {
+    box-shadow: 12px 0 22px rgb(41 40 33 / 22%);
+  }
+  .yuejie-reader-transition[data-transition-effect="cover-reveal"][data-transition-direction="forward"] {
+    animation: yuejie-reader-cover-forward 420ms cubic-bezier(0.45, 0, 0.2, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="cover-reveal"][data-transition-direction="backward"] {
+    animation: yuejie-reader-cover-backward 420ms cubic-bezier(0.45, 0, 0.2, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="page-turn"] {
+    backface-visibility: hidden;
+    transform-style: preserve-3d;
+    box-shadow: 0 10px 24px rgb(41 40 33 / 19%);
+  }
+  .yuejie-reader-transition[data-transition-effect="page-turn"][data-transition-direction="forward"] {
+    transform-origin: left center;
+    animation: yuejie-reader-page-turn-forward 460ms cubic-bezier(0.35, 0.05, 0.25, 1) both;
+  }
+  .yuejie-reader-transition[data-transition-effect="page-turn"][data-transition-direction="backward"] {
+    transform-origin: right center;
+    animation: yuejie-reader-page-turn-backward 460ms cubic-bezier(0.35, 0.05, 0.25, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .yuejie-reader-current,
+    .yuejie-reader-transition {
+      animation: none !important;
+    }
+    .yuejie-reader-transition {
+      display: none !important;
+    }
+  }
+`;
+
 export default function Reader({ params }: { params: Promise<{ id: string }> }) {
   const [detail, setDetail] = useState<Detail>();
   const [preference, setPreference] = useState<Preference>(defaultPreference);
   const [activeChapterId, setActiveChapterId] = useState<number>();
   const [saved, setSaved] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
+  const [paragraphAnnotations, setParagraphAnnotations] = useState<ParagraphAnnotation[]>([]);
+  const [paragraphAnnotationDraft, setParagraphAnnotationDraft] = useState<ParagraphAnnotationDraft>();
+  const [paragraphAnnotationNote, setParagraphAnnotationNote] = useState('');
+  const [paragraphAnnotationShareIntent, setParagraphAnnotationShareIntent] = useState(false);
   const [comment, setComment] = useState('');
   const [rating, setRating] = useState(0);
+  const [rewardAmount, setRewardAmount] = useState('');
+  const [rewardState, setRewardState] = useState<RewardState>('idle');
+  const [rewardMessage, setRewardMessage] = useState('');
+  const [tokenBalance, setTokenBalance] = useState<number>();
+  const [hasBookEntitlement, setHasBookEntitlement] = useState<boolean>();
+  const [purchaseDialogOpen, setPurchaseDialogOpen] = useState(false);
+  const [purchaseError, setPurchaseError] = useState('');
   const [notice, setNotice] = useState<Notice>();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [pendingAction, setPendingAction] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
+  const [chapterTransition, setChapterTransition] = useState<ChapterTransition>();
+  const [chapterAnnouncement, setChapterAnnouncement] = useState('');
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const transitionTimer = useRef<number>();
+  const transitionSequence = useRef(0);
+  const rewardAttempt = useRef<RewardAttempt>();
+  const rewardRequestInFlight = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncPreference = () => setReducedMotion(query.matches);
+    syncPreference();
+    query.addEventListener?.('change', syncPreference);
+    return () => query.removeEventListener?.('change', syncPreference);
+  }, []);
+
+  useEffect(() => {
+    if (!reducedMotion) return;
+    if (transitionTimer.current !== undefined) {
+      window.clearTimeout(transitionTimer.current);
+      transitionTimer.current = undefined;
+    }
+    setChapterTransition(undefined);
+  }, [reducedMotion]);
+
+  useEffect(() => () => {
+    if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,32 +454,57 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     const load = async () => {
       setLoading(true);
       setLoadError('');
+      setTokenBalance(undefined);
+      setHasBookEntitlement(undefined);
+      setPurchaseDialogOpen(false);
+      setPurchaseError('');
       try {
         const { id } = await params;
         const bookDetail = await novelApi<Detail>(`public/books/${id}`);
         if (cancelled) return;
 
         setDetail(bookDetail);
-        setActiveChapterId(bookDetail.chapters[0]?.id);
 
         const firstChapter = bookDetail.chapters[0];
         if (!firstChapter) return;
 
-        const [preferencesResult, shelfResult, bookmarksResult] = await Promise.allSettled([
+        const [preferencesResult, shelfResult, bookmarksResult, progressResult, annotationsResult, walletResult, entitlementsResult] = await Promise.allSettled([
           novelApi<Preference>('account/preferences/reading'),
           novelApi<Book[]>('account/bookshelf'),
           novelApi<BookmarkItem[]>(`account/books/${bookDetail.book.id}/bookmarks`),
+          novelApi<ReadingProgress[]>('account/progress'),
+          novelApi<ParagraphAnnotationPage>(`account/annotations?bookId=${bookDetail.book.id}&size=100`),
+          novelApi<{ tokens: number }>('account/wallet'),
+          novelApi<AccountEntitlements>('account/entitlements'),
         ]);
         if (cancelled) return;
 
-        if (preferencesResult.status === 'fulfilled') setPreference(preferencesResult.value);
+        if (preferencesResult.status === 'fulfilled') setPreference(normalizePreference(preferencesResult.value));
         if (shelfResult.status === 'fulfilled') setSaved(shelfResult.value.some((book) => book.id === bookDetail.book.id));
         if (bookmarksResult.status === 'fulfilled') setBookmarks(bookmarksResult.value);
+        if (annotationsResult.status === 'fulfilled' && Array.isArray(annotationsResult.value.items)) {
+          setParagraphAnnotations(annotationsResult.value.items);
+        }
+        if (walletResult.status === 'fulfilled') setTokenBalance(walletResult.value.tokens);
+        if (entitlementsResult.status === 'fulfilled') {
+          setHasBookEntitlement(entitlementsResult.value.books.some((item) => item.bookId === bookDetail.book.id));
+        }
 
-        void novelApi('account/progress', 'reader', {
-          method: 'PUT',
-          body: JSON.stringify({ bookId: bookDetail.book.id, chapterId: firstChapter.id, offset: 0 }),
-        });
+        const savedProgress = progressResult.status === 'fulfilled' && Array.isArray(progressResult.value)
+          ? progressResult.value.find((item) => item.bookId === bookDetail.book.id)
+          : undefined;
+        const restoredChapter = savedProgress
+          ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId)
+          : undefined;
+        const initialChapter = restoredChapter ?? firstChapter;
+        setActiveChapterId(initialChapter.id);
+
+        if (!restoredChapter) {
+          void novelApi('account/progress', 'reader', {
+            method: 'PUT',
+            body: JSON.stringify({ bookId: bookDetail.book.id, chapterId: initialChapter.id, offset: 0 }),
+          }).catch(() => undefined);
+        }
       } catch (reason) {
         if (!cancelled) {
           setLoadError(reason instanceof Error ? reason.message : '章节暂时无法打开。');
@@ -116,7 +523,25 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     [activeChapterId, detail],
   );
   const activeChapterIndex = detail && chapter ? detail.chapters.findIndex((item) => item.id === chapter.id) : -1;
+  const activeParagraphAnnotations = chapter
+    ? paragraphAnnotations.filter((annotation) => annotation.chapterId === chapter.id)
+    : [];
   const theme = readerTheme[preference.theme];
+  const readerPageStyle = {
+    backgroundColor: theme.page,
+    color: theme.text,
+    borderColor: theme.border,
+    fontSize: preference.fontSize,
+    lineHeight: preference.lineHeight / 100,
+    fontFamily: readerFontFamily[preference.font],
+    filter: `brightness(${preference.brightness}%)`,
+  };
+  const activeTransitionEffect = chapterTransition ? transitionEffect(chapterTransition.mode) : undefined;
+  const displayedPurchasePrice = detail?.book.purchasePrice;
+  const purchasePrice = Number.isSafeInteger(displayedPurchasePrice) && (displayedPurchasePrice ?? 0) > 0
+    ? displayedPurchasePrice
+    : undefined;
+  const hasSufficientTokens = purchasePrice !== undefined && tokenBalance !== undefined && tokenBalance >= purchasePrice;
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -131,7 +556,31 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
   const selectChapter = async (nextChapter: Chapter) => {
     if (!detail || nextChapter.id === chapter?.id) return;
+
+    const currentIndex = detail.chapters.findIndex((item) => item.id === chapter?.id);
+    const nextIndex = detail.chapters.findIndex((item) => item.id === nextChapter.id);
+    const direction: PageTurnDirection = nextIndex > currentIndex ? 'forward' : 'backward';
+    const transitionId = transitionSequence.current + 1;
+    transitionSequence.current = transitionId;
+
+    if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current);
+    if (!reducedMotion && chapter) {
+      setChapterTransition({ id: transitionId, chapter, direction, mode: preference.pageMode });
+      transitionTimer.current = window.setTimeout(() => {
+        setChapterTransition((current) => current?.id === transitionId ? undefined : current);
+        transitionTimer.current = undefined;
+      }, chapterTransitionDuration);
+    } else {
+      transitionTimer.current = undefined;
+      setChapterTransition(undefined);
+    }
+
     setActiveChapterId(nextChapter.id);
+    setParagraphAnnotationDraft(undefined);
+    setParagraphAnnotationNote('');
+    setParagraphAnnotationShareIntent(false);
+    clearBrowserSelection();
+    setChapterAnnouncement(`已切换至第 ${nextChapter.orderNo} 章《${nextChapter.title}》，${preferenceLabel(preference.pageMode)}${reducedMotion ? '，已减少动态效果。' : '。'}`);
     try {
       await novelApi('account/progress', 'reader', {
         method: 'PUT',
@@ -139,6 +588,24 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       });
     } catch {
       // Public reading remains available when the current visitor has no reader session.
+    }
+  };
+
+  const moveChapter = (offset: number) => {
+    const next = detail?.chapters[activeChapterIndex + offset];
+    if (next) void selectChapter(next);
+  };
+
+  const handleReaderKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || isInteractiveTarget(event.target)) return;
+
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+      event.preventDefault();
+      moveChapter(-1);
+    }
+    if (event.key === 'ArrowRight' || event.key === 'PageDown') {
+      event.preventDefault();
+      moveChapter(1);
     }
   };
 
@@ -173,6 +640,58 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     }
   };
 
+  const captureParagraphSelection = (
+    paragraphIndex: number,
+    paragraph: string,
+    paragraphElement: HTMLParagraphElement,
+  ) => {
+    if (!chapter) return;
+    const draft = selectedParagraphAnchor(paragraphElement, chapter.id, paragraphIndex, paragraph);
+    if (!draft) return;
+    setParagraphAnnotationDraft(draft);
+    setParagraphAnnotationNote('');
+    setParagraphAnnotationShareIntent(false);
+  };
+
+  const saveParagraphAnnotation = async () => {
+    if (!detail || !chapter || !paragraphAnnotationDraft || paragraphAnnotationDraft.chapterId !== chapter.id) return;
+    setPendingAction('paragraph-annotation');
+    try {
+      const result = await novelApi<ParagraphAnnotation>(
+        `account/books/${detail.book.id}/chapters/${chapter.id}/annotations`,
+        'reader',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            paragraphIndex: paragraphAnnotationDraft.paragraphIndex,
+            selectionStart: paragraphAnnotationDraft.selectionStart,
+            selectionEnd: paragraphAnnotationDraft.selectionEnd,
+            selectedText: paragraphAnnotationDraft.selectedText,
+            note: paragraphAnnotationNote,
+            shareIntent: paragraphAnnotationShareIntent,
+          }),
+        },
+      );
+      setParagraphAnnotations((items) => [result, ...items]);
+      setParagraphAnnotationDraft(undefined);
+      setParagraphAnnotationNote('');
+      setParagraphAnnotationShareIntent(false);
+      clearBrowserSelection();
+      announce(result.status === 'PENDING_REVIEW' ? '划线已保存，分享申请已进入审核。' : '划线已保存。');
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '保存划线失败，请先选择读者身份。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const discardParagraphAnnotation = () => {
+    setParagraphAnnotationDraft(undefined);
+    setParagraphAnnotationNote('');
+    setParagraphAnnotationShareIntent(false);
+    clearBrowserSelection();
+  };
+
   const postComment = async () => {
     if (!detail || !chapter || !comment.trim()) return;
     setPendingAction('comment');
@@ -205,14 +724,69 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     }
   };
 
-  const voteBook = async () => {
+  const voteBook = async (type: 'recommendation' | 'monthly') => {
     if (!detail) return;
-    setPendingAction('vote');
+    setPendingAction(`vote-${type}`);
     try {
-      const result = await novelApi<{ count: number }>(`account/books/${detail.book.id}/votes/recommendation`, 'reader', { method: 'POST' });
-      announce(`推荐票已送出，作品当前获得 ${result.count} 票。`);
+      const result = await novelApi<{ count: number }>(`account/books/${detail.book.id}/votes/${type}`, 'reader', { method: 'POST' });
+      const label = type === 'monthly' ? '月票' : '推荐票';
+      announce(`${label}已送出，作品当前获得 ${result.count} 张${label}。`);
     } catch (reason) {
-      announce(reason instanceof Error ? reason.message : '推荐失败，请先选择读者身份。', 'error');
+      announce(reason instanceof Error ? reason.message : '投票失败，请先选择读者身份。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const rewardBook = async () => {
+    if (!detail || rewardState === 'pending' || rewardRequestInFlight.current) return;
+
+    const amount = rewardAmountFrom(rewardAmount);
+    if (amount === undefined) {
+      setRewardState('error');
+      setRewardMessage('请输入大于 0 的整数代币数。');
+      return;
+    }
+
+    try {
+      rewardRequestInFlight.current = true;
+      const previousAttempt = rewardAttempt.current;
+      const currentAttempt = previousAttempt?.bookId === detail.book.id && previousAttempt.amount === amount
+        ? previousAttempt
+        : { bookId: detail.book.id, amount, idempotencyKey: createIdempotencyKey() };
+      rewardAttempt.current = currentAttempt;
+      setRewardState('pending');
+      setRewardMessage(`正在打赏 ${amount} 代币…`);
+      const result = await novelApi<RewardResult>(`account/books/${detail.book.id}/reward`, 'reader', {
+        method: 'POST',
+        body: JSON.stringify({ amount }),
+        headers: { 'Idempotency-Key': currentAttempt.idempotencyKey },
+      });
+      rewardAttempt.current = undefined;
+      setRewardAmount('');
+      setRewardState('success');
+      setRewardMessage(`打赏成功，已送出 ${result.amount} 代币，账户余额 ${result.balance} 代币。`);
+    } catch (reason) {
+      setRewardState('error');
+      setRewardMessage(reason instanceof Error ? reason.message : '打赏失败，请稍后重试。');
+    } finally {
+      rewardRequestInFlight.current = false;
+    }
+  };
+
+  const purchaseBook = async () => {
+    if (!detail || purchasePrice === undefined || pendingAction === 'purchase') return;
+
+    setPendingAction('purchase');
+    setPurchaseError('');
+    try {
+      const result = await novelApi<PurchaseResult>(`account/books/${detail.book.id}/purchase`, 'reader', { method: 'POST' });
+      setTokenBalance(result.balance);
+      setHasBookEntitlement(true);
+      setPurchaseDialogOpen(false);
+      announce(`《${detail.book.title}》的整本阅读权益已确认，当前代币余额 ${formatTokenAmount(result.balance)}。`);
+    } catch (reason) {
+      setPurchaseError(purchaseFailureMessage(reason));
     } finally {
       setPendingAction(undefined);
     }
@@ -227,7 +801,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       <NovelShell workspace="reader">
         <div className="mx-auto max-w-lg py-20">
           <InlineNotice tone="error">{loadError || '此作品暂时没有可阅读的章节。'}</InlineNotice>
-          <Link href="/" className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-emerald-800 hover:text-emerald-950"><ArrowLeft size={16} aria-hidden="true" />返回书城</Link>
+          <Button asChild variant="link" size="sm" className="mt-5 h-auto rounded-none px-0 text-emerald-800 hover:text-emerald-950"><Link href="/"><ArrowLeft size={16} aria-hidden="true" />返回书城</Link></Button>
         </div>
       </NovelShell>
     );
@@ -235,6 +809,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
   return (
     <NovelShell workspace="reader">
+      <style>{readerTransitionStyles}</style>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4">
         <Link href="/" className="inline-flex items-center gap-1 text-sm font-medium text-stone-600 hover:text-emerald-800"><ArrowLeft size={16} aria-hidden="true" />返回书城</Link>
         <div className="min-w-0 text-right">
@@ -256,30 +831,96 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-1">
-            <button type="button" onClick={() => void toggleShelf()} disabled={pendingAction === 'shelf'} className="inline-flex items-center justify-center gap-2 border border-stone-300 px-3 py-2 text-sm font-medium text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:opacity-60">
+            <Button type="button" variant="outline" size="sm" onClick={() => void toggleShelf()} disabled={pendingAction === 'shelf'} className="h-auto justify-center rounded-none border-stone-300 px-3 py-2 text-stone-800 hover:border-emerald-700 hover:text-emerald-800">
               {saved ? <Check size={16} aria-hidden="true" /> : <Bookmark size={16} aria-hidden="true" />}
               {saved ? '已加入书架' : '加入书架'}
-            </button>
-            <button type="button" onClick={() => void addBookmark()} disabled={pendingAction === 'bookmark'} className="inline-flex items-center justify-center gap-2 border border-stone-300 px-3 py-2 text-sm font-medium text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:opacity-60">
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void addBookmark()} disabled={pendingAction === 'bookmark'} className="h-auto justify-center rounded-none border-stone-300 px-3 py-2 text-stone-800 hover:border-emerald-700 hover:text-emerald-800">
               <Bookmark size={16} aria-hidden="true" />添加书签
-            </button>
+            </Button>
           </div>
 
-          <ol className="mt-5 border-t border-stone-200 pt-3 text-sm">
-            {detail.chapters.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => void selectChapter(item)}
-                  aria-current={item.id === chapter.id ? 'page' : undefined}
-                  className={`flex w-full items-center gap-2 px-2 py-2.5 text-left transition-colors ${item.id === chapter.id ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-stone-600 hover:bg-stone-50 hover:text-stone-950'}`}
-                >
-                  <span className="w-5 shrink-0 text-xs text-stone-400">{item.orderNo}</span>
-                  <span className="truncate">{item.title}</span>
-                </button>
-              </li>
-            ))}
-          </ol>
+          <section aria-labelledby="reader-entitlement-title" className="mt-5 border-t border-stone-200 pt-4">
+            <div className="flex items-start gap-2">
+              <Coins className="mt-0.5 shrink-0 text-emerald-700" size={17} aria-hidden="true" />
+              <div className="min-w-0">
+                <h2 id="reader-entitlement-title" className="text-sm font-semibold text-stone-950">本书权益</h2>
+                {hasBookEntitlement ? (
+                  <>
+                    <p className="mt-2 text-sm leading-6 text-emerald-800">已获得整本阅读权益。</p>
+                    <Button asChild variant="link" size="sm" className="mt-1 h-auto rounded-none px-0 text-emerald-800 hover:text-emerald-950">
+                      <Link href="/account">查看账户权益</Link>
+                    </Button>
+                  </>
+                ) : tokenBalance === undefined || purchasePrice === undefined ? (
+                  <>
+                    <p className="mt-2 text-sm leading-6 text-stone-600">登录后可查看代币余额并获得本书整本阅读权益。</p>
+                    <Button asChild variant="link" size="sm" className="mt-1 h-auto rounded-none px-0 text-emerald-800 hover:text-emerald-950">
+                      <Link href="/login">登录后继续</Link>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-2 text-sm leading-6 text-stone-600">整本阅读权益：{formatTokenAmount(purchasePrice)} 代币</p>
+                    <p className="mt-1 text-xs leading-5 text-stone-500">当前代币：{formatTokenAmount(tokenBalance)}</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setPurchaseError('');
+                        setPurchaseDialogOpen(true);
+                      }}
+                      disabled={!hasSufficientTokens || pendingAction === 'purchase'}
+                      className="mt-3 h-auto w-full rounded-none bg-emerald-700 px-3 py-2 text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-stone-400"
+                    >
+                      <Coins size={15} aria-hidden="true" />
+                      {hasSufficientTokens ? `使用 ${formatTokenAmount(purchasePrice)} 代币获得` : '代币不足'}
+                    </Button>
+                    {!hasSufficientTokens ? (
+                      <Button asChild variant="link" size="sm" className="mt-2 h-auto rounded-none px-0 text-emerald-800 hover:text-emerald-950">
+                        <Link href="/account">去兑换代币</Link>
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <div className="mt-4 lg:hidden">
+            <Sheet open={mobileDirectoryOpen} onOpenChange={setMobileDirectoryOpen}>
+              <SheetTrigger asChild>
+                <Button type="button" variant="outline" aria-label="打开阅读目录" className="h-10 w-full justify-between rounded-none border-stone-300 px-3 text-stone-800 hover:border-emerald-700 hover:text-emerald-800">
+                  <span className="inline-flex min-w-0 items-center gap-2"><BookOpen size={16} aria-hidden="true" />章节目录</span>
+                  <span className="min-w-0 truncate text-xs text-stone-500">第 {chapter.orderNo} 章 · {chapter.title}</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[min(22rem,calc(100vw_-_2rem))] gap-0 border-stone-200 bg-white p-0">
+                <SheetHeader className="border-b border-stone-200 pr-12">
+                  <SheetTitle className="truncate text-stone-950">{detail.book.title}</SheetTitle>
+                  <SheetDescription>阅读目录 · 共 {detail.chapters.length} 章</SheetDescription>
+                </SheetHeader>
+                <ScrollArea className="min-h-0 flex-1">
+                  <ChapterDirectoryList
+                    chapters={detail.chapters}
+                    activeChapterId={chapter.id}
+                    onSelect={(item) => {
+                      setMobileDirectoryOpen(false);
+                      void selectChapter(item);
+                    }}
+                    className="p-3 text-sm"
+                  />
+                </ScrollArea>
+              </SheetContent>
+            </Sheet>
+          </div>
+
+          <ChapterDirectoryList
+            chapters={detail.chapters}
+            activeChapterId={chapter.id}
+            onSelect={(item) => void selectChapter(item)}
+            className="mt-5 hidden border-t border-stone-200 pt-3 text-sm lg:block"
+          />
 
           {bookmarks.length > 0 ? (
             <div className="mt-5 border-t border-stone-200 pt-4">
@@ -294,63 +935,110 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         <section className="min-w-0">
           <div className="flex items-center justify-between border-b border-stone-200 px-5 py-3 sm:px-8">
             <span className="text-xs font-medium text-stone-500">{preferenceLabel(preference.pageMode)}</span>
-            <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen} className="inline-flex items-center gap-2 text-sm font-medium text-stone-700 hover:text-emerald-800">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen} className="h-auto rounded-none px-0 text-stone-700 hover:bg-transparent hover:text-emerald-800">
               <SlidersHorizontal size={17} aria-hidden="true" />阅读设置
-            </button>
+            </Button>
           </div>
 
           {settingsOpen ? (
-            <div className="grid gap-5 border-b border-stone-200 bg-stone-50 px-5 py-5 sm:grid-cols-2 sm:px-8 xl:grid-cols-4">
+            <div className="grid gap-5 border-b border-stone-200 bg-stone-50 px-5 py-5 sm:grid-cols-2 sm:px-8 xl:grid-cols-3">
               <fieldset>
                 <legend className="text-xs font-semibold text-stone-600">主题</legend>
                 <div className="mt-2 flex gap-2">
                   {themeOptions.map((item) => (
-                    <button key={item.value} type="button" onClick={() => void savePreference({ ...preference, theme: item.value })} aria-pressed={preference.theme === item.value} className={`border px-2.5 py-1.5 text-xs font-medium ${item.className} ${preference.theme === item.value ? 'border-emerald-700 ring-1 ring-emerald-700' : 'border-stone-300'}`}>
+                    <Button key={item.value} type="button" variant="outline" size="sm" onClick={() => void savePreference({ ...preference, theme: item.value })} aria-pressed={preference.theme === item.value} className={`h-auto rounded-none px-2.5 py-1.5 text-xs ${item.className} ${preference.theme === item.value ? 'border-emerald-700 ring-1 ring-emerald-700' : 'border-stone-300'}`}>
                       {item.value === 'night' ? <Moon className="mr-1 inline" size={13} aria-hidden="true" /> : <Sun className="mr-1 inline" size={13} aria-hidden="true" />}{item.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </fieldset>
-              <label className="block text-xs font-semibold text-stone-600">字号 <span className="float-right text-stone-500">{preference.fontSize}px</span>
-                <input aria-label="字号" className="mt-3 block w-full accent-emerald-700" type="range" min="16" max="26" value={preference.fontSize} onChange={(event) => setPreference({ ...preference, fontSize: Number(event.target.value) })} onBlur={() => void savePreference(preference)} />
-              </label>
-              <label className="block text-xs font-semibold text-stone-600">行距 <span className="float-right text-stone-500">{preference.lineHeight}%</span>
-                <input aria-label="行距" className="mt-3 block w-full accent-emerald-700" type="range" min="140" max="230" step="10" value={preference.lineHeight} onChange={(event) => setPreference({ ...preference, lineHeight: Number(event.target.value) })} onBlur={() => void savePreference(preference)} />
-              </label>
-              <label className="block text-xs font-semibold text-stone-600">翻页模式
-                <select aria-label="翻页模式" className="mt-2 block w-full border border-stone-300 bg-white px-2 py-1.5 text-sm font-normal text-stone-800" value={preference.pageMode} onChange={(event) => void savePreference({ ...preference, pageMode: event.target.value as Preference['pageMode'] })}>
-                  <option value="slide">滑动</option>
-                  <option value="cover">覆盖</option>
-                  <option value="simulation">仿真</option>
-                </select>
-              </label>
+              <div>
+                <Label id="font-family-label" className="text-xs font-semibold text-stone-600">字体</Label>
+                <Select value={preference.font} onValueChange={(value) => void savePreference({ ...preference, font: value as ReaderFont })}>
+                  <SelectTrigger aria-labelledby="font-family-label" aria-label="字体" className="mt-2 h-9 rounded-none border-stone-300 bg-white text-sm font-normal text-stone-800 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                    <SelectItem value="serif">宋体衬线</SelectItem>
+                    <SelectItem value="sans">无衬线</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Label className="block text-xs font-semibold text-stone-600">字号 <span className="float-right text-stone-500">{preference.fontSize}px</span>
+                <Slider aria-label="字号" className="mt-3 [&_[data-slot=slider-range]]:bg-emerald-700 [&_[data-slot=slider-thumb]]:border-emerald-700 [&_[data-slot=slider-track]]:bg-stone-200" min={16} max={26} value={[preference.fontSize]} onValueChange={([fontSize]) => { if (fontSize !== undefined) setPreference({ ...preference, fontSize }); }} onValueCommit={([fontSize]) => { if (fontSize !== undefined) void savePreference({ ...preference, fontSize }); }} />
+              </Label>
+              <Label className="block text-xs font-semibold text-stone-600">行距 <span className="float-right text-stone-500">{preference.lineHeight}%</span>
+                <Slider aria-label="行距" className="mt-3 [&_[data-slot=slider-range]]:bg-emerald-700 [&_[data-slot=slider-thumb]]:border-emerald-700 [&_[data-slot=slider-track]]:bg-stone-200" min={140} max={230} step={10} value={[preference.lineHeight]} onValueChange={([lineHeight]) => { if (lineHeight !== undefined) setPreference({ ...preference, lineHeight }); }} onValueCommit={([lineHeight]) => { if (lineHeight !== undefined) void savePreference({ ...preference, lineHeight }); }} />
+              </Label>
+              <Label className="block text-xs font-semibold text-stone-600">亮度 <span className="float-right text-stone-500">{preference.brightness}%</span>
+                <Slider aria-label="亮度" className="mt-3 [&_[data-slot=slider-range]]:bg-emerald-700 [&_[data-slot=slider-thumb]]:border-emerald-700 [&_[data-slot=slider-track]]:bg-stone-200" min={10} max={100} value={[preference.brightness]} onValueChange={([brightness]) => { if (brightness !== undefined) setPreference({ ...preference, brightness }); }} onValueCommit={([brightness]) => { if (brightness !== undefined) void savePreference({ ...preference, brightness }); }} />
+              </Label>
+              <div>
+                <Label id="page-mode-label" className="text-xs font-semibold text-stone-600">翻页模式</Label>
+                <Select value={preference.pageMode} onValueChange={(value) => void savePreference({ ...preference, pageMode: value as Preference['pageMode'] })}>
+                  <SelectTrigger aria-labelledby="page-mode-label" aria-label="翻页模式" className="mt-2 h-9 rounded-none border-stone-300 bg-white text-sm font-normal text-stone-800 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                    <SelectItem value="slide">滑动</SelectItem>
+                    <SelectItem value="cover">覆盖</SelectItem>
+                    <SelectItem value="simulation">仿真</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           ) : null}
 
-          <article
-            className="min-h-[620px] px-6 py-10 sm:px-12 sm:py-14 lg:px-16"
-            style={{
-              backgroundColor: theme.page,
-              color: theme.text,
-              borderColor: theme.border,
-              fontSize: preference.fontSize,
-              lineHeight: preference.lineHeight / 100,
-              fontFamily: preference.font === 'serif' ? 'var(--font-sans-cn), serif' : 'var(--font-sans)',
-              filter: `brightness(${preference.brightness}%)`,
-            }}
+          <div
+            data-testid="reader-page-surface"
+            data-page-mode={preference.pageMode}
+            data-motion={reducedMotion ? 'reduced' : 'full'}
+            className="yuejie-reader-page-surface relative min-h-[620px] overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-inset"
+            role="region"
+            aria-label={`章节阅读：${detail.book.title}，${chapter.title}`}
+            aria-describedby="reader-keyboard-hint"
+            aria-keyshortcuts="ArrowLeft ArrowRight PageUp PageDown"
+            tabIndex={0}
+            onKeyDown={handleReaderKeyDown}
           >
-            <p className="text-xs font-semibold text-emerald-700">{detail.book.title} · 第 {chapter.orderNo} 章</p>
-            <h1 className="mt-3 text-3xl font-semibold leading-tight">{chapter.title}</h1>
-            <div className="mt-10 space-y-7">
-              {chapter.content.split('\n').filter(Boolean).map((paragraph, index) => <p key={`${paragraph}-${index}`} className="max-w-2xl">{paragraph}</p>)}
-            </div>
-            <p className="mt-16 border-t pt-5 text-sm" style={{ borderColor: theme.border, color: theme.muted }}>本章阅读完毕</p>
+            <p id="reader-keyboard-hint" className="sr-only">使用左右方向键或 Page Up 和 Page Down 切换章节。</p>
+            <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{chapterAnnouncement}</p>
 
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-              <button type="button" onClick={() => { const previous = detail.chapters[activeChapterIndex - 1]; if (previous) void selectChapter(previous); }} disabled={activeChapterIndex <= 0} className="inline-flex items-center gap-1 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={17} aria-hidden="true" />上一章</button>
-              <button type="button" onClick={() => { const next = detail.chapters[activeChapterIndex + 1]; if (next) void selectChapter(next); }} disabled={activeChapterIndex >= detail.chapters.length - 1} className="inline-flex items-center gap-1 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40">下一章<ChevronRight size={17} aria-hidden="true" /></button>
-            </div>
-          </article>
+            <article
+              key={`chapter-${chapter.id}-${chapterTransition?.id ?? 'rest'}`}
+              data-testid="reader-current-chapter"
+              data-transition-effect={activeTransitionEffect}
+              data-transition-direction={chapterTransition?.direction}
+              className="yuejie-reader-current min-h-[620px] px-6 py-10 sm:px-12 sm:py-14 lg:px-16"
+              style={readerPageStyle}
+            >
+              <ChapterCopy
+                bookTitle={detail.book.title}
+                chapter={chapter}
+                theme={theme}
+                headingId="reader-chapter-title"
+                annotations={activeParagraphAnnotations}
+                onParagraphSelection={captureParagraphSelection}
+              />
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                <Button type="button" variant="ghost" size="sm" onClick={() => moveChapter(-1)} disabled={activeChapterIndex <= 0} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent"><ChevronLeft size={17} aria-hidden="true" />上一章</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => moveChapter(1)} disabled={activeChapterIndex >= detail.chapters.length - 1} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent">下一章<ChevronRight size={17} aria-hidden="true" /></Button>
+              </div>
+            </article>
+
+            {chapterTransition && !reducedMotion ? (
+              <div
+                key={chapterTransition.id}
+                data-testid="reader-transition-layer"
+                data-transition-mode={chapterTransition.mode}
+                data-transition-effect={transitionEffect(chapterTransition.mode)}
+                data-transition-direction={chapterTransition.direction}
+                className="yuejie-reader-transition"
+                aria-hidden="true"
+              >
+                <article className="min-h-full px-6 py-10 sm:px-12 sm:py-14 lg:px-16" style={readerPageStyle}>
+                  <ChapterCopy bookTitle={detail.book.title} chapter={chapterTransition.chapter} theme={theme} compact />
+                </article>
+              </div>
+            ) : null}
+          </div>
 
           <section className="border-t border-stone-200 bg-white px-6 py-8 sm:px-12 lg:px-16" aria-labelledby="chapter-interaction-heading">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
@@ -361,21 +1049,132 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <div className="flex items-center gap-3">
                 <div className="flex items-center" aria-label="为作品评分">
                   {[1, 2, 3, 4, 5].map((value) => (
-                    <button key={value} type="button" aria-label={`评分 ${value} 星`} onClick={() => void rateBook(value)} disabled={pendingAction === 'rating'} className="p-1 text-amber-500 disabled:opacity-50">
+                    <Button key={value} type="button" variant="ghost" size="icon" aria-label={`评分 ${value} 星`} onClick={() => void rateBook(value)} disabled={pendingAction === 'rating'} className="size-7 rounded-none p-1 text-amber-500 hover:bg-amber-50 hover:text-amber-600">
                       <Star size={18} fill={value <= rating ? 'currentColor' : 'none'} aria-hidden="true" />
-                    </button>
+                    </Button>
                   ))}
                 </div>
-                <button type="button" onClick={() => void voteBook()} disabled={pendingAction === 'vote'} className="inline-flex items-center gap-1 border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:opacity-50">
+                <Button type="button" variant="outline" size="sm" onClick={() => void voteBook('recommendation')} disabled={pendingAction === 'vote-recommendation'} className="h-auto rounded-none border-stone-300 px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">
                   <Ticket size={16} aria-hidden="true" />投推荐票
-                </button>
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => void voteBook('monthly')} disabled={pendingAction === 'vote-monthly'} className="h-auto rounded-none border-stone-300 px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">
+                  <Ticket size={16} aria-hidden="true" />投月票
+                </Button>
               </div>
             </div>
 
+            {paragraphAnnotationDraft ? (
+              <form
+                data-testid="reader-annotation-draft"
+                className="mt-5 border-y border-amber-200 bg-amber-50/60 py-4"
+                aria-label="保存段落划线"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveParagraphAnnotation();
+                }}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-amber-800">划线片段</p>
+                    <blockquote className="mt-2 border-l-2 border-amber-500 pl-3 text-sm leading-6 text-stone-800">{paragraphAnnotationDraft.selectedText}</blockquote>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" aria-label="取消划线" onClick={discardParagraphAnnotation} className="size-8 shrink-0 rounded-none text-stone-600 hover:bg-amber-100 hover:text-stone-950">
+                        <X size={16} aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>取消划线</TooltipContent>
+                  </Tooltip>
+                </div>
+                <Label htmlFor="paragraph-annotation-note" className="mt-4 block text-xs font-semibold text-stone-700">划线感想</Label>
+                <Textarea
+                  id="paragraph-annotation-note"
+                  aria-label="划线感想"
+                  maxLength={2000}
+                  value={paragraphAnnotationNote}
+                  onChange={(event) => setParagraphAnnotationNote(event.target.value)}
+                  className="mt-2 min-h-20 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"
+                  placeholder="写下感想"
+                />
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="paragraph-annotation-share"
+                      checked={paragraphAnnotationShareIntent}
+                      onCheckedChange={(checked) => setParagraphAnnotationShareIntent(checked === true)}
+                      className="border-stone-400 data-[state=checked]:border-emerald-700 data-[state=checked]:bg-emerald-700"
+                    />
+                    <Label htmlFor="paragraph-annotation-share" className="text-sm font-medium text-stone-800">申请公开分享</Label>
+                  </div>
+                  <Button type="submit" disabled={pendingAction === 'paragraph-annotation'} className="h-10 rounded-none bg-emerald-700 px-4 hover:bg-emerald-800">
+                    <Highlighter size={16} aria-hidden="true" />{pendingAction === 'paragraph-annotation' ? '保存中…' : '保存划线'}
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
+            <form
+              className="mt-5 border-y border-stone-200 py-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void rewardBook();
+              }}
+              aria-label="打赏作品"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-stone-900">打赏作品</p>
+                  <p className="mt-1 text-xs text-stone-500">用代币支持作者创作</p>
+                </div>
+                <div className="flex w-full gap-2 sm:w-auto">
+                  <Label htmlFor="reader-reward-amount" className="sr-only">打赏代币</Label>
+                  <Input
+                    id="reader-reward-amount"
+                    aria-label="打赏代币"
+                    aria-describedby="reader-reward-help"
+                    aria-invalid={rewardState === 'error' || undefined}
+                    autoComplete="off"
+                    className="h-10 min-w-0 flex-1 rounded-none border-stone-300 bg-white text-stone-900 sm:w-36 sm:flex-none focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"
+                    disabled={rewardState === 'pending'}
+                    inputMode="numeric"
+                    placeholder="代币数量"
+                    type="text"
+                    value={rewardAmount}
+                    onChange={(event) => {
+                      setRewardAmount(event.target.value);
+                      if (rewardState !== 'idle') {
+                        setRewardState('idle');
+                        setRewardMessage('');
+                      }
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    aria-busy={rewardState === 'pending'}
+                    className="h-10 shrink-0 rounded-none bg-emerald-700 px-4 hover:bg-emerald-800"
+                    disabled={rewardState === 'pending'}
+                  >
+                    {rewardState === 'pending' ? '打赏中…' : '打赏'}
+                  </Button>
+                </div>
+              </div>
+              <p id="reader-reward-help" className="mt-2 text-xs text-stone-500">仅支持大于 0 的整数代币数。</p>
+              {rewardState !== 'idle' ? (
+                <p
+                  data-testid="reader-reward-feedback"
+                  role={rewardState === 'error' ? 'alert' : 'status'}
+                  className={`mt-2 text-sm ${rewardState === 'error' ? 'text-rose-700' : rewardState === 'success' ? 'text-emerald-800' : 'text-stone-600'}`}
+                >
+                  {rewardMessage}
+                </p>
+              ) : null}
+            </form>
+
             <div className="mt-6 flex gap-2">
               <MessageSquare className="mt-2.5 shrink-0 text-stone-500" size={17} aria-hidden="true" />
-              <input aria-label="发表评论" value={comment} onChange={(event) => setComment(event.target.value)} className="min-w-0 flex-1 border border-stone-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-700" placeholder="写下此刻的想法" />
-              <button type="button" onClick={() => void postComment()} disabled={pendingAction === 'comment' || !comment.trim()} className="bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">发布</button>
+              <Input aria-label="发表评论" value={comment} onChange={(event) => setComment(event.target.value)} className="h-11 min-w-0 flex-1 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="写下此刻的想法" />
+              <Button type="button" onClick={() => void postComment()} disabled={pendingAction === 'comment' || !comment.trim()} className="h-11 rounded-none bg-emerald-700 px-4 hover:bg-emerald-800">发布</Button>
             </div>
 
             <div className="mt-6 space-y-4">
@@ -392,6 +1191,35 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       </div>
 
       <div className="mt-5 flex items-center justify-end gap-2 text-sm text-stone-500"><ArrowRight size={15} aria-hidden="true" />阅读进度会在登录读者身份后同步</div>
+
+      <AlertDialog open={purchaseDialogOpen} onOpenChange={(open) => {
+        if (pendingAction !== 'purchase') setPurchaseDialogOpen(open);
+      }}>
+        <AlertDialogContent className="rounded-none border-stone-300 bg-white text-stone-900">
+          <AlertDialogHeader>
+            <AlertDialogTitle>获得整本阅读权益</AlertDialogTitle>
+            <AlertDialogDescription>
+              {purchasePrice === undefined
+                ? '本书权益价格暂时无法确认。'
+                : `将使用 ${formatTokenAmount(purchasePrice)} 代币获得《${detail.book.title}》的整本阅读权益。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="text-sm leading-6 text-stone-600">代币可通过兑换码获得；本次权益确认后不支持退款。</p>
+          {purchaseError ? <InlineNotice tone="error">{purchaseError}</InlineNotice> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingAction === 'purchase'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={() => void purchaseBook()}
+              disabled={purchasePrice === undefined || pendingAction === 'purchase'}
+              className="rounded-none bg-emerald-700 text-white hover:bg-emerald-800 disabled:cursor-wait"
+            >
+              <Coins size={16} aria-hidden="true" />
+              {pendingAction === 'purchase' ? '确认中...' : '确认获得权益'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </NovelShell>
   );
 }

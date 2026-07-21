@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="阅界">
+  <rect width="64" height="64" rx="12" fill="#123f36"/>
+  <path d="M14 17.5c7.6-2.1 13.6-.7 18 4.1 4.4-4.8 10.4-6.2 18-4.1v28c-7.2-2-13.2-.5-18 4-4.8-4.5-10.8-6-18-4z" fill="#f8f6ef"/>
+  <path d="M32 21.6v23.3M18.5 23.2c4.6-1 8.6.1 11.8 3.1M45.5 23.2c-4.6-1-8.6.1-11.8 3.1" fill="none" stroke="#123f36" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.6"/>
+  <path d="M43 12v15l-4-2.6-4 2.6V12z" fill="#e5ad3b"/>
+</svg>

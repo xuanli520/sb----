@@ -29,6 +29,37 @@ Object.defineProperty(document, 'cookie', {
   configurable: true,
 });
 
+if (!globalThis.ResizeObserver) {
+  class ResizeObserver {
+    constructor() {}
+
+    observe() {}
+
+    unobserve() {}
+
+    disconnect() {}
+  }
+
+  globalThis.ResizeObserver = ResizeObserver;
+}
+
+// Radix Select uses pointer capture while opening. jsdom does not implement it,
+// but its absence should not block interaction coverage for the shared UI primitive.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: { configurable: true, value: () => false },
+    setPointerCapture: { configurable: true, value: () => undefined },
+    releasePointerCapture: { configurable: true, value: () => undefined },
+  });
+}
+
+if (!HTMLElement.prototype.scrollIntoView) {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: () => undefined,
+  });
+}
+
 // Mock timers
 beforeEach(() => {
   vi.useFakeTimers();

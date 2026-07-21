@@ -3,10 +3,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY . .
-ARG API_PROXY_TARGET
-ARG AUTH__JWT_SECRET
-ARG NOVEL_INTERNAL_API_KEY
-ENV API_PROXY_TARGET=$API_PROXY_TARGET AUTH__JWT_SECRET=$AUTH__JWT_SECRET NOVEL_INTERNAL_API_KEY=$NOVEL_INTERNAL_API_KEY
 RUN npm run build
 
 FROM node:22-alpine
@@ -16,4 +12,6 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 EXPOSE 3000
-CMD ["node","server.js"]
+# Docker supplies HOSTNAME as the container id by default. Next standalone would bind to that
+# single interface, leaving loopback health checks unavailable; bind explicitly to every address.
+CMD ["sh", "-c", "HOSTNAME=0.0.0.0 exec node server.js"]

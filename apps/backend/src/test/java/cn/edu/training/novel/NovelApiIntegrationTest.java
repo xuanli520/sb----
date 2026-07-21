@@ -8,7 +8,7 @@ import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
@@ -90,6 +90,9 @@ class NovelApiIntegrationTest {
     @Test void readerCanManageShelfAndOneTimeRedemptionIsAudited() throws Exception {
         mvc.perform(post("/api/v1/account/bookshelf/1")).andExpect(status().isOk()).andExpect(jsonPath("$.data.saved").value(true));
         mvc.perform(get("/api/v1/account/bookshelf")).andExpect(jsonPath("$.data[0].id").value(1));
+        mvc.perform(post("/api/v1/account/checkin"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.points").value(10)).andExpect(jsonPath("$.data.awarded").value(10));
+        mvc.perform(post("/api/v1/account/checkin")).andExpect(status().isConflict());
         mvc.perform(post("/api/v1/account/redeem").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"WELCOME100\"}"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.data.tokens").value(100));
         mvc.perform(post("/api/v1/account/redeem").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"WELCOME100\"}"))
@@ -131,7 +134,7 @@ class NovelApiIntegrationTest {
                 .andExpect(status().isOk());
         mvc.perform(post("/api/v1/account/books/1/purchase").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.balance").value(70));
-        mvc.perform(post("/api/v1/account/books/1/reward").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":20}"))
+        mvc.perform(post("/api/v1/account/books/1/reward").header("X-Novel-Development-Principal","author").header("Idempotency-Key", "novel-api-reward").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":20}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.balance").value(50));
         mvc.perform(get("/api/v1/account/wallet").header("X-Novel-Development-Principal","author")).andExpect(jsonPath("$.data.tokens").value(50));
     }
@@ -148,8 +151,20 @@ class NovelApiIntegrationTest {
         mvc.perform(post("/api/v1/account/author-applications").contentType(MediaType.APPLICATION_JSON).content("{\"penName\":\"新作者\",\"statement\":\"提交创作申请\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING"));
         mvc.perform(get("/api/v1/admin/author-applications").header("X-Novel-Development-Principal","admin")).andExpect(jsonPath("$.data[0].penName").value("新作者"));
-        mvc.perform(post("/api/v1/admin/users/3/status").header("X-Novel-Development-Principal","admin").contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
-                .andExpect(status().isOk());
-        mvc.perform(post("/api/v1/account/checkin")).andExpect(status().isForbidden());
+        String registration = internalMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"disable.target@example.test\",\"displayName\":\"待禁用读者\",\"password\":\"correct-horse-battery-staple\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        long accountId = ((Number) JsonPath.read(registration, "$.data.user.id")).longValue();
+        String sessionId = JsonPath.read(registration, "$.data.sessionId");
+        mvc.perform(post("/api/v1/admin/users/{userId}/status", accountId)
+                        .header("X-Novel-Development-Principal","admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false,\"reason\":\"违规处理暂停账号\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(false));
+        assertThat(jdbc.queryForObject("SELECT enabled FROM novel_account WHERE id = ?", Boolean.class, accountId)).isFalse();
+        internalMvc.perform(get("/api/v1/account/profile").header("X-Novel-Bff-Session", sessionId))
+                .andExpect(status().isUnauthorized());
     }
 }

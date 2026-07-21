@@ -1,34 +1,323 @@
 'use client';
 
 import Link from 'next/link';
-import { BookCopy, FileText, PenLine, Plus, Save, Send, SquarePen } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/app/components/ui/alert-dialog';
+import { Badge } from '@/app/components/ui/badge';
+import { Button } from '@/app/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
+import { Input } from '@/app/components/ui/input';
+import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import { Skeleton } from '@/app/components/ui/skeleton';
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
+import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
-import { Book, novelApi } from '@/features/novel/api';
+import { AuthorAnalyticsReport, AuthorCommentPage, Book, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
-type ChapterResult = { id: number; published: boolean };
+type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
+type AuthorChapter = {
+  id: number;
+  bookId: number;
+  volumeId: number | null;
+  title: string;
+  content: string;
+  published: boolean;
+  status: string;
+  scheduledPublishAt: string | null;
+  publishedAt: string | null;
+  reviewReason: string;
+  orderNo: number;
+};
+type RewardRecord = { id: number; bookId: number; bookTitle: string; rewarderUserId: number; tokenAmount: number; rewardedAt: string };
+type RewardReport = {
+  items: RewardRecord[];
+  summary: { rewardCount: number; totalTokens: number; amountUnit: string };
+  meta: { total: number; page: number; size: number; bookId: number | null; from: string | null; to: string | null; timeZone: string; dateBoundary: string; recordInclusion: string };
+};
+type RewardQuery = { bookId: number | undefined; from: string; to: string; page: number };
+type AnalyticsQuery = { bookId: number | undefined; from: string; to: string };
 type Notice = { message: string; tone: 'success' | 'error' };
+type DeleteTarget = { kind: 'book'; item: Book } | { kind: 'chapter'; item: AuthorChapter };
+type FeedbackTab = 'comments' | 'annotations';
+type FeedbackPageMeta = { total: number; page: number; size: number };
 
 const bookCategories = ['科幻', '悬疑', '古言'];
+const serialStatuses = ['连载中', '已完结'];
+const rewardPageSize = 10;
+const feedbackPageSize = 20;
+
+function canEditBook(book: Book) {
+  return book.status === 'DRAFT' || book.status === 'REJECTED';
+}
+
+function canEditChapter(chapter: AuthorChapter) {
+  return ['DRAFT', 'SCHEDULED', 'PUBLISHED'].includes(chapter.status);
+}
+
+function canDeleteChapter(chapter: AuthorChapter) {
+  return chapter.status === 'DRAFT' || chapter.status === 'SCHEDULED';
+}
+
+function normalizedSerialStatus(serialStatus: string) {
+  if (serialStatus === 'COMPLETED') return '已完结';
+  if (serialStatus === 'SERIALIZING') return '连载中';
+  return serialStatuses.includes(serialStatus) ? serialStatus : '连载中';
+}
+
+function failureMessage(reason: unknown, fallback: string) {
+  return reason instanceof Error && reason.message ? reason.message : fallback;
+}
+
+function formatCommentTime(createdAt: string) {
+  const timestamp = Date.parse(createdAt);
+  if (Number.isNaN(timestamp)) return '';
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(timestamp);
+}
+
+function feedbackPath(bookId: number, resource: 'comments' | 'annotations', page: number) {
+  const parameters = new URLSearchParams();
+  if (page > 0) parameters.set('page', page.toString());
+  parameters.set('size', feedbackPageSize.toString());
+  return `author/books/${bookId}/${resource}?${parameters.toString()}`;
+}
+
+function InteractionStatusBadge({ status }: { status: string }) {
+  const meta = {
+    PENDING_REVIEW: { label: '待审核', className: 'border-amber-300 bg-amber-50 text-amber-900' },
+    VISIBLE: { label: '已公开', className: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
+    REJECTED: { label: '未通过', className: 'border-rose-300 bg-rose-50 text-rose-800' },
+    PRIVATE: { label: '未分享', className: 'border-stone-300 bg-stone-100 text-stone-700' },
+  }[status] ?? { label: status, className: 'border-stone-300 bg-stone-100 text-stone-700' };
+
+  return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
+}
+
+function FeedbackPagination({
+  label,
+  meta,
+  loading,
+  onPageChange,
+}: {
+  label: string;
+  meta: FeedbackPageMeta;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(meta.total / meta.size));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || meta.page <= 0;
+  const nextDisabled = loading || meta.page >= totalPages - 1;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-stone-100 px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-stone-500">共 {meta.total.toLocaleString('zh-CN')} 条</p>
+      <Pagination aria-label={`${label}分页`} className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#author-feedback-heading"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!previousDisabled) onPageChange(meta.page - 1);
+              }}
+              aria-disabled={previousDisabled}
+              tabIndex={previousDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+          <PaginationItem>
+            <span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-stone-600" aria-live="polite">第 {meta.page + 1} / {totalPages} 页</span>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              href="#author-feedback-heading"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!nextDisabled) onPageChange(meta.page + 1);
+              }}
+              aria-disabled={nextDisabled}
+              tabIndex={nextDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
+}
+
+function FeedbackSelectionEmpty({ icon }: { icon: FeedbackTab }) {
+  const Icon = icon === 'comments' ? MessageSquareText : Highlighter;
+  return (
+    <div className="px-5 py-12 text-center">
+      <Icon className="mx-auto text-stone-400" size={28} aria-hidden="true" />
+      <p className="mt-3 font-medium text-stone-800">请先选择一部作品</p>
+      <p className="mt-1 text-sm leading-6 text-stone-500">反馈会按你拥有的作品归集，不能查看其他作者的内容。</p>
+    </div>
+  );
+}
+
+function FeedbackLoading({ label }: { label: string }) {
+  return (
+    <div className="space-y-3 px-5 py-6" aria-live="polite">
+      <p className="text-sm text-stone-600">{label}</p>
+      <Skeleton className="h-12 rounded-none bg-stone-100" />
+      <Skeleton className="h-12 rounded-none bg-stone-100" />
+    </div>
+  );
+}
+
+function FeedbackEmpty({ icon, title, description }: { icon: FeedbackTab; title: string; description: string }) {
+  const Icon = icon === 'comments' ? MessageSquareText : Highlighter;
+  return (
+    <div className="px-5 py-12 text-center">
+      <Icon className="mx-auto text-stone-400" size={28} aria-hidden="true" />
+      <p className="mt-3 font-medium text-stone-800">{title}</p>
+      <p className="mt-1 text-sm leading-6 text-stone-500">{description}</p>
+    </div>
+  );
+}
+
+function FeedbackError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between" role="alert">
+      <InlineNotice tone="error">{message}</InlineNotice>
+      <Button type="button" variant="outline" onClick={onRetry} className="h-auto shrink-0 rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">
+        <RefreshCw size={16} aria-hidden="true" />重试
+      </Button>
+    </div>
+  );
+}
+
+function formatPublishTime(publishAt: string | null) {
+  if (!publishAt) return '';
+  const timestamp = Date.parse(publishAt);
+  if (Number.isNaN(timestamp)) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp);
+}
+
+function formatRewardTime(rewardedAt: string) {
+  const timestamp = Date.parse(rewardedAt);
+  if (Number.isNaN(timestamp)) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp);
+}
+
+function rewardReportPath(query: RewardQuery) {
+  const parameters = new URLSearchParams();
+  if (query.bookId !== undefined) parameters.set('bookId', query.bookId.toString());
+  if (query.from) parameters.set('from', query.from);
+  if (query.to) parameters.set('to', query.to);
+  parameters.set('page', query.page.toString());
+  parameters.set('size', rewardPageSize.toString());
+  return `author/reward-records?${parameters.toString()}`;
+}
+
+function analyticsReportPath(query: AnalyticsQuery) {
+  const parameters = new URLSearchParams();
+  if (query.bookId !== undefined) parameters.set('bookId', query.bookId.toString());
+  if (query.from && query.to) {
+    parameters.set('from', query.from);
+    parameters.set('to', query.to);
+  }
+  const queryString = parameters.toString();
+  return queryString ? `author/analytics?${queryString}` : 'author/analytics';
+}
+
+function formatAnalyticsPercent(value: number) {
+  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)}%`;
+}
+
+function ChapterStatusBadge({ status }: { status: string }) {
+  const meta = {
+    DRAFT: { label: '草稿', className: 'border-stone-300 bg-stone-100 text-stone-700' },
+    SCHEDULED: { label: '已排期', className: 'border-sky-200 bg-sky-50 text-sky-800' },
+    PUBLISHED: { label: '已发布', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+    NEEDS_REVIEW: { label: '需复核', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+  }[status] ?? { label: status, className: 'border-stone-300 bg-stone-100 text-stone-700' };
+
+  return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
+}
 
 export default function AuthorPage() {
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBookId, setSelectedBookId] = useState<number>();
+  const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [chapters, setChapters] = useState<AuthorChapter[]>([]);
+  const [selectedVolumeId, setSelectedVolumeId] = useState<number>();
+  const [selectedDraftId, setSelectedDraftId] = useState<number>();
+  const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>('comments');
+  const [commentPage, setCommentPage] = useState<AuthorCommentPage>();
+  const [commentPageIndex, setCommentPageIndex] = useState(0);
+  const [commentError, setCommentError] = useState('');
+  const [annotationPage, setAnnotationPage] = useState<ParagraphAnnotationPage>();
+  const [annotationPageIndex, setAnnotationPageIndex] = useState(0);
+  const [annotationError, setAnnotationError] = useState('');
+  const [rewardBookId, setRewardBookId] = useState<number>();
+  const [rewardFrom, setRewardFrom] = useState('');
+  const [rewardTo, setRewardTo] = useState('');
+  const [rewardQuery, setRewardQuery] = useState<RewardQuery>({ bookId: undefined, from: '', to: '', page: 0 });
+  const [rewardReport, setRewardReport] = useState<RewardReport>();
+  const [rewardLoading, setRewardLoading] = useState(true);
+  const [rewardError, setRewardError] = useState('');
+  const [analyticsBookId, setAnalyticsBookId] = useState<number>();
+  const [analyticsFrom, setAnalyticsFrom] = useState('');
+  const [analyticsTo, setAnalyticsTo] = useState('');
+  const [analyticsQuery, setAnalyticsQuery] = useState<AnalyticsQuery>({ bookId: undefined, from: '', to: '' });
+  const [analyticsReport, setAnalyticsReport] = useState<AuthorAnalyticsReport>();
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(bookCategories[0]);
   const [synopsis, setSynopsis] = useState('');
+  const [volumeTitle, setVolumeTitle] = useState('');
   const [chapterTitle, setChapterTitle] = useState('');
   const [chapterContent, setChapterContent] = useState('');
+  const [publishAt, setPublishAt] = useState('');
+  const [editingBook, setEditingBook] = useState<Book>();
+  const [bookEditTitle, setBookEditTitle] = useState('');
+  const [bookEditCategory, setBookEditCategory] = useState(bookCategories[0]);
+  const [bookEditSynopsis, setBookEditSynopsis] = useState('');
+  const [bookEditSerialStatus, setBookEditSerialStatus] = useState(serialStatuses[0]);
+  const [editingChapter, setEditingChapter] = useState<AuthorChapter>();
+  const [chapterEditTitle, setChapterEditTitle] = useState('');
+  const [chapterEditContent, setChapterEditContent] = useState('');
+  const [chapterEditVolumeId, setChapterEditVolumeId] = useState<number>();
+  const [editError, setEditError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
+  const [deleteError, setDeleteError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState('');
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
+  const workspaceRequestId = useRef(0);
+  const commentRequestId = useRef(0);
+  const annotationRequestId = useRef(0);
+  const rewardRequestId = useRef(0);
+  const analyticsRequestId = useRef(0);
 
   const loadBooks = useCallback(async () => {
     setLoading(true);
     try {
       const items = await novelApi<Book[]>('author/books', 'author');
       setBooks(items);
-      setSelectedBookId((current) => current ?? items[0]?.id);
     } catch (reason) {
       setNotice({ message: reason instanceof Error ? reason.message : '作品库暂时无法加载。', tone: 'error' });
     } finally {
@@ -38,11 +327,371 @@ export default function AuthorPage() {
 
   useEffect(() => { void loadBooks(); }, [loadBooks]);
 
+  const loadRewardReport = useCallback(async (query: RewardQuery) => {
+    const requestId = ++rewardRequestId.current;
+    setRewardLoading(true);
+    setRewardError('');
+    try {
+      const report = await novelApi<RewardReport>(rewardReportPath(query), 'author');
+      if (requestId === rewardRequestId.current) setRewardReport(report);
+    } catch (reason) {
+      if (requestId === rewardRequestId.current) {
+        setRewardReport(undefined);
+        setRewardError(failureMessage(reason, '打赏记录暂时无法加载。'));
+      }
+    } finally {
+      if (requestId === rewardRequestId.current) setRewardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadRewardReport(rewardQuery); }, [loadRewardReport, rewardQuery]);
+
+  const loadAnalyticsReport = useCallback(async (query: AnalyticsQuery) => {
+    const requestId = ++analyticsRequestId.current;
+    setAnalyticsLoading(true);
+    setAnalyticsError('');
+    try {
+      const report = await novelApi<AuthorAnalyticsReport>(analyticsReportPath(query), 'author');
+      if (requestId === analyticsRequestId.current) setAnalyticsReport(report);
+    } catch (reason) {
+      if (requestId === analyticsRequestId.current) {
+        setAnalyticsReport(undefined);
+        setAnalyticsError(failureMessage(reason, '作品数据暂时无法加载。'));
+      }
+    } finally {
+      if (requestId === analyticsRequestId.current) setAnalyticsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadAnalyticsReport(analyticsQuery); }, [analyticsQuery, loadAnalyticsReport]);
+
+  useEffect(() => {
+    setSelectedBookId((current) => books.some((book) => book.id === current) ? current : books[0]?.id);
+  }, [books]);
+
+  const loadBookWorkspace = useCallback(async (bookId: number) => {
+    const requestId = ++workspaceRequestId.current;
+    setWorkspaceLoading(true);
+    setWorkspaceError('');
+    try {
+      const [volumeItems, chapterItems] = await Promise.all([
+        novelApi<Volume[]>(`author/books/${bookId}/volumes`, 'author'),
+        novelApi<AuthorChapter[]>(`author/books/${bookId}/chapters`, 'author'),
+      ]);
+      if (requestId === workspaceRequestId.current) {
+        setVolumes(volumeItems);
+        setChapters(chapterItems);
+      }
+    } catch (reason) {
+      if (requestId === workspaceRequestId.current) {
+        const message = reason instanceof Error ? reason.message : '卷册和章节暂时无法加载。';
+        setVolumes([]);
+        setChapters([]);
+        setWorkspaceError(message);
+      }
+    } finally {
+      if (requestId === workspaceRequestId.current) setWorkspaceLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      workspaceRequestId.current += 1;
+      setVolumes([]);
+      setChapters([]);
+      setSelectedVolumeId(undefined);
+      setSelectedDraftId(undefined);
+      setWorkspaceLoading(false);
+      setWorkspaceError('');
+      return;
+    }
+    setSelectedVolumeId(undefined);
+    setSelectedDraftId(undefined);
+    void loadBookWorkspace(selectedBookId);
+  }, [loadBookWorkspace, selectedBookId]);
+
+  useEffect(() => {
+    setSelectedVolumeId((current) => volumes.some((volume) => volume.id === current) ? current : volumes[0]?.id);
+  }, [volumes]);
+
+  const draftChapters = useMemo(() => chapters.filter((chapter) => chapter.status === 'DRAFT'), [chapters]);
+
+  useEffect(() => {
+    setSelectedDraftId((current) => draftChapters.some((chapter) => chapter.id === current) ? current : draftChapters[0]?.id);
+  }, [draftChapters]);
+
+  const loadAuthorComments = useCallback(async (bookId: number, pageIndex: number) => {
+    const requestId = ++commentRequestId.current;
+    setCommentsLoading(true);
+    setCommentError('');
+    setCommentPage(undefined);
+    try {
+      const page = await novelApi<AuthorCommentPage>(feedbackPath(bookId, 'comments', pageIndex), 'author');
+      if (requestId === commentRequestId.current) setCommentPage(page);
+    } catch (reason) {
+      if (requestId === commentRequestId.current) {
+        setCommentPage(undefined);
+        setCommentError(failureMessage(reason, '作品评论暂时无法加载。'));
+      }
+    } finally {
+      if (requestId === commentRequestId.current) setCommentsLoading(false);
+    }
+  }, []);
+
+  const loadAuthorAnnotations = useCallback(async (bookId: number, pageIndex: number) => {
+    const requestId = ++annotationRequestId.current;
+    setAnnotationsLoading(true);
+    setAnnotationError('');
+    setAnnotationPage(undefined);
+    try {
+      const page = await novelApi<ParagraphAnnotationPage>(feedbackPath(bookId, 'annotations', pageIndex), 'author');
+      if (requestId === annotationRequestId.current) setAnnotationPage(page);
+    } catch (reason) {
+      if (requestId === annotationRequestId.current) {
+        setAnnotationPage(undefined);
+        setAnnotationError(failureMessage(reason, '公开段评暂时无法加载。'));
+      }
+    } finally {
+      if (requestId === annotationRequestId.current) setAnnotationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setCommentPageIndex(0);
+    setAnnotationPageIndex(0);
+  }, [selectedBookId]);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      commentRequestId.current += 1;
+      setCommentPage(undefined);
+      setCommentError('');
+      setCommentsLoading(false);
+      return;
+    }
+    void loadAuthorComments(selectedBookId, commentPageIndex);
+  }, [commentPageIndex, loadAuthorComments, selectedBookId]);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      annotationRequestId.current += 1;
+      setAnnotationPage(undefined);
+      setAnnotationError('');
+      setAnnotationsLoading(false);
+      return;
+    }
+    void loadAuthorAnnotations(selectedBookId, annotationPageIndex);
+  }, [annotationPageIndex, loadAuthorAnnotations, selectedBookId]);
+
   const selectedBook = useMemo(() => books.find((book) => book.id === selectedBookId), [books, selectedBookId]);
+  const selectedDraft = useMemo(() => draftChapters.find((chapter) => chapter.id === selectedDraftId), [draftChapters, selectedDraftId]);
+  const sharedAnnotations = useMemo(
+    () => (annotationPage?.items ?? []).filter((annotation) => annotation.shareIntent),
+    [annotationPage],
+  );
   const totalWords = useMemo(() => books.reduce((sum, book) => sum + book.words, 0), [books]);
   const pendingBooks = useMemo(() => books.filter((book) => ['PENDING_REVIEW', 'NEEDS_REVIEW'].includes(book.status)).length, [books]);
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
+
+  const applyRewardFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (rewardFrom && rewardTo && rewardFrom > rewardTo) {
+      setRewardError('起始日期不能晚于结束日期。');
+      return;
+    }
+    setRewardQuery({ bookId: rewardBookId, from: rewardFrom, to: rewardTo, page: 0 });
+  };
+
+  const resetRewardFilters = () => {
+    setRewardBookId(undefined);
+    setRewardFrom('');
+    setRewardTo('');
+    setRewardError('');
+    setRewardQuery({ bookId: undefined, from: '', to: '', page: 0 });
+  };
+
+  const applyAnalyticsFilters = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (Boolean(analyticsFrom) !== Boolean(analyticsTo)) {
+      setAnalyticsError('请同时填写起始日期和结束日期。');
+      return;
+    }
+    if (analyticsFrom && analyticsTo && analyticsFrom > analyticsTo) {
+      setAnalyticsError('起始日期不能晚于结束日期。');
+      return;
+    }
+    setAnalyticsQuery({ bookId: analyticsBookId, from: analyticsFrom, to: analyticsTo });
+  };
+
+  const resetAnalyticsFilters = () => {
+    setAnalyticsBookId(undefined);
+    setAnalyticsFrom('');
+    setAnalyticsTo('');
+    setAnalyticsError('');
+    setAnalyticsQuery({ bookId: undefined, from: '', to: '' });
+  };
+
+  const moveRewardPage = (offset: number) => {
+    setRewardQuery((current) => ({ ...current, page: Math.max(0, current.page + offset) }));
+  };
+
+  const openBookEditor = (book: Book) => {
+    if (!canEditBook(book)) {
+      announce('该作品已进入审核或发布流程，当前状态不能修改作品信息。', 'error');
+      return;
+    }
+    setEditingBook(book);
+    setBookEditTitle(book.title);
+    setBookEditCategory(book.category);
+    setBookEditSynopsis(book.synopsis);
+    setBookEditSerialStatus(normalizedSerialStatus(book.serialStatus));
+    setEditError('');
+  };
+
+  const closeBookEditor = () => {
+    if (pendingAction === 'update-book') return;
+    setEditingBook(undefined);
+    setEditError('');
+  };
+
+  const updateBook = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingBook) return;
+    const nextTitle = bookEditTitle.trim();
+    const nextSynopsis = bookEditSynopsis.trim();
+    if (!nextTitle || !nextSynopsis) {
+      setEditError('请填写作品名称和作品简介后再保存。');
+      return;
+    }
+
+    setPendingAction('update-book');
+    setEditError('');
+    try {
+      const updated = await novelApi<Book>(`author/books/${editingBook.id}`, 'author', {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: nextTitle,
+          category: bookEditCategory,
+          synopsis: nextSynopsis,
+          serialStatus: bookEditSerialStatus,
+        }),
+      });
+      setBooks((current) => current.map((book) => book.id === updated.id ? updated : book));
+      setEditingBook(undefined);
+      announce(`《${updated.title}》的作品信息已保存`);
+    } catch (reason) {
+      const message = failureMessage(reason, '服务暂时无法保存作品信息。');
+      setEditError(`作品信息未保存：${message}`);
+      announce(`作品信息未保存：${message}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const openChapterEditor = (chapter: AuthorChapter) => {
+    if (!canEditChapter(chapter)) {
+      announce('该章节正在复核，当前状态不能继续修改。', 'error');
+      return;
+    }
+    setSelectedBookId(chapter.bookId);
+    setEditingChapter(chapter);
+    setChapterEditTitle(chapter.title);
+    setChapterEditContent(chapter.content);
+    setChapterEditVolumeId(undefined);
+    setEditError('');
+  };
+
+  const closeChapterEditor = () => {
+    if (pendingAction === 'update-chapter') return;
+    setEditingChapter(undefined);
+    setEditError('');
+  };
+
+  const updateChapter = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingChapter) return;
+    const nextTitle = chapterEditTitle.trim();
+    const nextContent = chapterEditContent.trim();
+    if (!nextTitle || !nextContent) {
+      setEditError('请填写章节标题和正文后再保存。');
+      return;
+    }
+
+    setPendingAction('update-chapter');
+    setEditError('');
+    try {
+      const updated = await novelApi<AuthorChapter>(`author/books/${editingChapter.bookId}/chapters/${editingChapter.id}`, 'author', {
+        method: 'PUT',
+        body: JSON.stringify({
+          title: nextTitle,
+          content: nextContent,
+          ...(chapterEditVolumeId !== undefined ? { volumeId: chapterEditVolumeId } : {}),
+        }),
+      });
+      setChapters((current) => current.map((chapter) => chapter.id === updated.id ? updated : chapter));
+      setEditingChapter(undefined);
+      announce(
+        updated.status === 'NEEDS_REVIEW'
+          ? `《${updated.title}》已保存，已发布章节的修改已送入整书复核。`
+          : `《${updated.title}》已保存`,
+      );
+      await Promise.all([loadBooks(), loadBookWorkspace(updated.bookId)]);
+    } catch (reason) {
+      const message = failureMessage(reason, '服务暂时无法保存章节。');
+      setEditError(`章节未保存：${message}`);
+      announce(`章节未保存：${message}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const openDeleteConfirmation = (target: DeleteTarget) => {
+    setDeleteTarget(target);
+    setDeleteError('');
+  };
+
+  const closeDeleteConfirmation = () => {
+    if (pendingAction === 'delete-book' || pendingAction === 'delete-chapter') return;
+    setDeleteTarget(undefined);
+    setDeleteError('');
+  };
+
+  const deleteTargetItem = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    const isBook = target.kind === 'book';
+    const bookId = isBook ? target.item.id : target.item.bookId;
+    const chapterId = isBook ? undefined : target.item.id;
+    setPendingAction(isBook ? 'delete-book' : 'delete-chapter');
+    setDeleteError('');
+    try {
+      await novelApi(
+        isBook ? `author/books/${bookId}` : `author/books/${bookId}/chapters/${chapterId}`,
+        'author',
+        { method: 'DELETE' },
+      );
+      if (isBook) {
+        setBooks((current) => current.filter((book) => book.id !== bookId));
+        setSelectedBookId((current) => current === bookId ? undefined : current);
+        setRewardBookId((current) => current === bookId ? undefined : current);
+        setRewardQuery((current) => current.bookId === bookId ? { ...current, bookId: undefined, page: 0 } : current);
+        announce(`《${target.item.title}》及其未发布内容已删除`);
+      } else {
+        setChapters((current) => current.filter((chapter) => chapter.id !== chapterId));
+        setSelectedDraftId((current) => current === chapterId ? undefined : current);
+        announce(`《${target.item.title}》已删除`);
+        await Promise.all([loadBooks(), loadBookWorkspace(bookId)]);
+      }
+      setDeleteTarget(undefined);
+    } catch (reason) {
+      const message = failureMessage(reason, '服务暂时无法删除该内容。');
+      setDeleteError(`删除未完成：${message}`);
+      announce(`删除未完成：${message}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
 
   const createBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -64,23 +713,93 @@ export default function AuthorPage() {
     }
   };
 
+  const createVolume = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedBookId) {
+      announce('请先在作品库中选择一部作品。', 'error');
+      return;
+    }
+    if (!volumeTitle.trim()) {
+      announce('请填写卷册名称。', 'error');
+      return;
+    }
+    setPendingAction('volume');
+    try {
+      const volume = await novelApi<Volume>(`author/books/${selectedBookId}/volumes`, 'author', {
+        method: 'POST',
+        body: JSON.stringify({ title: volumeTitle.trim() }),
+      });
+      setVolumeTitle('');
+      setSelectedVolumeId(volume.id);
+      announce(`《${selectedBook?.title ?? '当前作品'}》已新建${volume.title}`);
+      await loadBookWorkspace(selectedBookId);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '新建卷册失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
   const saveChapter = async (submit: boolean) => {
     if (!selectedBookId || !chapterTitle.trim() || !chapterContent.trim()) {
       announce('请先选择作品，并补全章节标题和正文。', 'error');
       return;
     }
+    if (!submit && !selectedVolumeId) {
+      announce('请先创建并选择一个卷册，再保存章节草稿。', 'error');
+      return;
+    }
     setPendingAction(submit ? 'submit-chapter' : 'draft-chapter');
     try {
-      const result = await novelApi<ChapterResult>(`author/books/${selectedBookId}/chapters`, 'author', {
+      const path = submit
+        ? `author/books/${selectedBookId}/chapters`
+        : `author/books/${selectedBookId}/volumes/${selectedVolumeId}/chapters`;
+      const result = await novelApi<AuthorChapter>(path, 'author', {
         method: 'POST',
-        body: JSON.stringify({ title: chapterTitle.trim(), content: chapterContent.trim(), submit }),
+        body: JSON.stringify(submit
+          ? {
+              title: chapterTitle.trim(),
+              content: chapterContent.trim(),
+              submit: true,
+              ...(selectedVolumeId ? { volumeId: selectedVolumeId } : {}),
+            }
+          : { title: chapterTitle.trim(), content: chapterContent.trim() }),
       });
       setChapterTitle('');
       setChapterContent('');
       announce(submit ? (result.published ? '章节已通过自动筛查并发布' : '章节已拦截，作品进入人工复核') : '章节草稿已保存');
       await loadBooks();
+      await loadBookWorkspace(selectedBookId);
+      if (!submit) setSelectedDraftId(result.id);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '章节保存失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const scheduleDraft = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedBookId || !selectedDraft) {
+      announce('请先从草稿列表中选择一个章节。', 'error');
+      return;
+    }
+    const timestamp = new Date(publishAt);
+    if (!publishAt || Number.isNaN(timestamp.getTime()) || timestamp.getTime() <= Date.now()) {
+      announce('发布时间必须是当前时间之后的有效日期。', 'error');
+      return;
+    }
+    setPendingAction('schedule');
+    try {
+      const chapter = await novelApi<AuthorChapter>(`author/books/${selectedBookId}/chapters/${selectedDraft.id}/schedule`, 'author', {
+        method: 'POST',
+        body: JSON.stringify({ publishAt: timestamp.toISOString() }),
+      });
+      setPublishAt('');
+      announce(`《${chapter.title}》已排期，将在 ${formatPublishTime(chapter.scheduledPublishAt)} 自动复核后发布`);
+      await loadBookWorkspace(selectedBookId);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '章节排期失败，请稍后重试。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -109,7 +828,7 @@ export default function AuthorPage() {
         eyebrow="作家中心"
         title="今天，写下新的章节。"
         description="从草稿、章节存稿到完整作品审核，所有内容都只在你的作品范围内管理。"
-        actions={<Link href="/" className="inline-flex items-center gap-2 border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><BookCopy size={16} aria-hidden="true" />返回书城</Link>}
+        actions={<Button asChild variant="outline" size="sm" className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><Link href="/"><BookCopy size={16} aria-hidden="true" />返回书城</Link></Button>}
       />
 
       {notice ? <div className="mt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
@@ -125,6 +844,251 @@ export default function AuthorPage() {
         })}
       </section>
 
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="author-analytics-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">作品数据</p>
+            <h2 id="author-analytics-heading" className="mt-1 text-xl font-semibold text-stone-950">收藏、购书与阅读进度</h2>
+          </div>
+          <span className="text-sm text-stone-500" aria-live="polite">
+            {analyticsLoading ? '正在加载' : analyticsReport ? `${analyticsReport.meta.from} 至 ${analyticsReport.meta.to}` : '暂未加载'}
+          </span>
+        </div>
+
+        <form onSubmit={applyAnalyticsFilters} className="grid gap-3 border-b border-stone-100 px-5 py-5 sm:grid-cols-2 xl:grid-cols-[minmax(160px,1fr)_minmax(138px,.8fr)_minmax(138px,.8fr)_auto_auto] xl:items-end">
+          <div>
+            <Label id="analytics-book-label" className="text-stone-700">作品</Label>
+            <Select value={analyticsBookId?.toString() ?? 'all'} onValueChange={(value) => setAnalyticsBookId(value === 'all' ? undefined : Number(value))}>
+              <SelectTrigger aria-label="作品数据作品筛选" className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+              <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                <SelectItem value="all">全部作品</SelectItem>
+                {books.map((book) => <SelectItem key={book.id} value={book.id.toString()}>{book.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="analytics-from" className="text-stone-700">起始日期</Label>
+            <Input id="analytics-from" aria-label="作品数据起始日期" type="date" value={analyticsFrom} onChange={(event) => setAnalyticsFrom(event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+          </div>
+          <div>
+            <Label htmlFor="analytics-to" className="text-stone-700">结束日期</Label>
+            <Input id="analytics-to" aria-label="作品数据结束日期" type="date" value={analyticsTo} onChange={(event) => setAnalyticsTo(event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+          </div>
+          <Button type="submit" disabled={analyticsLoading} className="h-10 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800 disabled:cursor-wait"><RefreshCw size={16} aria-hidden="true" className={analyticsLoading ? 'animate-spin' : ''} />查询</Button>
+          <Button type="button" variant="outline" onClick={resetAnalyticsFilters} disabled={analyticsLoading && !analyticsReport} className="h-10 rounded-none border-stone-300 bg-white px-3 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">重置</Button>
+        </form>
+
+        {analyticsError ? (
+          <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <InlineNotice tone="error">作品数据无法显示：{analyticsError}</InlineNotice>
+            <Button type="button" variant="outline" onClick={() => void loadAnalyticsReport(analyticsQuery)} className="h-auto shrink-0 rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><RefreshCw size={16} aria-hidden="true" />重试</Button>
+          </div>
+        ) : null}
+        {analyticsLoading && !analyticsReport ? <div className="grid gap-px bg-stone-100 p-px sm:grid-cols-4" aria-live="polite">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-32 rounded-none bg-white" />)}</div> : null}
+        {!analyticsError && analyticsReport ? (
+          <>
+            <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="bg-white px-5 py-5">
+                <Heart className="text-emerald-700" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">当前收藏</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.currentFavoriteCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">本</span></dd>
+              </div>
+              <div className="bg-white px-5 py-5">
+                <ShoppingBag className="text-emerald-700" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">付费购书</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.purchaseCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">笔</span></dd>
+              </div>
+              <div className="bg-white px-5 py-5">
+                <Gift className="text-emerald-700" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">购书代币</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.purchaseTokenAmount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">代币</span></dd>
+              </div>
+              <div className="bg-white px-5 py-5">
+                <BookOpen className="text-emerald-700" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">当前阅读完成度</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{formatAnalyticsPercent(analyticsReport.summary.averageReadThroughPercent)}</dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.activeReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.summary.completedReaderBookCount.toLocaleString('zh-CN')} 本读完</p>
+              </div>
+            </dl>
+
+            <div className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-2">
+              <div className="bg-white px-5 py-4">
+                <p className="text-sm font-medium text-stone-900">订阅</p>
+                <p className="mt-1 text-sm text-stone-600">{analyticsReport.availability.subscription.available ? '数据已可用' : '暂不显示：当前没有按作品或作者归因的订阅事件。'}</p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <p className="text-sm font-medium text-stone-900">留存</p>
+                <p className="mt-1 text-sm text-stone-600">{analyticsReport.availability.retention.available ? '数据已可用' : '暂不显示：阅读进度只保存最新位置，无法还原读者回访序列。'}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-7 px-5 py-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
+              <section aria-labelledby="author-analytics-trend-heading">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 id="author-analytics-trend-heading" className="text-base font-semibold text-stone-950">收藏与购书趋势</h3>
+                  <span className="text-xs text-stone-500">{analyticsReport.meta.timeZone} 自然日</span>
+                </div>
+                <div className="mt-3 max-h-80 overflow-y-auto border border-stone-100">
+                  <Table className="min-w-[470px]">
+                    <TableCaption className="sr-only">所选统计区间内的收藏和成功购书趋势。</TableCaption>
+                    <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                      <TableRow className="border-0 hover:bg-transparent">
+                        <TableHead className="px-4 py-3">日期</TableHead>
+                        <TableHead className="px-4 py-3 text-right">新增收藏</TableHead>
+                        <TableHead className="px-4 py-3 text-right">付费购书</TableHead>
+                        <TableHead className="px-4 py-3 text-right">代币</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {analyticsReport.dailyTrend.map((point) => (
+                        <TableRow key={point.date} className="border-stone-100 hover:bg-stone-50">
+                          <TableCell className="whitespace-nowrap px-4 py-3 text-stone-700">{point.date}</TableCell>
+                          <TableCell className="px-4 py-3 text-right font-medium text-stone-900">{point.favoriteAddCount.toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="px-4 py-3 text-right font-medium text-stone-900">{point.purchaseCount.toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{point.purchaseTokenAmount.toLocaleString('zh-CN')}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </section>
+
+              <section aria-labelledby="author-analytics-books-heading">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 id="author-analytics-books-heading" className="text-base font-semibold text-stone-950">按作品查看</h3>
+                  <span className="text-xs text-stone-500">{analyticsReport.meta.bookMetricsTruncated ? `仅显示 ${analyticsReport.bookMetrics.length} / ${analyticsReport.meta.bookMetricTotal} 部` : `共 ${analyticsReport.meta.bookMetricTotal} 部`}</span>
+                </div>
+                {analyticsReport.bookMetrics.length === 0 ? <p className="mt-3 border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-600">当前筛选范围内还没有作品数据。</p> : (
+                  <div className="mt-3 max-h-80 overflow-y-auto border border-stone-100">
+                    <Table className="min-w-[570px]">
+                      <TableCaption className="sr-only">按作者作品拆分的收藏、购书和阅读完成度。</TableCaption>
+                      <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                        <TableRow className="border-0 hover:bg-transparent">
+                          <TableHead className="px-4 py-3">作品</TableHead>
+                          <TableHead className="px-4 py-3 text-right">收藏</TableHead>
+                          <TableHead className="px-4 py-3 text-right">购书</TableHead>
+                          <TableHead className="px-4 py-3 text-right">完成度</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {analyticsReport.bookMetrics.map((metric) => (
+                          <TableRow key={metric.bookId} className="border-stone-100 hover:bg-stone-50">
+                            <TableCell className="max-w-48 px-4 py-3 font-medium text-stone-900"><span className="block truncate">{metric.bookTitle}</span></TableCell>
+                            <TableCell className="px-4 py-3 text-right text-stone-700">{metric.currentFavoriteCount.toLocaleString('zh-CN')}</TableCell>
+                            <TableCell className="px-4 py-3 text-right text-stone-700">{metric.purchaseCount.toLocaleString('zh-CN')}</TableCell>
+                            <TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{formatAnalyticsPercent(metric.averageReadThroughPercent)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">收藏趋势仅统计当前仍保存在书架中的新增记录；购书仅统计有对应代币扣减账本的整本购买；阅读完成度按所选区间内更新的当前阅读位置与当前已发布章节计算。代币不是法币收入。</p>
+          </>
+        ) : null}
+      </section>
+
+      <section className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]" aria-label="卷册与章节管理">
+        {workspaceError ? <div className="xl:col-span-2"><InlineNotice tone="error">{workspaceError}</InlineNotice></div> : null}
+
+        <section className="border border-stone-200 bg-white" aria-labelledby="author-volumes-heading">
+          <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-5">
+            <div>
+              <p className="text-xs font-semibold text-emerald-700">卷册管理</p>
+              <h2 id="author-volumes-heading" className="mt-1 text-xl font-semibold text-stone-950">为故事安排卷册</h2>
+            </div>
+            <FolderOpen className="shrink-0 text-emerald-700" size={20} aria-hidden="true" />
+          </div>
+
+          {!selectedBook ? <div className="px-5 py-10 text-sm leading-6 text-stone-600">选择一部作品后，可在这里建立卷册并把章节归入对应内容线。</div> : null}
+          {selectedBook ? (
+            <>
+              <form onSubmit={createVolume} className="border-b border-stone-100 p-5">
+                <Label htmlFor="volume-title" className="text-stone-700">新建卷册</Label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <Input id="volume-title" aria-label="卷册名称" required value={volumeTitle} onChange={(event) => setVolumeTitle(event.target.value)} placeholder="例如：第一卷 起航" className="h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+                  <Button type="submit" disabled={pendingAction !== undefined} className="h-10 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800 disabled:cursor-wait"><FolderPlus size={16} aria-hidden="true" />{pendingAction === 'volume' ? '创建中' : '新建卷册'}</Button>
+                </div>
+              </form>
+
+              {workspaceLoading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+              {!workspaceLoading && !workspaceError && volumes.length === 0 ? (
+                <div className="px-5 py-10 text-center">
+                  <Layers3 className="mx-auto text-stone-400" size={27} aria-hidden="true" />
+                  <p className="mt-3 font-medium text-stone-800">还没有卷册</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-500">先建立第一卷，再把新章节保存为存稿。</p>
+                </div>
+              ) : null}
+              {!workspaceLoading && !workspaceError && volumes.length > 0 ? (
+                <div className="divide-y divide-stone-100" aria-label="卷册列表">
+                  {volumes.map((volume) => {
+                    const active = volume.id === selectedVolumeId;
+                    const chapterCount = chapters.filter((chapter) => chapter.volumeId === volume.id).length;
+                    return (
+                      <Button key={volume.id} type="button" variant="ghost" onClick={() => setSelectedVolumeId(volume.id)} aria-pressed={active} className={`flex h-auto w-full justify-between gap-4 rounded-none px-5 py-4 text-left text-inherit ${active ? 'bg-emerald-50 hover:bg-emerald-50' : 'hover:bg-stone-50'}`}>
+                        <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">第 {volume.orderNo} 卷 · {volume.title}</span><span className="mt-1 block text-xs text-stone-500">{chapterCount} 个章节</span></span>
+                        <span className="shrink-0 text-sm font-medium text-emerald-800">{active ? '正在使用' : '选用'}</span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        <section className="border border-stone-200 bg-white" aria-labelledby="author-chapters-heading">
+          <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold text-emerald-700">章节与存稿</p>
+              <h2 id="author-chapters-heading" className="mt-1 text-xl font-semibold text-stone-950">每一章都有明确状态</h2>
+            </div>
+            <span className="text-sm text-stone-500">{selectedBook ? `${chapters.length.toLocaleString('zh-CN')} 个章节` : '选择作品后查看'}</span>
+          </div>
+
+          {!selectedBook ? <div className="px-5 py-10 text-sm leading-6 text-stone-600">章节、存稿和已排期内容都会按当前作品显示在这里。</div> : null}
+          {selectedBook && workspaceLoading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+          {selectedBook && !workspaceLoading && !workspaceError && chapters.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <FileText className="mx-auto text-stone-400" size={27} aria-hidden="true" />
+              <p className="mt-3 font-medium text-stone-800">暂时还没有章节</p>
+              <p className="mt-1 text-sm leading-6 text-stone-500">在下方编辑器保存存稿，或直接提交章节筛查。</p>
+            </div>
+          ) : null}
+          {selectedBook && !workspaceLoading && !workspaceError && chapters.length > 0 ? (
+            <div className="divide-y divide-stone-100" aria-label="章节列表">
+              {chapters.map((chapter) => {
+                const volume = volumes.find((item) => item.id === chapter.volumeId);
+                const schedule = formatPublishTime(chapter.scheduledPublishAt);
+                const canSchedule = chapter.status === 'DRAFT';
+                const editable = canEditChapter(chapter);
+                const deletable = canDeleteChapter(chapter);
+                return (
+                  <article key={chapter.id} className="px-5 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">第 {chapter.orderNo} 章 · {chapter.title}</h3><ChapterStatusBadge status={chapter.status} /></div>
+                        <p className="mt-1 text-xs text-stone-500">{volume ? `第 ${volume.orderNo} 卷 · ${volume.title}` : '未归入卷册'}{schedule ? ` · 计划 ${schedule} 发布` : ''}</p>
+                        {chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        {canSchedule ? <Button type="button" variant="outline" onClick={() => setSelectedDraftId(chapter.id)} aria-pressed={selectedDraftId === chapter.id} className={`h-auto rounded-none px-3 py-2 text-sm ${selectedDraftId === chapter.id ? 'border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'}`}>{selectedDraftId === chapter.id ? '待排期草稿' : '选择草稿'}</Button> : null}
+                        {editable ? <Button type="button" variant="outline" onClick={() => openChapterEditor(chapter)} aria-label={`编辑章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />编辑</Button> : null}
+                        {deletable ? <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'chapter', item: chapter })} aria-label={`删除章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button> : null}
+                        {!editable && !deletable ? <p className="text-xs leading-5 text-stone-500">章节正在复核，当前不可修改或删除。</p> : null}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
+      </section>
+
       <section className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,.8fr)]">
         <div className="border border-stone-200 bg-white">
           <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -135,7 +1099,7 @@ export default function AuthorPage() {
             <span className="text-sm text-stone-500">选择作品后即可继续编辑章节</span>
           </div>
 
-          {loading ? <div className="p-5"><div className="h-24 animate-pulse bg-stone-100" /></div> : null}
+          {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
           {!loading && books.length === 0 ? (
             <div className="px-5 py-12 text-center">
               <PenLine className="mx-auto text-stone-400" size={27} aria-hidden="true" />
@@ -147,13 +1111,24 @@ export default function AuthorPage() {
             <div className="divide-y divide-stone-100">
               {books.map((book) => {
                 const active = book.id === selectedBookId;
+                const editable = canEditBook(book);
                 return (
-                  <button key={book.id} type="button" onClick={() => setSelectedBookId(book.id)} aria-pressed={active} className={`grid w-full gap-3 px-5 py-4 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_100px_110px_96px] sm:items-center ${active ? 'bg-emerald-50' : 'hover:bg-stone-50'}`}>
-                    <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">{book.title}</span><span className="mt-1 block text-xs text-stone-500">{book.category} · {book.serialStatus}</span></span>
-                    <span className="hidden text-sm text-stone-600 sm:block">{formatWordCount(book.words)}</span>
-                    <span><NovelStatusBadge status={book.status} /></span>
-                    <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-800">{active ? '正在编辑' : '继续编辑'}<SquarePen size={15} aria-hidden="true" /></span>
-                  </button>
+                  <article key={book.id} className={active ? 'bg-emerald-50' : ''}>
+                    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <Button type="button" variant="ghost" onClick={() => setSelectedBookId(book.id)} aria-pressed={active} className="grid h-auto min-w-0 flex-1 justify-start rounded-none gap-3 px-0 py-0 text-left text-inherit transition-colors hover:bg-transparent sm:grid-cols-[minmax(0,1fr)_100px_110px_96px] sm:items-center">
+                        <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">{book.title}</span><span className="mt-1 block text-xs text-stone-500">{book.category} · {normalizedSerialStatus(book.serialStatus)}</span></span>
+                        <span className="hidden text-sm text-stone-600 sm:block">{formatWordCount(book.words)}</span>
+                        <span><NovelStatusBadge status={book.status} /></span>
+                        <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-800">{active ? '正在编辑' : '继续编辑'}<SquarePen size={15} aria-hidden="true" /></span>
+                      </Button>
+                      {editable ? (
+                        <div className="flex shrink-0 flex-wrap gap-2 border-t border-stone-100 pt-3 sm:border-t-0 sm:pt-0">
+                          <Button type="button" variant="outline" onClick={() => openBookEditor(book)} aria-label={`编辑作品《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />编辑</Button>
+                          <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'book', item: book })} aria-label={`删除作品《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button>
+                        </div>
+                      ) : <p className="shrink-0 text-xs leading-5 text-stone-500">已进入审核或发布流程，当前仅可查看。</p>}
+                    </div>
+                  </article>
                 );
               })}
             </div>
@@ -163,18 +1138,24 @@ export default function AuthorPage() {
         <form onSubmit={createBook} className="border border-stone-200 bg-white p-5">
           <p className="text-xs font-semibold text-emerald-700">新建作品</p>
           <h2 className="mt-1 text-xl font-semibold text-stone-950">先留下故事的名字</h2>
-          <label className="mt-5 block text-sm font-medium text-stone-700">作品名称
-            <input aria-label="作品名称" required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none focus:border-emerald-700" placeholder="例如：逆光航线" />
-          </label>
-          <label className="mt-4 block text-sm font-medium text-stone-700">作品分类
-            <select aria-label="作品分类" value={category} onChange={(event) => setCategory(event.target.value)} className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none focus:border-emerald-700">
-              {bookCategories.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </label>
-          <label className="mt-4 block text-sm font-medium text-stone-700">作品简介
-            <textarea aria-label="作品简介" required value={synopsis} onChange={(event) => setSynopsis(event.target.value)} className="mt-2 h-28 w-full resize-y border border-stone-300 bg-white px-3 py-2.5 text-sm leading-6 text-stone-900 outline-none focus:border-emerald-700" placeholder="用几句话介绍这个故事。" />
-          </label>
-          <button type="submit" disabled={pendingAction === 'book'} className="mt-5 inline-flex items-center gap-2 bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"><Plus size={16} aria-hidden="true" />{pendingAction === 'book' ? '保存中' : '保存草稿'}</button>
+          <div className="mt-5">
+            <Label htmlFor="book-title" className="text-stone-700">作品名称</Label>
+            <Input id="book-title" aria-label="作品名称" required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="例如：逆光航线" />
+          </div>
+          <div className="mt-4">
+            <Label id="book-category-label" className="text-stone-700">作品分类</Label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger aria-labelledby="book-category-label" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+              <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                {bookCategories.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="mt-4">
+            <Label htmlFor="book-synopsis" className="text-stone-700">作品简介</Label>
+            <Textarea id="book-synopsis" aria-label="作品简介" required value={synopsis} onChange={(event) => setSynopsis(event.target.value)} className="mt-2 h-28 resize-y rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="用几句话介绍这个故事。" />
+          </div>
+          <Button type="submit" disabled={pendingAction === 'book'} className="mt-5 h-auto rounded-none bg-emerald-700 px-4 py-2.5 hover:bg-emerald-800 disabled:cursor-wait"><Plus size={16} aria-hidden="true" />{pendingAction === 'book' ? '保存中' : '保存草稿'}</Button>
         </form>
       </section>
 
@@ -183,25 +1164,41 @@ export default function AuthorPage() {
           <div className="flex flex-col justify-between gap-3 border-b border-stone-200 pb-5 sm:flex-row sm:items-start">
             <div>
               <p className="text-xs font-semibold text-emerald-700">章节编辑器</p>
-              <h2 className="mt-1 text-xl font-semibold text-stone-950">存稿后，决定何时提交筛查</h2>
+              <h2 className="mt-1 text-xl font-semibold text-stone-950">写入卷册，再安排发布节奏</h2>
             </div>
             <FileText className="text-emerald-700" size={20} aria-hidden="true" />
           </div>
-          <label className="mt-5 block text-sm font-medium text-stone-700">选择作品
-            <select aria-label="选择作品" required value={selectedBookId ?? ''} onChange={(event) => setSelectedBookId(Number(event.target.value))} className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none focus:border-emerald-700">
-              <option value="" disabled>请选择作品</option>
-              {books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}
-            </select>
-          </label>
-          <label className="mt-4 block text-sm font-medium text-stone-700">章节标题
-            <input aria-label="章节标题" required value={chapterTitle} onChange={(event) => setChapterTitle(event.target.value)} className="mt-2 w-full border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none focus:border-emerald-700" placeholder="例如：第一章 雨落旧港" />
-          </label>
-          <label className="mt-4 block text-sm font-medium text-stone-700">正文
-            <textarea aria-label="章节正文" required value={chapterContent} onChange={(event) => setChapterContent(event.target.value)} className="mt-2 h-56 w-full resize-y border border-stone-300 bg-white px-3 py-2.5 text-sm leading-7 text-stone-900 outline-none focus:border-emerald-700" placeholder="开始写作..." />
-          </label>
+          <div className="mt-5">
+            <Label id="chapter-book-label" className="text-stone-700">选择作品</Label>
+            <Select value={selectedBookId?.toString() ?? ''} onValueChange={(value) => setSelectedBookId(Number(value))}>
+              <SelectTrigger aria-labelledby="chapter-book-label" aria-label="选择作品" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue placeholder="请选择作品" /></SelectTrigger>
+              <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                {books.map((book) => <SelectItem key={book.id} value={book.id.toString()}>{book.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="mt-4">
+            <Label id="chapter-volume-label" className="text-stone-700">归属卷册</Label>
+            <Select value={selectedVolumeId?.toString() ?? 'unassigned'} onValueChange={(value) => setSelectedVolumeId(value === 'unassigned' ? undefined : Number(value))}>
+              <SelectTrigger aria-labelledby="chapter-volume-label" aria-label="归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+              <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                <SelectItem value="unassigned">暂不归入卷册</SelectItem>
+                {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>第 {volume.orderNo} 卷 · {volume.title}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="mt-2 text-xs leading-5 text-stone-500">保存草稿需要先选定卷册；直接提交章节可暂不归入卷册。</p>
+          </div>
+          <div className="mt-4">
+            <Label htmlFor="chapter-title" className="text-stone-700">章节标题</Label>
+            <Input id="chapter-title" aria-label="章节标题" required value={chapterTitle} onChange={(event) => setChapterTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="例如：第一章 雨落旧港" />
+          </div>
+          <div className="mt-4">
+            <Label htmlFor="chapter-content" className="text-stone-700">正文</Label>
+            <Textarea id="chapter-content" aria-label="章节正文" required value={chapterContent} onChange={(event) => setChapterContent(event.target.value)} className="mt-2 h-56 resize-y rounded-none border-stone-300 bg-white leading-7 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="开始写作..." />
+          </div>
           <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" onClick={() => void saveChapter(false)} disabled={pendingAction !== undefined} className="inline-flex items-center gap-2 border border-stone-300 bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait disabled:opacity-60"><Save size={16} aria-hidden="true" />保存章节草稿</button>
-            <button type="submit" disabled={pendingAction !== undefined} className="inline-flex items-center gap-2 bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-chapter' ? '筛查中' : '提交并自动筛查'}</button>
+            <Button type="button" variant="outline" onClick={() => void saveChapter(false)} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-4 py-2.5 text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />保存章节草稿</Button>
+            <Button type="submit" disabled={pendingAction !== undefined} className="h-auto rounded-none bg-emerald-700 px-4 py-2.5 hover:bg-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-chapter' ? '筛查中' : '提交并自动筛查'}</Button>
           </div>
         </form>
 
@@ -211,13 +1208,356 @@ export default function AuthorPage() {
             <>
               <div className="mt-3 flex items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-stone-950">{selectedBook.title}</h2><p className="mt-1 text-sm text-stone-600">{selectedBook.category} · {formatWordCount(selectedBook.words)}</p></div><NovelStatusBadge status={selectedBook.status} /></div>
               <p className="mt-5 text-sm leading-6 text-stone-600">章节提交后会先经过自动筛查；完整作品仍需站长人工审核才会在线上书城显示。</p>
-              <button type="button" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 inline-flex items-center gap-2 border border-stone-800 bg-white px-4 py-2.5 text-sm font-semibold text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait disabled:opacity-60"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</button>
+              <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</Button>
+
+              <div className="mt-6 border-t border-emerald-950/10 pt-5">
+                <div className="flex items-start gap-2"><CalendarClock className="mt-0.5 text-emerald-700" size={18} aria-hidden="true" /><div><p className="text-xs font-semibold text-emerald-700">草稿排期</p><h2 className="mt-1 text-lg font-semibold text-stone-950">选择存稿，设置未来发布时间</h2></div></div>
+                {draftChapters.length === 0 ? <p className="mt-3 text-sm leading-6 text-stone-600">尚无可排期的草稿。先在选定卷册中保存一章内容。</p> : (
+                  <form onSubmit={scheduleDraft} className="mt-4">
+                    <Label id="draft-chapter-label" className="text-stone-700">选择草稿</Label>
+                    <Select value={selectedDraftId?.toString() ?? ''} onValueChange={(value) => setSelectedDraftId(Number(value))}>
+                      <SelectTrigger aria-labelledby="draft-chapter-label" aria-label="选择草稿" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue placeholder="请选择草稿" /></SelectTrigger>
+                      <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                        {draftChapters.map((chapter) => <SelectItem key={chapter.id} value={chapter.id.toString()}>第 {chapter.orderNo} 章 · {chapter.title}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <div className="mt-4">
+                      <Label htmlFor="publish-at" className="text-stone-700">发布时间</Label>
+                      <Input id="publish-at" aria-label="发布时间" type="datetime-local" required value={publishAt} onChange={(event) => setPublishAt(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+                    </div>
+                    <Button type="submit" disabled={pendingAction !== undefined || !selectedDraftId} className="mt-4 h-auto rounded-none bg-emerald-700 px-4 py-2.5 hover:bg-emerald-800 disabled:cursor-wait"><CalendarClock size={16} aria-hidden="true" />{pendingAction === 'schedule' ? '排期中' : '安排定时发布'}</Button>
+                    <p className="mt-3 text-xs leading-5 text-stone-500">到达发布时间后，系统会再次进行内容筛查；命中风险内容将转入人工复核。</p>
+                  </form>
+                )}
+              </div>
             </>
           ) : (
-            <p className="mt-3 text-sm leading-6 text-stone-600">创建或选择一部作品后，可以继续写作并提交完整作品审核。</p>
+            <p className="mt-3 text-sm leading-6 text-stone-600">创建或选择一部作品后，可以继续写作、管理卷册并安排章节发布时间。</p>
           )}
         </aside>
       </section>
+
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="author-feedback-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">读者反馈</p>
+            <h2 id="author-feedback-heading" className="mt-1 text-xl font-semibold text-stone-950">{selectedBook ? `《${selectedBook.title}》的互动反馈` : '作品互动反馈'}</h2>
+            <p className="mt-1 text-sm leading-6 text-stone-600">仅展示当前作者作品的评论，以及读者明确发起分享的段评。审核状态由站长处理。</p>
+          </div>
+          <span className="text-sm text-stone-500">{selectedBook ? '当前作品的只读反馈视图' : '选择作品后查看反馈'}</span>
+        </div>
+
+        <Tabs value={feedbackTab} onValueChange={(value) => {
+          if (value === 'comments' || value === 'annotations') setFeedbackTab(value);
+        }} className="gap-0">
+          <TabsList aria-label="读者反馈类型" className="h-auto w-full justify-start gap-1 rounded-none border-b border-stone-200 bg-white p-3">
+            <TabsTrigger value="comments" disabled={!selectedBook} className="h-9 flex-none rounded-none px-3 text-stone-600 data-[state=active]:border-emerald-700 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-900">
+              <MessageSquareText size={16} aria-hidden="true" />读者评论
+            </TabsTrigger>
+            <TabsTrigger value="annotations" disabled={!selectedBook} className="h-9 flex-none rounded-none px-3 text-stone-600 data-[state=active]:border-emerald-700 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-900">
+              <Highlighter size={16} aria-hidden="true" />分享段评
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="comments" className="mt-0">
+            {!selectedBook ? <FeedbackSelectionEmpty icon="comments" /> : null}
+            {selectedBook && commentsLoading ? <FeedbackLoading label="正在加载评论..." /> : null}
+            {selectedBook && !commentsLoading && commentError ? (
+              <FeedbackError message={`评论无法显示：${commentError}`} onRetry={() => void loadAuthorComments(selectedBook.id, commentPageIndex)} />
+            ) : null}
+            {selectedBook && !commentsLoading && !commentError && commentPage?.items.length === 0 ? (
+              <FeedbackEmpty icon="comments" title="暂时还没有评论" description="待审核、已公开和未通过的评论都会在这里显示。" />
+            ) : null}
+            {selectedBook && !commentsLoading && !commentError && commentPage && commentPage.items.length > 0 ? (
+              <>
+                <Table className="min-w-[680px]">
+                  <TableCaption className="sr-only">当前作品的读者评论及其审核状态。</TableCaption>
+                  <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className="px-4 py-3">读者</TableHead>
+                      <TableHead className="px-4 py-3">位置</TableHead>
+                      <TableHead className="px-4 py-3">评论内容</TableHead>
+                      <TableHead className="px-4 py-3">状态</TableHead>
+                      <TableHead className="px-4 py-3">时间</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {commentPage.items.map((comment) => (
+                      <TableRow key={comment.id} className="border-stone-100 hover:bg-stone-50">
+                        <TableCell className="whitespace-nowrap px-4 py-4 font-medium text-stone-900">{comment.authorName}</TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4 text-sm text-stone-600">{comment.chapterId ? `章节 #${comment.chapterId}` : '书评'}</TableCell>
+                        <TableCell className="max-w-xl px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{comment.content}</span></TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4"><InteractionStatusBadge status={comment.status} /></TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-500"><time dateTime={comment.createdAt}>{formatCommentTime(comment.createdAt) || '时间未知'}</time></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <FeedbackPagination label="评论" meta={commentPage.meta} loading={commentsLoading} onPageChange={setCommentPageIndex} />
+              </>
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="annotations" className="mt-0">
+            {!selectedBook ? <FeedbackSelectionEmpty icon="annotations" /> : null}
+            {selectedBook && annotationsLoading ? <FeedbackLoading label="正在加载分享段评..." /> : null}
+            {selectedBook && !annotationsLoading && annotationError ? (
+              <FeedbackError message={`分享段评无法显示：${annotationError}`} onRetry={() => void loadAuthorAnnotations(selectedBook.id, annotationPageIndex)} />
+            ) : null}
+            {selectedBook && !annotationsLoading && !annotationError && sharedAnnotations.length === 0 ? (
+              <FeedbackEmpty icon="annotations" title="暂时没有分享段评" description="这里只会展示读者明确发起分享的段评，不展示私密标注。" />
+            ) : null}
+            {selectedBook && !annotationsLoading && !annotationError && annotationPage && sharedAnnotations.length > 0 ? (
+              <>
+                <Table className="min-w-[760px]">
+                  <TableCaption className="sr-only">当前作品中读者明确分享的段评及其审核状态。</TableCaption>
+                  <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className="px-4 py-3">读者</TableHead>
+                      <TableHead className="px-4 py-3">位置</TableHead>
+                      <TableHead className="px-4 py-3">选中文本</TableHead>
+                      <TableHead className="px-4 py-3">段评</TableHead>
+                      <TableHead className="px-4 py-3">状态</TableHead>
+                      <TableHead className="px-4 py-3">时间</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sharedAnnotations.map((annotation) => (
+                      <TableRow key={annotation.id} className="border-stone-100 hover:bg-stone-50">
+                        <TableCell className="whitespace-nowrap px-4 py-4 font-medium text-stone-900">{annotation.authorName}</TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4 text-sm text-stone-600">章节 #{annotation.chapterId} · 段 {annotation.paragraphIndex + 1}</TableCell>
+                        <TableCell className="max-w-sm px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{annotation.selectedText}</span></TableCell>
+                        <TableCell className="max-w-sm px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{annotation.note || '—'}</span></TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4"><InteractionStatusBadge status={annotation.status} /></TableCell>
+                        <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-500"><time dateTime={annotation.createdAt}>{formatCommentTime(annotation.createdAt) || '时间未知'}</time></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <FeedbackPagination label="分享段评" meta={annotationPage.meta} loading={annotationsLoading} onPageChange={setAnnotationPageIndex} />
+              </>
+            ) : null}
+          </TabsContent>
+        </Tabs>
+      </section>
+
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="author-rewards-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">创作收益</p>
+            <h2 id="author-rewards-heading" className="mt-1 text-xl font-semibold text-stone-950">读者打赏记录</h2>
+          </div>
+          <span className="text-sm text-stone-500" aria-live="polite">{rewardLoading ? '正在加载' : rewardReport ? `共 ${rewardReport.meta.total.toLocaleString('zh-CN')} 条` : '暂未加载'}</span>
+        </div>
+
+        <div className="grid gap-5 border-b border-stone-100 px-5 py-5 lg:grid-cols-[minmax(0,.72fr)_minmax(0,1.28fr)] lg:items-end">
+          <dl className="grid grid-cols-2 gap-5">
+            <div>
+              <dt className="text-sm text-stone-600">累计打赏</dt>
+              <dd className="mt-1 text-2xl font-semibold text-stone-950">{rewardReport ? rewardReport.summary.totalTokens.toLocaleString('zh-CN') : '—'}<span className="ml-1 text-sm font-medium text-stone-500">代币</span></dd>
+            </div>
+            <div>
+              <dt className="text-sm text-stone-600">打赏次数</dt>
+              <dd className="mt-1 text-2xl font-semibold text-stone-950">{rewardReport ? rewardReport.summary.rewardCount.toLocaleString('zh-CN') : '—'}<span className="ml-1 text-sm font-medium text-stone-500">次</span></dd>
+            </div>
+          </dl>
+
+          <form onSubmit={applyRewardFilters} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(150px,1fr)_minmax(128px,.78fr)_minmax(128px,.78fr)_auto_auto] xl:items-end">
+            <div>
+              <Label id="reward-book-label" className="text-stone-700">作品</Label>
+              <Select value={rewardBookId?.toString() ?? 'all'} onValueChange={(value) => setRewardBookId(value === 'all' ? undefined : Number(value))}>
+                <SelectTrigger aria-labelledby="reward-book-label" aria-label="打赏记录作品筛选" className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                  <SelectItem value="all">全部作品</SelectItem>
+                  {books.map((book) => <SelectItem key={book.id} value={book.id.toString()}>{book.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="reward-from" className="text-stone-700">起始日期</Label>
+              <Input id="reward-from" aria-label="打赏记录起始日期" type="date" value={rewardFrom} onChange={(event) => setRewardFrom(event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <div>
+              <Label htmlFor="reward-to" className="text-stone-700">结束日期</Label>
+              <Input id="reward-to" aria-label="打赏记录结束日期" type="date" value={rewardTo} onChange={(event) => setRewardTo(event.target.value)} className="mt-2 h-10 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <Button type="submit" disabled={rewardLoading} className="h-10 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800 disabled:cursor-wait"><RefreshCw size={16} aria-hidden="true" className={rewardLoading ? 'animate-spin' : ''} />查询</Button>
+            <Button type="button" variant="outline" onClick={resetRewardFilters} disabled={rewardLoading && !rewardReport} className="h-10 rounded-none border-stone-300 bg-white px-3 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">重置</Button>
+          </form>
+        </div>
+
+        {rewardError ? (
+          <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <InlineNotice tone="error">打赏记录无法显示：{rewardError}</InlineNotice>
+            <Button type="button" variant="outline" onClick={() => void loadRewardReport(rewardQuery)} className="h-auto shrink-0 rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><RefreshCw size={16} aria-hidden="true" />重试</Button>
+          </div>
+        ) : null}
+        {rewardLoading && !rewardReport ? <div className="px-5 py-10 text-center text-sm text-stone-600" aria-live="polite"><Gift className="mx-auto animate-pulse text-stone-400" size={27} aria-hidden="true" /><p className="mt-3">正在加载打赏记录...</p></div> : null}
+        {!rewardLoading && !rewardError && rewardReport && rewardReport.items.length === 0 ? <div className="px-5 py-10 text-center"><Gift className="mx-auto text-stone-400" size={27} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">暂时没有符合条件的打赏记录</p><p className="mt-1 text-sm text-stone-500">调整作品或日期后可继续查询。</p></div> : null}
+        {!rewardError && rewardReport && (rewardReport.items.length > 0 || rewardReport.meta.total > 0) ? (
+          <div className="px-5 py-1">
+            {rewardReport.items.length > 0 ? (
+              <Table className="min-w-[620px]">
+                <TableCaption className="sr-only">读者打赏记录，金额单位为平台代币。</TableCaption>
+                <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead className="px-4 py-3">时间</TableHead>
+                    <TableHead className="px-4 py-3">作品</TableHead>
+                    <TableHead className="px-4 py-3">读者</TableHead>
+                    <TableHead className="px-4 py-3 text-right">代币</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rewardReport.items.map((record) => (
+                    <TableRow key={record.id} className="border-stone-100 hover:bg-stone-50">
+                      <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-600"><time dateTime={record.rewardedAt}>{formatRewardTime(record.rewardedAt)}</time></TableCell>
+                      <TableCell className="max-w-64 px-4 py-4 font-medium text-stone-900"><span className="block truncate">{record.bookTitle}</span></TableCell>
+                      <TableCell className="whitespace-nowrap px-4 py-4 text-stone-700">读者 #{record.rewarderUserId}</TableCell>
+                      <TableCell className="whitespace-nowrap px-4 py-4 text-right font-semibold text-emerald-800">+{record.tokenAmount.toLocaleString('zh-CN')}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+            <div className="flex flex-col gap-3 border-t border-stone-100 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-stone-500">按 {rewardReport.meta.timeZone} 自然日统计</p>
+              {rewardReport.meta.total > rewardReport.meta.size || rewardReport.meta.page > 0 ? (() => {
+                const previousDisabled = rewardLoading || rewardReport.meta.page === 0;
+                const nextDisabled = rewardLoading || (rewardReport.meta.page + 1) * rewardReport.meta.size >= rewardReport.meta.total;
+
+                const changeRewardPage = (event: React.MouseEvent<HTMLAnchorElement>, offset: number, disabled: boolean) => {
+                  event.preventDefault();
+                  if (!disabled) moveRewardPage(offset);
+                };
+
+                return (
+                  <Pagination aria-label="打赏记录分页" className="mx-0 w-auto justify-start sm:justify-end">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          href="#author-rewards-heading"
+                          onClick={(event) => changeRewardPage(event, -1, previousDisabled)}
+                          aria-disabled={previousDisabled}
+                          tabIndex={previousDisabled ? -1 : undefined}
+                          className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                        />
+                      </PaginationItem>
+                      <PaginationItem>
+                        <span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-center text-stone-600" aria-live="polite">第 {rewardReport.meta.page + 1} 页</span>
+                      </PaginationItem>
+                      <PaginationItem>
+                        <PaginationNext
+                          href="#author-rewards-heading"
+                          onClick={(event) => changeRewardPage(event, 1, nextDisabled)}
+                          aria-disabled={nextDisabled}
+                          tabIndex={nextDisabled ? -1 : undefined}
+                          className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                );
+              })() : null}
+            </div>
+          </div>
+        ) : null}
+      </section>
+
+      <Dialog open={Boolean(editingBook)} onOpenChange={(open) => { if (!open) closeBookEditor(); }}>
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-300 bg-white text-stone-900 sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>修改作品信息</DialogTitle>
+            <DialogDescription>仅草稿或已驳回的作品可以修改信息。保存后仍需按当前审核状态继续处理。</DialogDescription>
+          </DialogHeader>
+          {editError ? <div role="alert"><InlineNotice tone="error">{editError}</InlineNotice></div> : null}
+          <form onSubmit={updateBook}>
+            <div>
+              <Label htmlFor="edit-book-title" className="text-stone-700">作品名称</Label>
+              <Input id="edit-book-title" aria-label="编辑作品名称" required value={bookEditTitle} onChange={(event) => setBookEditTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label id="edit-book-category-label" className="text-stone-700">作品分类</Label>
+                <Select value={bookEditCategory} onValueChange={setBookEditCategory}>
+                  <SelectTrigger aria-labelledby="edit-book-category-label" aria-label="编辑作品分类" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                    {bookCategories.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label id="edit-book-serial-status-label" className="text-stone-700">连载状态</Label>
+                <Select value={bookEditSerialStatus} onValueChange={setBookEditSerialStatus}>
+                  <SelectTrigger aria-labelledby="edit-book-serial-status-label" aria-label="编辑连载状态" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                    {serialStatuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="mt-4">
+              <Label htmlFor="edit-book-synopsis" className="text-stone-700">作品简介</Label>
+              <Textarea id="edit-book-synopsis" aria-label="编辑作品简介" required value={bookEditSynopsis} onChange={(event) => setBookEditSynopsis(event.target.value)} className="mt-2 h-32 resize-y rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <DialogFooter className="mt-6">
+              <Button type="button" variant="outline" onClick={closeBookEditor} disabled={pendingAction === 'update-book'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
+              <Button type="submit" disabled={pendingAction === 'update-book'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-book' ? '保存中' : '保存作品信息'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingChapter)} onOpenChange={(open) => { if (!open) closeChapterEditor(); }}>
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-300 bg-white text-stone-900 sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>修改章节</DialogTitle>
+            <DialogDescription>{editingChapter?.status === 'PUBLISHED' ? '修改已发布章节后，服务端会将章节和整部作品转入复核，修改不会立即公开。' : '草稿和已排期章节会保留现有的发布状态与发布时间。'}</DialogDescription>
+          </DialogHeader>
+          {editError ? <div role="alert"><InlineNotice tone="error">{editError}</InlineNotice></div> : null}
+          <form onSubmit={updateChapter}>
+            <div>
+              <Label htmlFor="edit-chapter-title" className="text-stone-700">章节标题</Label>
+              <Input id="edit-chapter-title" aria-label="编辑章节标题" required value={chapterEditTitle} onChange={(event) => setChapterEditTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <div className="mt-4">
+              <Label id="edit-chapter-volume-label" className="text-stone-700">归属卷册</Label>
+              <Select value={chapterEditVolumeId?.toString() ?? 'current'} onValueChange={(value) => setChapterEditVolumeId(value === 'current' ? undefined : Number(value))}>
+                <SelectTrigger aria-labelledby="edit-chapter-volume-label" aria-label="编辑章节归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+                <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
+                  <SelectItem value="current">保持当前归属</SelectItem>
+                  {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>第 {volume.orderNo} 卷 · {volume.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="mt-4">
+              <Label htmlFor="edit-chapter-content" className="text-stone-700">正文</Label>
+              <Textarea id="edit-chapter-content" aria-label="编辑章节正文" required value={chapterEditContent} onChange={(event) => setChapterEditContent(event.target.value)} className="mt-2 h-64 resize-y rounded-none border-stone-300 bg-white leading-7 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            </div>
+            <DialogFooter className="mt-6">
+              <Button type="button" variant="outline" onClick={closeChapterEditor} disabled={pendingAction === 'update-chapter'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
+              <Button type="submit" disabled={pendingAction === 'update-chapter'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-chapter' ? '保存中' : '保存章节'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) closeDeleteConfirmation(); }}>
+        <AlertDialogContent className="rounded-none border-stone-300 bg-white text-stone-900">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{deleteTarget?.kind === 'book' ? '删除作品' : '删除章节'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.kind === 'book'
+                ? `确定删除《${deleteTarget.item.title}》吗？只有未进入发布审核、且没有读者或交易记录的作品可以删除。`
+                : `确定删除《${deleteTarget?.item.title ?? ''}》吗？只有草稿或已排期章节且没有读者记录时，服务端才会允许删除。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError ? <div role="alert"><InlineNotice tone="error">{deleteError}</InlineNotice></div> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</AlertDialogCancel>
+            <Button type="button" variant="destructive" onClick={() => void deleteTargetItem()} disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter'} className="rounded-none disabled:cursor-wait"><Trash2 size={16} aria-hidden="true" />{pendingAction === 'delete-book' || pendingAction === 'delete-chapter' ? '删除中' : '确认删除'}</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </NovelShell>
   );
 }
