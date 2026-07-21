@@ -5,16 +5,33 @@ type AccountProfile = { id: number; name: string; roles: string[] };
 type AuthorBook = { id: number; title: string; author: string; status: string };
 type PublicBookList = { items: Array<{ id: number; title: string }> };
 
-test('reader, author, and operator journeys render through the BFF', async ({ page }, testInfo) => {
+const bootstrapAdministrator = {
+  username: 'e2e.admin@example.test',
+  password: 'e2e-bootstrap-admin-password',
+};
+
+test('reader and administrator journeys render through real BFF accounts', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
+  const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
+  const readerPassword = 'reader-journey-password-2026';
   const anonymous = await page.request.get('/api/novel/admin/dashboard');
   expect(anonymous.status()).toBe(401);
-  const readerSession = await page.request.post('/api/novel/session', { data:{ role:'reader' }, headers:{ Origin: origin } });
+  const readerSession = await page.request.post('/api/novel/session', {
+    data: {
+      action: 'register',
+      username: `reader-journey-${suffix}@example.test`,
+      displayName: `读者旅程 ${suffix}`,
+      password: readerPassword,
+    },
+    headers: { Origin: origin },
+  });
   expect(readerSession.status()).toBe(200);
   const csrfDenied = await page.request.post('/api/novel/account/checkin', { headers:{ Origin:'https://untrusted.example' } });
   expect(csrfDenied.status()).toBe(403);
   await page.goto('/');
   await expect(page.getByRole('heading',{name:'编辑推荐'})).toBeVisible();
+  await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: '站长中心' })).toHaveCount(0);
   await expect(page.getByLabel('书城精选').getByRole('heading', { name: '星海拾光' })).toBeVisible();
   await expect(page.getByRole('img', { name: '星海拾光的深空探索场景' })).toHaveAttribute('src', /novel-store-hero-gpt-image-2-v2/);
   await page.getByRole('link',{name:/开始阅读/}).first().click();
@@ -27,22 +44,15 @@ test('reader, author, and operator journeys render through the BFF', async ({ pa
   await page.getByRole('button',{name:'发布'}).click();
   await expect(page.getByRole('status').filter({ hasText: '评论已发布' })).toBeVisible();
   await expect(page.getByText('浏览器端的阅读反馈').last()).toBeVisible();
-  const authorSession = await page.request.post('/api/novel/session', { data:{ role:'author' }, headers:{ Origin: origin } });
-  expect(authorSession.status()).toBe(200);
-  await page.goto('/author');
-  await expect(page.getByRole('heading',{name:'今天，写下新的章节。'})).toBeVisible();
-  await page.getByLabel('作品名称').fill('浏览器创建的作品');
-  await page.getByLabel('作品简介').fill('一部由浏览器端创建并提交审核的测试作品。');
-  await page.getByRole('button',{name:'保存草稿'}).click();
-  await expect(page.getByRole('status').filter({ hasText: '已保存为草稿' })).toBeVisible();
-  await page.getByLabel('章节标题').fill('浏览器章节');
-  await page.getByLabel('章节正文').fill('这是经过自动筛查的章节正文。');
-  await page.getByRole('button',{name:'提交并自动筛查'}).click();
-  await expect(page.getByRole('status').filter({ hasText: '章节已通过自动筛查并发布' })).toBeVisible();
-  const adminSession = await page.request.post('/api/novel/session', { data:{ role:'admin' }, headers:{ Origin: origin } });
+  const adminSession = await page.request.post('/api/novel/session', {
+    data: { action: 'login', ...bootstrapAdministrator },
+    headers: { Origin: origin },
+  });
   expect(adminSession.status()).toBe(200);
   await page.goto('/novel-admin');
   await expect(page.getByRole('heading',{name:'内容与运营，清晰可追溯。'})).toBeVisible();
+  await expect(page.getByRole('link', { name: '站长中心' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
   await expect(page.getByText('活跃读者')).toBeVisible();
   const sensitiveWordForm = page.locator('form').filter({ has: page.getByRole('heading', { name: '敏感词库' }) });
   await sensitiveWordForm.getByRole('textbox', { name: '敏感词' }).fill('测试词条');
@@ -94,9 +104,18 @@ test('public discovery applies catalog facets through the BFF and highlights the
 
 test('mobile navigation and reader chapter directory sheets work through the BFF', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
+  const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
   await page.setViewportSize({ width: 390, height: 844 });
 
-  const readerSession = await page.request.post('/api/novel/session', { data: { role: 'reader' }, headers: { Origin: origin } });
+  const readerSession = await page.request.post('/api/novel/session', {
+    data: {
+      action: 'register',
+      username: `mobile-reader-${suffix}@example.test`,
+      displayName: `移动读者 ${suffix}`,
+      password: 'mobile-reader-password-2026',
+    },
+    headers: { Origin: origin },
+  });
   expect(readerSession.status()).toBe(200);
 
   const profileResponse = page.waitForResponse((response) => response.url().endsWith('/api/novel/account/profile') && response.status() === 200);
@@ -106,7 +125,7 @@ test('mobile navigation and reader chapter directory sheets work through the BFF
   const mobileNavigation = page.getByRole('dialog', { name: '阅界导航' });
   await expect(mobileNavigation).toBeVisible();
   await expect(mobileNavigation.getByRole('link', { name: '作家中心' })).toHaveCount(0);
-  await expect(mobileNavigation.getByRole('link', { name: '运营中心' })).toHaveCount(0);
+  await expect(mobileNavigation.getByRole('link', { name: '站长中心' })).toHaveCount(0);
   await mobileNavigation.getByRole('link', { name: '个人中心' }).click();
   await expect(page).toHaveURL(/\/account$/);
 
@@ -157,7 +176,7 @@ test('a real reader is approved as an author and drafts stay out of another read
   await expect(page.getByText(`笔名「${penName}」的申请已提交`)).toBeVisible();
 
   const adminSession = await page.request.post('/api/novel/session', {
-    data: { role: 'admin' },
+    data: { action: 'login', ...bootstrapAdministrator },
     headers: { Origin: origin },
   });
   expect(adminSession.status()).toBe(200);

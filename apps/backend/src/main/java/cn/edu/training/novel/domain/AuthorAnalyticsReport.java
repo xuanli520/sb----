@@ -7,6 +7,8 @@ public record AuthorAnalyticsReport(
         AuthorAnalyticsSummary summary,
         List<AuthorAnalyticsTrendPoint> dailyTrend,
         List<AuthorAnalyticsBookMetric> bookMetrics,
+        AuthorAnalyticsSubscriptionMetrics subscriptionMetrics,
+        AuthorAnalyticsRetentionMetrics retentionMetrics,
         AuthorAnalyticsAvailability availability,
         AuthorAnalyticsMetadata meta) {
     public AuthorAnalyticsReport {

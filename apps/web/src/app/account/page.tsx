@@ -6,11 +6,14 @@ import {
   BookOpen,
   CalendarCheck2,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   Coins,
   LibraryBig,
   LoaderCircle,
+  MessageSquareText,
   Pencil,
   RefreshCw,
   TicketCheck,
@@ -18,7 +21,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -29,6 +32,8 @@ import { Textarea } from '@/app/components/ui/textarea';
 import { NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
 import {
+  type NovelCommentPage,
+  type NovelCommentStatus,
   type AccountEntitlements,
   type AccountProfile,
   type AccountProfileUpdate,
@@ -117,6 +122,16 @@ function messageFrom(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : fallback;
 }
 
+function CommentStatusBadge({ status }: { status: NovelCommentStatus }) {
+  const meta = {
+    PENDING_REVIEW: { label: '待审核', className: 'border-amber-300 bg-amber-50 text-amber-900' },
+    VISIBLE: { label: '已公开', className: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
+    REJECTED: { label: '未通过', className: 'border-rose-300 bg-rose-50 text-rose-800' },
+  }[status];
+
+  return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
+}
+
 export default function AccountPage() {
   const [profile, setProfile] = useState<AccountProfile>();
   const [bookshelf, setBookshelf] = useState<Book[]>([]);
@@ -124,6 +139,10 @@ export default function AccountPage() {
   const [wallet, setWallet] = useState<Wallet>();
   const [entitlements, setEntitlements] = useState<AccountEntitlements>();
   const [authorApplication, setAuthorApplication] = useState<AuthorApplication | null>(null);
+  const [commentsPage, setCommentsPage] = useState<NovelCommentPage>();
+  const [commentsPageIndex, setCommentsPageIndex] = useState(0);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsError, setCommentsError] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [redeemCode, setRedeemCode] = useState('');
@@ -135,6 +154,7 @@ export default function AccountPage() {
   const [checkedIn, setCheckedIn] = useState(false);
   const [pendingAction, setPendingAction] = useState<'checkin' | 'redeem' | 'profile-update' | 'author-application' | 'author-status-refresh'>();
   const [notice, setNotice] = useState<Notice>();
+  const commentsRequestId = useRef(0);
 
   const loadAccount = useCallback(async () => {
     setLoading(true);
@@ -169,6 +189,29 @@ export default function AccountPage() {
     void loadAccount();
   }, [loadAccount]);
 
+  const loadComments = useCallback(async (page: number) => {
+    const requestId = ++commentsRequestId.current;
+    setCommentsLoading(true);
+    setCommentsError('');
+    try {
+      const query = new URLSearchParams({ size: '20' });
+      if (page > 0) query.set('page', page.toString());
+      const nextComments = await novelApi<NovelCommentPage>(`account/comments?${query.toString()}`);
+      if (requestId === commentsRequestId.current) setCommentsPage(nextComments);
+    } catch (reason) {
+      if (requestId === commentsRequestId.current) {
+        setCommentsPage(undefined);
+        setCommentsError(messageFrom(reason, '我的评论暂时无法加载，请稍后重试。'));
+      }
+    } finally {
+      if (requestId === commentsRequestId.current) setCommentsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadComments(commentsPageIndex);
+  }, [commentsPageIndex, loadComments]);
+
   const bookById = useMemo(() => new Map(bookshelf.map((book) => [book.id, book])), [bookshelf]);
   const progressByBook = useMemo(() => new Map(progress.map((item) => [item.bookId, item])), [progress]);
   const recentReads = useMemo(
@@ -177,6 +220,9 @@ export default function AccountPage() {
       .slice(0, 5),
     [progress],
   );
+  const commentTotalPages = commentsPage
+    ? Math.max(1, Math.ceil(commentsPage.meta.total / Math.max(1, commentsPage.meta.size)))
+    : 1;
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -752,6 +798,102 @@ export default function AccountPage() {
               )}
             </section>
           </div>
+
+          <section aria-labelledby="my-comments-title" className="border-y border-stone-200 bg-white px-5 py-6 sm:px-7">
+            <div className="flex items-start gap-3">
+              <MessageSquareText className="mt-0.5 text-emerald-700" size={20} aria-hidden="true" />
+              <div>
+                <h2 id="my-comments-title" className="text-lg font-semibold text-stone-950">我的评论</h2>
+                <p className="mt-1 text-sm leading-6 text-stone-600">查看自己发布的书评和章评，以及当前审核状态。</p>
+              </div>
+            </div>
+
+            {commentsLoading ? (
+              <p className="mt-5 border-y border-stone-200 px-4 py-6 text-sm text-stone-600" aria-live="polite">正在加载我的评论...</p>
+            ) : null}
+
+            {!commentsLoading && commentsError ? (
+              <div className="mt-5 flex flex-col gap-3 border-l-4 border-rose-500 bg-rose-50 px-4 py-4 text-sm text-rose-950 sm:flex-row sm:items-center sm:justify-between" role="alert">
+                <p>评论暂时无法显示：{commentsError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadComments(commentsPageIndex)}
+                  className="shrink-0 rounded-none border-rose-300 bg-white text-rose-900 hover:bg-rose-100"
+                >
+                  <RefreshCw size={15} aria-hidden="true" />
+                  重试
+                </Button>
+              </div>
+            ) : null}
+
+            {!commentsLoading && !commentsError && commentsPage?.items.length === 0 ? (
+              <p className="mt-5 border-y border-stone-200 px-4 py-6 text-sm leading-6 text-stone-600">还没有发布评论。阅读时留下书评或章评，会在这里同步显示。</p>
+            ) : null}
+
+            {!commentsLoading && !commentsError && commentsPage && commentsPage.items.length > 0 ? (
+              <>
+                <ol className="mt-5 divide-y divide-stone-200 border-y border-stone-200">
+                  {commentsPage.items.map((comment) => {
+                    const book = bookById.get(comment.bookId);
+                    const location = comment.chapterId ? `章节 #${comment.chapterId}` : '书评';
+                    return (
+                      <li key={comment.id} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-stone-950">作品 #{comment.bookId}{book ? ` · ${book.title}` : ''}</p>
+                            <CommentStatusBadge status={comment.status} />
+                          </div>
+                          <p className="mt-1 text-xs text-stone-500">{location} · <time dateTime={comment.createdAt}>{formatEntitlementTime(comment.createdAt)}</time></p>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-700">{comment.content}</p>
+                        </div>
+                        <Button asChild variant="outline" size="sm" className="h-auto shrink-0 self-start rounded-none border-stone-300 bg-white px-3 py-1.5 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">
+                          <Link href={`/reader/${comment.bookId}`} aria-label={`阅读评论所在作品 #${comment.bookId}`}>
+                            阅读
+                            <ArrowRight size={15} aria-hidden="true" />
+                          </Link>
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {commentTotalPages > 1 ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-1 py-4 text-sm">
+                    <p className="text-stone-500">共 {formatAmount(commentsPage.meta.total)} 条</p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="上一页评论"
+                        title="上一页评论"
+                        disabled={commentsPage.meta.page <= 0}
+                        onClick={() => setCommentsPageIndex(commentsPage.meta.page - 1)}
+                        className="size-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"
+                      >
+                        <ChevronLeft size={16} aria-hidden="true" />
+                      </Button>
+                      <span className="min-w-20 text-center text-stone-600" aria-live="polite">第 {commentsPage.meta.page + 1} / {commentTotalPages} 页</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="下一页评论"
+                        title="下一页评论"
+                        disabled={commentsPage.meta.page >= commentTotalPages - 1}
+                        onClick={() => setCommentsPageIndex(commentsPage.meta.page + 1)}
+                        className="size-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"
+                      >
+                        <ChevronRight size={16} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </section>
         </div>
       ) : null}
     </NovelShell>

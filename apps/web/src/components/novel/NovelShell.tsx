@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleAlert,
   LibraryBig,
+  LogOut,
   Menu,
   PenSquare,
   ShieldCheck,
@@ -40,33 +41,34 @@ import { Separator } from '@/app/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { novelApi } from '@/features/novel/api';
 
-type DemoRole = 'reader' | 'author' | 'admin';
-type Workspace = DemoRole;
-type AccountProfile = { roles: unknown };
+type Workspace = 'reader' | 'author' | 'admin';
+type AccountProfile = { name?: unknown; roles?: unknown };
+type AuthenticatedAccount = { name: string; roles: unknown };
+type SessionStatus = 'checking' | 'anonymous' | 'authenticated';
 
-const navigation: Array<{ href: string; label: string; icon: LucideIcon; workspace: Workspace }> = [
+const navigation: Array<{
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  workspace: Workspace;
+  requiresAuthentication?: boolean;
+}> = [
   { href: '/', label: '书城', icon: LibraryBig, workspace: 'reader' },
-  { href: '/account', label: '个人中心', icon: UserRound, workspace: 'reader' },
+  { href: '/account', label: '个人中心', icon: UserRound, workspace: 'reader', requiresAuthentication: true },
   { href: '/author', label: '作家中心', icon: PenSquare, workspace: 'author' },
-  { href: '/novel-admin', label: '运营中心', icon: ShieldCheck, workspace: 'admin' },
+  { href: '/novel-admin', label: '站长中心', icon: ShieldCheck, workspace: 'admin' },
 ];
 
-const demoDestinations: Record<DemoRole, string> = {
+const workspaceDestinations: Record<Workspace, string> = {
   reader: '/',
   author: '/author',
   admin: '/novel-admin',
 };
 
-const demoLabels: Record<DemoRole, string> = {
+const workspaceLabels: Record<Workspace, string> = {
   reader: '读者',
   author: '作者',
   admin: '站长',
-};
-
-const workspaceInitials: Record<Workspace, string> = {
-  reader: '读',
-  author: '作',
-  admin: '站',
 };
 
 function workspacesForRoles(roles: unknown): Set<Workspace> {
@@ -75,6 +77,14 @@ function workspacesForRoles(roles: unknown): Set<Workspace> {
   if (roles.includes('AUTHOR')) permitted.add('author');
   if (roles.includes('ADMIN')) permitted.add('admin');
   return permitted;
+}
+
+function normalizeAccountProfile(profile: unknown): AuthenticatedAccount | undefined {
+  if (!profile || typeof profile !== 'object') return undefined;
+  const candidate = profile as AccountProfile;
+  if (!Array.isArray(candidate.roles)) return undefined;
+  const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : '读者';
+  return { name, roles: candidate.roles };
 }
 
 const statusStyles: Record<string, { label: string; className: string }> = {
@@ -161,45 +171,57 @@ export function NovelShell({ children, workspace }: { children: ReactNode; works
 function NovelTopbar({ workspace }: { workspace: Workspace }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [switchingRole, setSwitchingRole] = useState<DemoRole | null>(null);
   const [error, setError] = useState('');
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('checking');
+  const [account, setAccount] = useState<AuthenticatedAccount>();
+  const [loggingOut, setLoggingOut] = useState(false);
   const [permittedWorkspaces, setPermittedWorkspaces] = useState<Set<Workspace>>(() => new Set(['reader']));
-  const showDevelopmentControls = process.env.NODE_ENV !== 'production';
 
   useEffect(() => {
     let cancelled = false;
 
-    void novelApi<AccountProfile>('account/profile')
+    void novelApi<unknown>('account/profile')
       .then((profile) => {
-        if (!cancelled) setPermittedWorkspaces(workspacesForRoles(profile.roles));
+        const normalizedProfile = normalizeAccountProfile(profile);
+        if (cancelled) return;
+        if (normalizedProfile) {
+          setAccount(normalizedProfile);
+          setPermittedWorkspaces(workspacesForRoles(normalizedProfile.roles));
+          setSessionStatus('authenticated');
+          return;
+        }
+        setAccount(undefined);
+        setPermittedWorkspaces(new Set(['reader']));
+        setSessionStatus('anonymous');
       })
       .catch(() => {
-        if (!cancelled) setPermittedWorkspaces(new Set(['reader']));
+        if (cancelled) return;
+        setAccount(undefined);
+        setPermittedWorkspaces(new Set(['reader']));
+        setSessionStatus('anonymous');
       });
 
     return () => { cancelled = true; };
   }, []);
 
-  const switchRole = async (role: DemoRole) => {
+  const logout = async () => {
     setError('');
-    setSwitchingRole(role);
+    setLoggingOut(true);
     try {
-      const response = await fetch('/api/novel/session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ role }),
-      });
-      if (!response.ok) {
-        throw new Error('无法切换演示身份');
-      }
-      router.push(demoDestinations[role]);
+      await novelApi<null>('session', 'reader', { method: 'DELETE' });
+      setAccount(undefined);
+      setPermittedWorkspaces(new Set(['reader']));
+      setSessionStatus('anonymous');
+      router.push('/');
       router.refresh();
-    } catch {
-      setError('演示身份切换失败，请稍后重试。');
+    } catch (reason) {
+      setError(reason instanceof Error && reason.message ? reason.message : '退出登录失败，请稍后重试。');
     } finally {
-      setSwitchingRole(null);
+      setLoggingOut(false);
     }
   };
+
+  const authenticated = sessionStatus === 'authenticated' && account !== undefined;
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur">
@@ -212,21 +234,17 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
         </Link>
 
         <nav aria-label="小说平台导航" className="hidden items-center gap-1 text-sm md:flex">
-          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} />
+          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} />
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
-          <MobileNavigation pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} />
-          <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" />
-          <WorkspaceMenu
-            workspace={workspace}
-            showDevelopmentControls={showDevelopmentControls}
-            switchingRole={switchingRole}
-            onSwitchRole={switchRole}
-          />
+          <MobileNavigation pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} accountName={account?.name} />
+          {sessionStatus !== 'checking' ? <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" /> : null}
+          {sessionStatus === 'anonymous' ? <AuthenticationActions /> : null}
+          {authenticated && account ? <AccountMenu workspace={workspace} account={account} loggingOut={loggingOut} onLogout={logout} /> : null}
         </div>
       </div>
-      {switchingRole ? <p className="sr-only" role="status">正在切换至{demoLabels[switchingRole]}身份</p> : null}
+      {loggingOut ? <p className="sr-only" role="status">正在退出登录</p> : null}
       {error ? <p className="mx-auto max-w-[1200px] px-4 pb-3 text-xs text-rose-700 sm:px-6 lg:px-8" role="status">{error}</p> : null}
     </header>
   );
@@ -242,16 +260,18 @@ function NovelNavigationLinks({
   pathname,
   workspace,
   permittedWorkspaces,
+  authenticated,
   closeOnNavigate = false,
   mobile = false,
 }: {
   pathname: string | null;
   workspace: Workspace;
   permittedWorkspaces: Set<Workspace>;
+  authenticated: boolean;
   closeOnNavigate?: boolean;
   mobile?: boolean;
 }) {
-  return navigation.filter((item) => permittedWorkspaces.has(item.workspace)).map((item) => {
+  return navigation.filter((item) => permittedWorkspaces.has(item.workspace) && (!item.requiresAuthentication || authenticated)).map((item) => {
     const Icon = item.icon;
     const active = isNavigationActive(item, pathname, workspace);
     const link = (
@@ -284,7 +304,19 @@ function NovelNavigationLinks({
   });
 }
 
-function MobileNavigation({ pathname, workspace, permittedWorkspaces }: { pathname: string | null; workspace: Workspace; permittedWorkspaces: Set<Workspace> }) {
+function MobileNavigation({
+  pathname,
+  workspace,
+  permittedWorkspaces,
+  authenticated,
+  accountName,
+}: {
+  pathname: string | null;
+  workspace: Workspace;
+  permittedWorkspaces: Set<Workspace>;
+  authenticated: boolean;
+  accountName?: string;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -311,27 +343,43 @@ function MobileNavigation({ pathname, workspace, permittedWorkspaces }: { pathna
           <SheetDescription className="text-stone-600">选择要进入的工作区</SheetDescription>
         </SheetHeader>
         <nav aria-label="移动端小说平台导航" className="flex flex-col gap-1 px-3 py-4">
-          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} closeOnNavigate mobile />
+          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} closeOnNavigate mobile />
         </nav>
         <Separator className="mx-5 w-auto bg-stone-200" />
-        <p className="px-5 py-4 text-xs leading-5 text-stone-500">当前身份：{demoLabels[workspace]}</p>
+        <p className="px-5 py-4 text-xs leading-5 text-stone-500">
+          {authenticated ? `当前账户：${accountName ?? '读者'} · ${workspaceLabels[workspace]}工作区` : '登录后可同步书架与阅读进度'}
+        </p>
       </SheetContent>
     </Sheet>
   );
 }
 
-function WorkspaceMenu({
+function AuthenticationActions() {
+  return (
+    <div className="flex items-center gap-1.5" aria-label="账户入口">
+      <Button asChild variant="ghost" size="sm" className="h-9 rounded-none px-2.5 text-stone-700 hover:bg-stone-100 hover:text-stone-950">
+        <Link href="/login">登录</Link>
+      </Button>
+      <Button asChild size="sm" className="h-9 rounded-none bg-emerald-700 px-2.5 text-white hover:bg-emerald-800">
+        <Link href="/register">注册</Link>
+      </Button>
+    </div>
+  );
+}
+
+function AccountMenu({
   workspace,
-  showDevelopmentControls,
-  switchingRole,
-  onSwitchRole,
+  account,
+  loggingOut,
+  onLogout,
 }: {
   workspace: Workspace;
-  showDevelopmentControls: boolean;
-  switchingRole: DemoRole | null;
-  onSwitchRole: (role: DemoRole) => Promise<void>;
+  account: AuthenticatedAccount;
+  loggingOut: boolean;
+  onLogout: () => Promise<void>;
 }) {
-  const workspaceLabel = `${demoLabels[workspace]}工作区`;
+  const workspaceLabel = `${workspaceLabels[workspace]}工作区`;
+  const avatarInitial = account.name.slice(0, 1);
 
   return (
     <DropdownMenu>
@@ -341,47 +389,45 @@ function WorkspaceMenu({
           variant="outline"
           size="sm"
           className="h-9 rounded-none border-stone-300 bg-white px-1.5 text-stone-800 hover:border-emerald-700 hover:bg-emerald-50 hover:text-emerald-900"
-          aria-label={`当前工作区：${workspaceLabel}，打开工作区菜单`}
-          aria-busy={switchingRole !== null || undefined}
+          aria-label={`当前账户：${account.name}，打开账户菜单`}
+          aria-busy={loggingOut || undefined}
         >
           <Avatar className="size-6 border border-emerald-100 bg-emerald-50 text-xs font-semibold text-emerald-800" aria-hidden="true">
-            <AvatarFallback className="bg-transparent text-inherit">{workspaceInitials[workspace]}</AvatarFallback>
+            <AvatarFallback className="bg-transparent text-inherit">{avatarInitial}</AvatarFallback>
           </Avatar>
-          <span className="hidden max-w-24 truncate sm:inline">{workspaceLabel}</span>
+          <span className="hidden max-w-24 truncate sm:inline">{account.name}</span>
           <ChevronDown size={15} aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52 border-stone-200 bg-white text-stone-900">
         <DropdownMenuLabel className="flex flex-col gap-0.5 text-stone-500">
-          <span className="text-xs font-medium">当前工作区</span>
-          <span className="text-sm font-semibold text-stone-950">{workspaceLabel}</span>
+          <span className="text-xs font-medium">当前账户</span>
+          <span className="truncate text-sm font-semibold text-stone-950">{account.name}</span>
         </DropdownMenuLabel>
         <DropdownMenuItem asChild>
-          <Link href={demoDestinations[workspace]}>
+          <Link href="/account">
+            <UserRound size={16} aria-hidden="true" />
+            个人中心
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href={workspaceDestinations[workspace]}>
             <BookOpenText size={16} aria-hidden="true" />
             打开{workspaceLabel}
           </Link>
         </DropdownMenuItem>
-        {showDevelopmentControls ? (
-          <>
-            <DropdownMenuSeparator className="bg-stone-200" />
-            <DropdownMenuLabel className="text-xs text-stone-500">开发身份</DropdownMenuLabel>
-            {(Object.keys(demoLabels) as DemoRole[]).map((role) => (
-              <DropdownMenuItem
-                key={role}
-                disabled={switchingRole !== null}
-                onSelect={() => void onSwitchRole(role)}
-                className={workspace === role ? 'bg-emerald-50 text-emerald-900 focus:bg-emerald-100 focus:text-emerald-950' : undefined}
-              >
-                <span className="grid size-5 place-items-center border border-current/20 text-[10px] font-semibold" aria-hidden="true">
-                  {workspaceInitials[role]}
-                </span>
-                <span>{switchingRole === role ? '切换中...' : `${demoLabels[role]}身份`}</span>
-                {workspace === role ? <CheckCircle2 className="ml-auto text-emerald-700" size={15} aria-label="当前身份" /> : null}
-              </DropdownMenuItem>
-            ))}
-          </>
-        ) : null}
+        <DropdownMenuSeparator className="bg-stone-200" />
+        <DropdownMenuItem
+          disabled={loggingOut}
+          onSelect={(event) => {
+            event.preventDefault();
+            void onLogout();
+          }}
+          className="text-rose-700 focus:bg-rose-50 focus:text-rose-800"
+        >
+          <LogOut size={16} aria-hidden="true" />
+          <span>{loggingOut ? '正在退出...' : '退出登录'}</span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

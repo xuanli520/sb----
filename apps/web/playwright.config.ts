@@ -17,7 +17,7 @@ export default defineConfig({
   testDir: './e2e', timeout: 45_000, reporter: 'line',
   use: { baseURL: webUrl, headless: true, screenshot: 'only-on-failure', launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : undefined },
   webServer: [
-    { command: `SERVER_PORT=${backendPort} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_DEVELOPMENT_AUTH_ENABLED=true NOVEL_RUNTIME_MODE=DEVELOPMENT NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED=true mvn -q -pl apps/backend spring-boot:run`, cwd: root, url: `${backendUrl}/actuator/health`, timeout: 90_000, reuseExistingServer: false },
-    { command: `API_PROXY_TARGET=${backendUrl} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_SESSION_STORE=memory NOVEL_DEV_LOGIN_ENABLED=true npm run dev -- --port ${webPort}`, cwd: '.', url: webUrl, timeout: 90_000, reuseExistingServer: false },
+    { command: `SERVER_PORT=${backendPort} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_DEVELOPMENT_AUTH_ENABLED=false NOVEL_BOOTSTRAP_ADMIN_USERNAME=e2e.admin@example.test NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME=E2E站长 NOVEL_BOOTSTRAP_ADMIN_PASSWORD=e2e-bootstrap-admin-password NOVEL_RUNTIME_MODE=DEVELOPMENT NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED=true mvn -q -pl apps/backend spring-boot:run`, cwd: root, url: `${backendUrl}/actuator/health`, timeout: 90_000, reuseExistingServer: false },
+    { command: `API_PROXY_TARGET=${backendUrl} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_SESSION_STORE=memory NOVEL_DEV_LOGIN_ENABLED=false npm run dev -- --port ${webPort}`, cwd: '.', url: webUrl, timeout: 90_000, reuseExistingServer: false },
   ],
 });

@@ -47,21 +47,24 @@ export type AccountEntitlements = {
   membership:AccountMembershipEntitlement | null;
   books:AccountBookEntitlement[];
 };
-export type AuthorCommentStatus = 'PENDING_REVIEW' | 'VISIBLE' | 'REJECTED';
-export type AuthorComment = {
+export type NovelCommentStatus = 'PENDING_REVIEW' | 'VISIBLE' | 'REJECTED';
+export type NovelComment = {
   id:number;
   bookId:number;
   chapterId:number | null;
   userId:number;
   authorName:string;
   content:string;
-  status:AuthorCommentStatus;
+  status:NovelCommentStatus;
   createdAt:string;
 };
-export type AuthorCommentPage = {
-  items:AuthorComment[];
+export type NovelCommentPage = {
+  items:NovelComment[];
   meta:{ total:number; page:number; size:number };
 };
+export type AuthorCommentStatus = NovelCommentStatus;
+export type AuthorComment = NovelComment;
+export type AuthorCommentPage = NovelCommentPage;
 export type ParagraphAnnotationStatus = 'PRIVATE' | 'PENDING_REVIEW' | 'VISIBLE' | 'REJECTED';
 export type ParagraphAnnotation = {
   id:number;
@@ -110,6 +113,21 @@ export type AuthorAnalyticsBookMetric = {
   averageReadThroughPercent:number;
 };
 export type AuthorAnalyticsMetricAvailability = { available:boolean; reason:string };
+export type AuthorAnalyticsSubscriptionMetrics = {
+  attributedGrantCount:number;
+  attributedReaderCount:number;
+  membershipDayCount:number;
+};
+export type AuthorAnalyticsRetentionMetrics = {
+  cohortReaderBookCount:number;
+  day1EligibleReaderBookCount:number;
+  day1RetainedReaderBookCount:number;
+  day1RetentionPercent:number | null;
+  day7EligibleReaderBookCount:number;
+  day7RetainedReaderBookCount:number;
+  day7RetentionPercent:number | null;
+  observedThrough:string;
+};
 export type AuthorAnalyticsReport = {
   summary:{
     currentFavoriteCount:number;
@@ -123,6 +141,8 @@ export type AuthorAnalyticsReport = {
   };
   dailyTrend:AuthorAnalyticsTrendPoint[];
   bookMetrics:AuthorAnalyticsBookMetric[];
+  subscriptionMetrics:AuthorAnalyticsSubscriptionMetrics;
+  retentionMetrics:AuthorAnalyticsRetentionMetrics;
   availability:{ subscription:AuthorAnalyticsMetricAvailability; retention:AuthorAnalyticsMetricAvailability };
   meta:{
     from:string;
@@ -136,6 +156,33 @@ export type AuthorAnalyticsReport = {
     shelfTrendInclusion:string;
     purchaseInclusion:string;
     readThroughDefinition:string;
+    subscriptionInclusion:string;
+    retentionDefinition:string;
+  };
+};
+export type RetentionMetric = {
+  cohortReaderCount:number;
+  day1EligibleReaderCount:number;
+  day1RetainedReaderCount:number;
+  day1RetentionPercent:number | null;
+  day7EligibleReaderCount:number;
+  day7RetainedReaderCount:number;
+  day7RetentionPercent:number | null;
+};
+export type PlatformRetentionReport = {
+  summary:{ activeReaderCount:number; metric:RetentionMetric };
+  dailyCohorts:Array<{ cohortDate:string; channel:string; metric:RetentionMetric }>;
+  channels:Array<{ channel:string; activeReaderCount:number; metric:RetentionMetric }>;
+  meta:{
+    from:string;
+    to:string;
+    asOf:string;
+    timeZone:string;
+    cohortDefinition:string;
+    day1Definition:string;
+    day7Definition:string;
+    channelAttributionDefinition:string;
+    privacyBoundary:string;
   };
 };
 function csrfToken(){return typeof document==='undefined'?'':document.cookie.split('; ').find(item=>item.startsWith('novel_csrf='))?.slice('novel_csrf='.length)||'';}

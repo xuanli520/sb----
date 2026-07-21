@@ -54,6 +54,17 @@ type AnalyticsReportFixture = {
   };
   dailyTrend: Array<{ date: string; favoriteAddCount: number; purchaseCount: number; purchaseTokenAmount: number }>;
   bookMetrics: Array<{ bookId: number; bookTitle: string; currentFavoriteCount: number; purchaseCount: number; purchaseTokenAmount: number; activeReaderBookCount: number; averageReadThroughPercent: number }>;
+  subscriptionMetrics: { attributedGrantCount: number; attributedReaderCount: number; membershipDayCount: number };
+  retentionMetrics: {
+    cohortReaderBookCount: number;
+    day1EligibleReaderBookCount: number;
+    day1RetainedReaderBookCount: number;
+    day1RetentionPercent: number | null;
+    day7EligibleReaderBookCount: number;
+    day7RetainedReaderBookCount: number;
+    day7RetentionPercent: number | null;
+    observedThrough: string;
+  };
   availability: { subscription: { available: boolean; reason: string }; retention: { available: boolean; reason: string } };
   meta: {
     from: string;
@@ -67,6 +78,8 @@ type AnalyticsReportFixture = {
     shelfTrendInclusion: string;
     purchaseInclusion: string;
     readThroughDefinition: string;
+    subscriptionInclusion: string;
+    retentionDefinition: string;
   };
 };
 
@@ -150,9 +163,24 @@ function analyticsReportFixture(): AnalyticsReportFixture {
       { bookId: 1, bookTitle: '北岸灯塔', currentFavoriteCount: 9, purchaseCount: 3, purchaseTokenAmount: 90, activeReaderBookCount: 4, averageReadThroughPercent: 70 },
       { bookId: 2, bookTitle: '夜航南岸', currentFavoriteCount: 3, purchaseCount: 1, purchaseTokenAmount: 30, activeReaderBookCount: 1, averageReadThroughPercent: 47.5 },
     ],
+    subscriptionMetrics: {
+      attributedGrantCount: 3,
+      attributedReaderCount: 2,
+      membershipDayCount: 90,
+    },
+    retentionMetrics: {
+      cohortReaderBookCount: 8,
+      day1EligibleReaderBookCount: 6,
+      day1RetainedReaderBookCount: 4,
+      day1RetentionPercent: 66.67,
+      day7EligibleReaderBookCount: 3,
+      day7RetainedReaderBookCount: 1,
+      day7RetentionPercent: 33.33,
+      observedThrough: '2026-07-21',
+    },
     availability: {
-      subscription: { available: false, reason: 'No author-attributed subscription event or entitlement is stored.' },
-      retention: { available: false, reason: 'Reading progress retains only the latest position per reader and book; no return-event history is stored.' },
+      subscription: { available: true, reason: 'Author-attributed membership redemption ledger is available.' },
+      retention: { available: true, reason: 'Immutable reader-work reading-progress activity is available.' },
     },
     meta: {
       from: '2026-07-20',
@@ -166,6 +194,8 @@ function analyticsReportFixture(): AnalyticsReportFixture {
       shelfTrendInclusion: 'CURRENT_BOOKSHELF_ROWS_ADDED_IN_WINDOW; REMOVED_ROWS_ARE_NOT_RETAINED',
       purchaseInclusion: 'PURCHASE_ENTITLEMENT_WITH_MATCHING_BOOK_PURCHASE_TOKEN_DEBIT',
       readThroughDefinition: 'CURRENT_PROGRESS_UPDATED_IN_WINDOW; PUBLISHED_CHAPTER_POSITION_PLUS_CAPPED_OFFSET_FRACTION',
+      subscriptionInclusion: 'AUTHOR_ATTRIBUTED_MEMBERSHIP_REDEMPTION_LEDGER; COMPOSITE_REDEMPTION_CODE_BOOK_OWNER_SNAPSHOTTED_AT_GRANT',
+      retentionDefinition: 'FIRST_READING_PROGRESS_ACTIVITY_DATE_PER_READER_BOOK; SAME_READER_BOOK_ACTIVITY_ON_COHORT_DATE_PLUS_1_OR_PLUS_7; ONLY_COHORTS_MATURED_BY_OBSERVED_THROUGH_ARE_ELIGIBLE',
     },
   };
 }
@@ -715,15 +745,19 @@ describe('author manuscript workspace', () => {
     expect(screen.getAllByText('夜航南岸', { selector: 'span' }).length).toBeGreaterThan(0);
   });
 
-  it('shows author-owned shelf, purchase, and current read-through analytics without fabricating subscription or retention', async () => {
+  it('shows author-owned shelf, subscription, purchase, and immutable D1/D7 retention analytics', async () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、购书与阅读进度' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
     expect(await within(analytics).findByText('12')).toBeTruthy();
     expect(within(analytics).getByText('65.5%')).toBeTruthy();
-    expect(within(analytics).getByText(/当前没有按作品或作者归因的订阅事件/)).toBeTruthy();
-    expect(within(analytics).getByText(/阅读进度只保存最新位置，无法还原读者回访序列/)).toBeTruthy();
+    expect(within(analytics).getByText('作品归因订阅')).toBeTruthy();
+    expect(within(analytics).getByText('作品归因订阅').parentElement?.textContent).toContain('3次');
+    expect(within(analytics).getByText('D1 追读')).toBeTruthy();
+    expect(within(analytics).getByText('66.67%')).toBeTruthy();
+    expect(within(analytics).getByText('D7 追读')).toBeTruthy();
+    expect(within(analytics).getByText('33.33%')).toBeTruthy();
     expect(within(analytics).getByRole('columnheader', { name: '新增收藏' })).toBeTruthy();
     expect(within(analytics).getByRole('row', { name: /2026-07-21.*3.*2.*60/ })).toBeTruthy();
     expect(within(analytics).getByRole('row', { name: /北岸灯塔.*9.*3.*70%/ })).toBeTruthy();
@@ -735,7 +769,7 @@ describe('author manuscript workspace', () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、购书与阅读进度' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
     await within(analytics).findByText('12');
     fireEvent.click(within(analytics).getByRole('combobox', { name: '作品数据作品筛选' }));
     fireEvent.click(await screen.findByRole('option', { name: '夜航南岸' }));
@@ -750,7 +784,7 @@ describe('author manuscript workspace', () => {
     mockAuthorApi({ rejectAnalyticsReport: true });
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、购书与阅读进度' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
     expect(await within(analytics).findByText('作品数据无法显示：author analytics service is unavailable')).toBeTruthy();
     expect(within(analytics).getByRole('button', { name: '重试' })).toBeTruthy();
   });

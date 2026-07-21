@@ -121,7 +121,12 @@ async function createAuthenticatedLogin(action: 'login' | 'register', body: Reco
       method: 'POST',
       headers: { 'content-type': 'application/json', 'X-Novel-Internal-Key': internalKey },
       body: JSON.stringify(action === 'register'
-        ? { username: body.username, password: body.password, displayName: body.displayName }
+        ? {
+          username: body.username,
+          password: body.password,
+          displayName: body.displayName,
+          ...(typeof body.channel === 'string' ? { channel: body.channel } : {}),
+        }
         : { username: body.username, password: body.password }),
       cache: 'no-store',
     });

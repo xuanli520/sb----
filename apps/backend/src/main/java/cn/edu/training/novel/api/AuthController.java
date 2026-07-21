@@ -25,7 +25,8 @@ public class AuthController {
 
     @PostMapping("/register")
     ApiResponse<SessionData> register(@Valid @RequestBody RegisterRequest request) {
-        return ApiResponse.ok(toSessionData(authService.register(request.username(), request.displayName(), request.password())));
+        return ApiResponse.ok(toSessionData(authService.register(
+                request.username(), request.displayName(), request.password(), request.channel())));
     }
 
     @PostMapping("/login")
@@ -53,7 +54,8 @@ public class AuthController {
     public record RegisterRequest(
             @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
             @NotBlank @Size(min = 1, max = 128) String displayName,
-            @NotBlank @Size(min = 12, max = 128) String password) {}
+            @NotBlank @Size(min = 12, max = 128) String password,
+            @Size(max = 32) String channel) {}
 
     public record LoginRequest(
             @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,

@@ -4,6 +4,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +64,13 @@ class AuthorAnalyticsIntegrationTest {
         insertProgress(502L, 1L, 1101L, 10, julyTwo);
         insertProgress(503L, 2L, 1002L, 10, julyOne);
         insertProgress(504L, 1L, 1101L, 10, Instant.parse("2026-07-03T16:00:00Z"));
+        // Immutable activity, unlike the current progress rows above, proves the first-read
+        // cohort and D1 return. The book-two row must never reach author 2's report.
+        insertActivity(601L, 1L, "2026-07-01");
+        insertActivity(601L, 1L, "2026-07-02");
+        insertActivity(602L, 2L, "2026-07-01");
+        insertAuthorSubscription(701L, 2L, 1L, 14, julyOne);
+        insertAuthorSubscription(702L, 4L, 2L, 30, julyOne);
 
         mvc.perform(get("/api/v1/author/analytics")
                         .header(DEVELOPMENT_PRINCIPAL, "author")
@@ -91,16 +99,28 @@ class AuthorAnalyticsIntegrationTest {
                 .andExpect(jsonPath("$.data.bookMetrics[0].currentFavoriteCount").value(2))
                 .andExpect(jsonPath("$.data.bookMetrics[0].purchaseTokenAmount").value(50))
                 .andExpect(jsonPath("$.data.bookMetrics[0].averageReadThroughPercent").value(62.5))
-                .andExpect(jsonPath("$.data.availability.subscription.available").value(false))
+                .andExpect(jsonPath("$.data.subscriptionMetrics.attributedGrantCount").value(1))
+                .andExpect(jsonPath("$.data.subscriptionMetrics.attributedReaderCount").value(1))
+                .andExpect(jsonPath("$.data.subscriptionMetrics.membershipDayCount").value(14))
+                .andExpect(jsonPath("$.data.retentionMetrics.cohortReaderBookCount").value(1))
+                .andExpect(jsonPath("$.data.retentionMetrics.day1EligibleReaderBookCount").value(1))
+                .andExpect(jsonPath("$.data.retentionMetrics.day1RetainedReaderBookCount").value(1))
+                .andExpect(jsonPath("$.data.retentionMetrics.day1RetentionPercent").value(100.0))
+                .andExpect(jsonPath("$.data.retentionMetrics.day7EligibleReaderBookCount").value(0))
+                .andExpect(jsonPath("$.data.availability.subscription.available").value(true))
                 .andExpect(jsonPath("$.data.availability.subscription.reason").value(
-                        "No author-attributed subscription event or entitlement is stored."))
-                .andExpect(jsonPath("$.data.availability.retention.available").value(false))
+                        "Author-attributed membership redemption ledger is available."))
+                .andExpect(jsonPath("$.data.availability.retention.available").value(true))
                 .andExpect(jsonPath("$.data.meta.timeZone").value("Asia/Shanghai"))
                 .andExpect(jsonPath("$.data.meta.dateBoundary").value("FROM_INCLUSIVE_TO_INCLUSIVE"))
                 .andExpect(jsonPath("$.data.meta.shelfTrendInclusion").value(
                         "CURRENT_BOOKSHELF_ROWS_ADDED_IN_WINDOW; REMOVED_ROWS_ARE_NOT_RETAINED"))
                 .andExpect(jsonPath("$.data.meta.purchaseInclusion").value(
-                        "PURCHASE_ENTITLEMENT_WITH_MATCHING_BOOK_PURCHASE_TOKEN_DEBIT"));
+                        "PURCHASE_ENTITLEMENT_WITH_MATCHING_BOOK_PURCHASE_TOKEN_DEBIT"))
+                .andExpect(jsonPath("$.data.meta.subscriptionInclusion").value(
+                        "AUTHOR_ATTRIBUTED_MEMBERSHIP_REDEMPTION_LEDGER; COMPOSITE_REDEMPTION_CODE_BOOK_OWNER_SNAPSHOTTED_AT_GRANT"))
+                .andExpect(jsonPath("$.data.meta.retentionDefinition").value(
+                        "FIRST_READING_PROGRESS_ACTIVITY_DATE_PER_READER_BOOK; SAME_READER_BOOK_ACTIVITY_ON_COHORT_DATE_PLUS_1_OR_PLUS_7; ONLY_COHORTS_MATURED_BY_OBSERVED_THROUGH_ARE_ELIGIBLE"));
     }
 
     @Test
@@ -180,5 +200,41 @@ class AuthorAnalyticsIntegrationTest {
                 chapterId,
                 offset,
                 Timestamp.from(updatedAt));
+    }
+
+    private void insertActivity(long userId, long bookId, String activityDate) {
+        Instant occurredAt = Date.valueOf(activityDate).toLocalDate()
+                .atStartOfDay(java.time.ZoneId.of("Asia/Shanghai")).toInstant();
+        jdbc.update(
+                "INSERT INTO novel_reader_activity_event(user_id, book_id, chapter_id, event_type, activity_date, occurred_at) "
+                        + "VALUES (?, ?, ?, 'READING_PROGRESS', ?, ?)",
+                userId,
+                bookId,
+                bookId == 1L ? 1001L : 1002L,
+                Date.valueOf(activityDate),
+                Timestamp.from(occurredAt));
+    }
+
+    private void insertAuthorSubscription(long readerUserId, long authorId, long bookId, int days, Instant occurredAt) {
+        jdbc.update(
+                "INSERT INTO novel_membership_ledger(user_id, membership_days, valid_from, valid_until, transaction_type, reference_type, reference_id, created_at) "
+                        + "VALUES (?, ?, ?, ?, 'REDEMPTION', 'REDEMPTION_CODE', ?, ?)",
+                readerUserId,
+                days,
+                Timestamp.from(occurredAt),
+                Timestamp.from(occurredAt.plusSeconds(days * 86_400L)),
+                "ANALYTICS-" + readerUserId,
+                Timestamp.from(occurredAt));
+        Long membershipLedgerId = jdbc.queryForObject("SELECT MAX(id) FROM novel_membership_ledger", Long.class);
+        jdbc.update(
+                "INSERT INTO novel_author_subscription_ledger(membership_ledger_id, reader_user_id, author_id, book_id, membership_days, source_type, source_reference, occurred_at) "
+                        + "VALUES (?, ?, ?, ?, ?, 'MEMBERSHIP_REDEMPTION', ?, ?)",
+                membershipLedgerId,
+                readerUserId,
+                authorId,
+                bookId,
+                days,
+                "ANALYTICS-" + readerUserId,
+                Timestamp.from(occurredAt));
     }
 }

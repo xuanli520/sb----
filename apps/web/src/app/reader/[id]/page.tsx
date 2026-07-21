@@ -38,14 +38,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/app/components/ui/sheet';
 import { Slider } from '@/app/components/ui/slider';
 import { Textarea } from '@/app/components/ui/textarea';
+import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { InlineNotice, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
-import { AccountEntitlements, Book, ParagraphAnnotation, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
+import {
+  AccountEntitlements,
+  Book,
+  NovelComment,
+  NovelCommentPage,
+  ParagraphAnnotation,
+  ParagraphAnnotationPage,
+  novelApi,
+} from '@/features/novel/api';
 
 type Chapter = { id: number; title: string; content: string; published: boolean; orderNo: number };
-type Comment = { id: number; authorName: string; content: string; status: string };
 type BookmarkItem = { id: number; chapterId: number; offset: number; note: string; createdAt: string };
-type Detail = { book: Book; chapters: Chapter[]; comments: Comment[] };
+type Detail = { book: Book; chapters: Chapter[] };
 type ReaderFont = 'serif' | 'sans';
 type Preference = { theme: 'paper' | 'sepia' | 'night'; font: ReaderFont; fontSize: number; lineHeight: number; brightness: number; pageMode: 'slide' | 'cover' | 'simulation' };
 type ReadingProgress = { bookId: number; chapterId: number; offset: number; updatedAt: string };
@@ -89,8 +97,9 @@ const themeOptions: Array<{ value: Preference['theme']; label: string; className
 ];
 
 const readerFontFamily: Record<ReaderFont, string> = {
-  serif: '"Songti SC", "STSong", "SimSun", serif',
-  sans: '"PingFang SC", "Microsoft YaHei", Arial, sans-serif',
+  // The bundled CJK face keeps the reading surface legible on hosts without Songti/PingFang.
+  serif: '"Songti SC", "STSong", "SimSun", "Noto Sans SC Local", serif',
+  sans: '"PingFang SC", "Microsoft YaHei", "Noto Sans SC Local", Arial, sans-serif',
 };
 
 function normalizePreference(value: Preference): Preference {
@@ -403,6 +412,10 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [paragraphAnnotationNote, setParagraphAnnotationNote] = useState('');
   const [paragraphAnnotationShareIntent, setParagraphAnnotationShareIntent] = useState(false);
   const [comment, setComment] = useState('');
+  const [chapterComments, setChapterComments] = useState<NovelComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState('');
+  const [commentsReloadVersion, setCommentsReloadVersion] = useState(0);
   const [rating, setRating] = useState(0);
   const [rewardAmount, setRewardAmount] = useState('');
   const [rewardState, setRewardState] = useState<RewardState>('idle');
@@ -422,6 +435,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [reducedMotion, setReducedMotion] = useState(false);
   const transitionTimer = useRef<number>();
   const transitionSequence = useRef(0);
+  const commentRequestSequence = useRef(0);
+  const activeChapterRef = useRef<number>();
   const rewardAttempt = useRef<RewardAttempt>();
   const rewardRequestInFlight = useRef(false);
 
@@ -497,6 +512,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId)
           : undefined;
         const initialChapter = restoredChapter ?? firstChapter;
+        activeChapterRef.current = initialChapter.id;
         setActiveChapterId(initialChapter.id);
 
         if (!restoredChapter) {
@@ -545,6 +561,40 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
+  useEffect(() => {
+    const bookId = detail?.book.id;
+    const chapterId = activeChapterId;
+    if (!bookId || !chapterId) {
+      commentRequestSequence.current += 1;
+      setChapterComments([]);
+      setCommentsLoading(false);
+      setCommentsError('');
+      return;
+    }
+
+    const requestId = ++commentRequestSequence.current;
+    let cancelled = false;
+    setChapterComments([]);
+    setCommentsLoading(true);
+    setCommentsError('');
+
+    void novelApi<NovelCommentPage>(`public/books/${bookId}/comments?chapterId=${chapterId}`)
+      .then((page) => {
+        if (cancelled || requestId !== commentRequestSequence.current) return;
+        setChapterComments(page.items);
+      })
+      .catch((reason) => {
+        if (cancelled || requestId !== commentRequestSequence.current) return;
+        setCommentsError(reason instanceof Error ? reason.message : '本章评论暂时无法加载。');
+      })
+      .finally(() => {
+        if (cancelled || requestId !== commentRequestSequence.current) return;
+        setCommentsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [activeChapterId, commentsReloadVersion, detail?.book.id]);
+
   const savePreference = async (next: Preference) => {
     setPreference(next);
     try {
@@ -575,6 +625,11 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setChapterTransition(undefined);
     }
 
+    commentRequestSequence.current += 1;
+    setChapterComments([]);
+    setCommentsLoading(true);
+    setCommentsError('');
+    activeChapterRef.current = nextChapter.id;
     setActiveChapterId(nextChapter.id);
     setParagraphAnnotationDraft(undefined);
     setParagraphAnnotationNote('');
@@ -694,15 +749,23 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
   const postComment = async () => {
     if (!detail || !chapter || !comment.trim()) return;
+    const content = comment.trim();
+    const commentChapterId = chapter.id;
     setPendingAction('comment');
     try {
-      const result = await novelApi<Comment>(`account/books/${detail.book.id}/comments`, 'reader', {
+      const result = await novelApi<NovelComment>(`account/books/${detail.book.id}/comments`, 'reader', {
         method: 'POST',
-        body: JSON.stringify({ chapterId: chapter.id, content: comment.trim() }),
+        body: JSON.stringify({ chapterId: commentChapterId, content }),
       });
-      setComment('');
+      setComment((current) => current === content ? '' : current);
       announce(result.status === 'VISIBLE' ? '评论已发布' : '评论已进入审核队列');
-      if (result.status === 'VISIBLE') setDetail((current) => current ? { ...current, comments: [...current.comments, result] } : current);
+      if (result.status === 'VISIBLE' && activeChapterRef.current === commentChapterId) {
+        // A late list response must not replace a comment the reader has just published.
+        commentRequestSequence.current += 1;
+        setCommentsLoading(false);
+        setCommentsError('');
+        setChapterComments((items) => items.some((item) => item.id === result.id) ? items : [...items, result]);
+      }
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '发表评论失败，请先选择读者身份。', 'error');
     } finally {
@@ -944,13 +1007,21 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
             <div className="grid gap-5 border-b border-stone-200 bg-stone-50 px-5 py-5 sm:grid-cols-2 sm:px-8 xl:grid-cols-3">
               <fieldset>
                 <legend className="text-xs font-semibold text-stone-600">主题</legend>
-                <div className="mt-2 flex gap-2">
+                <ToggleGroup
+                  type="single"
+                  value={preference.theme}
+                  onValueChange={(theme) => {
+                    if (theme) void savePreference({ ...preference, theme: theme as Preference['theme'] });
+                  }}
+                  aria-label="阅读主题"
+                  className="mt-2 w-auto gap-2 rounded-none"
+                >
                   {themeOptions.map((item) => (
-                    <Button key={item.value} type="button" variant="outline" size="sm" onClick={() => void savePreference({ ...preference, theme: item.value })} aria-pressed={preference.theme === item.value} className={`h-auto rounded-none px-2.5 py-1.5 text-xs ${item.className} ${preference.theme === item.value ? 'border-emerald-700 ring-1 ring-emerald-700' : 'border-stone-300'}`}>
+                    <ToggleGroupItem key={item.value} value={item.value} className={`h-auto min-w-0 flex-none rounded-none border border-stone-300 px-2.5 py-1.5 text-xs shadow-none first:rounded-none last:rounded-none ${item.className} data-[state=on]:border-emerald-700 data-[state=on]:ring-1 data-[state=on]:ring-emerald-700`}>
                       {item.value === 'night' ? <Moon className="mr-1 inline" size={13} aria-hidden="true" /> : <Sun className="mr-1 inline" size={13} aria-hidden="true" />}{item.label}
-                    </Button>
+                    </ToggleGroupItem>
                   ))}
-                </div>
+                </ToggleGroup>
               </fieldset>
               <div>
                 <Label id="font-family-label" className="text-xs font-semibold text-stone-600">字体</Label>
@@ -1177,9 +1248,16 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <Button type="button" onClick={() => void postComment()} disabled={pendingAction === 'comment' || !comment.trim()} className="h-11 rounded-none bg-emerald-700 px-4 hover:bg-emerald-800">发布</Button>
             </div>
 
-            <div className="mt-6 space-y-4">
-              {detail.comments.length === 0 ? <p className="text-sm text-stone-500">还没有章评，成为第一个留下感受的读者。</p> : null}
-              {detail.comments.map((item) => (
+            <div className="mt-6 space-y-4" aria-live="polite">
+              {commentsLoading ? <p className="text-sm text-stone-500">正在加载本章评论...</p> : null}
+              {!commentsLoading && commentsError ? (
+                <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-3 text-sm text-rose-800">
+                  <p>本章评论暂时无法加载：{commentsError}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setCommentsReloadVersion((version) => version + 1)} className="h-auto rounded-none border-rose-300 bg-white px-3 py-1.5 text-rose-800 hover:border-rose-500 hover:text-rose-950">重新加载本章评论</Button>
+                </div>
+              ) : null}
+              {!commentsLoading && !commentsError && chapterComments.length === 0 ? <p className="text-sm text-stone-500">还没有章评，成为第一个留下感受的读者。</p> : null}
+              {!commentsLoading && !commentsError && chapterComments.map((item) => (
                 <article key={item.id} className="border-l-2 border-emerald-600 pl-4 text-sm leading-6 text-stone-700">
                   <p className="font-semibold text-stone-900">{item.authorName}</p>
                   <p className="mt-1">{item.content}</p>

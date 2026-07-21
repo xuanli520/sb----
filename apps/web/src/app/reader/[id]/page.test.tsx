@@ -43,10 +43,16 @@ type PageMode = 'slide' | 'cover' | 'simulation';
 type RewardHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type AnnotationHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type PurchaseHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type ChapterCommentsHandler = (chapterId: number, input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type CommentPostHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type ReaderApiOptions = {
+  bookDetail?: unknown;
   rewardHandler?: RewardHandler;
   annotationHandler?: AnnotationHandler;
   purchaseHandler?: PurchaseHandler;
+  chapterComments?: Record<number, unknown[]>;
+  chapterCommentsHandler?: ChapterCommentsHandler;
+  commentPostHandler?: CommentPostHandler;
   annotations?: unknown[];
   wallet?: { tokens: number };
   entitlements?: { membership: unknown; books: unknown[] };
@@ -87,7 +93,14 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: Read
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
 
-    if (path.endsWith('/public/books/7')) return Promise.resolve(response(detail));
+    if (path.endsWith('/public/books/7')) return Promise.resolve(response(options.bookDetail ?? detail));
+    const chapterCommentsMatch = path.match(/\/public\/books\/7\/comments\?chapterId=(\d+)$/);
+    if (chapterCommentsMatch) {
+      const chapterId = Number(chapterCommentsMatch[1]);
+      const items = options.chapterComments?.[chapterId] ?? [];
+      return options.chapterCommentsHandler?.(chapterId, input, init)
+        ?? Promise.resolve(response({ items, meta: { total: items.length, page: 0, size: 20 } }));
+    }
     if (path.endsWith('/account/preferences/reading')) {
       if (init?.method === 'PUT') return Promise.resolve(response(JSON.parse(String(init.body))));
       return Promise.resolve(response(preference(pageMode)));
@@ -118,6 +131,16 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: Read
       }));
     }
     if (path.endsWith('/account/books/7/votes/monthly')) return Promise.resolve(response({ count: 1 }));
+    if (path.endsWith('/account/books/7/comments')) return options.commentPostHandler?.(input, init) ?? Promise.resolve(response({
+      id: 701,
+      bookId: 7,
+      chapterId: 101,
+      userId: 3,
+      authorName: '演示读者',
+      content: '测试评论',
+      status: 'VISIBLE',
+      createdAt: '2026-07-21T00:00:00Z',
+    }));
     if (path.endsWith('/account/books/7/reward')) return options.rewardHandler?.(input, init) ?? Promise.resolve(response({ bookId: 7, amount: 1, balance: 99 }));
     if (path.endsWith('/account/books/7/purchase')) return options.purchaseHandler?.(input, init) ?? Promise.resolve(response({ bookId: 7, purchased: true, balance: 90 }));
     return Promise.resolve(response({}));
@@ -213,6 +236,26 @@ describe('reader page modes', () => {
     expect(screen.getByTestId('reader-transition-layer').getAttribute('data-transition-effect')).toBe('cover-reveal');
   });
 
+  it('uses the shared toggle group to persist the selected reading theme', async () => {
+    const fetchMock = await renderReader('slide');
+
+    fireEvent.click(screen.getByRole('button', { name: '阅读设置' }));
+    const paperTheme = screen.getByRole('radio', { name: '纸白' });
+    expect(paperTheme.getAttribute('data-slot')).toBe('toggle-group-item');
+    expect(paperTheme.getAttribute('data-state')).toBe('on');
+
+    fireEvent.click(screen.getByRole('radio', { name: '夜读' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/preferences/reading',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ ...preference('slide'), theme: 'night' }),
+      }),
+    ));
+    expect(screen.getByRole('radio', { name: '夜读' }).getAttribute('data-state')).toBe('on');
+  });
+
   it('persists a committed font-size change from the shared slider', async () => {
     const fetchMock = await renderReader('slide');
 
@@ -237,12 +280,14 @@ describe('reader page modes', () => {
     fireEvent.click(screen.getByRole('button', { name: '阅读设置' }));
     const chapter = screen.getByTestId('reader-current-chapter');
     expect(chapter.style.fontFamily).toContain('Songti SC');
+    expect(chapter.style.fontFamily).toContain('Noto Sans SC Local');
     expect(chapter.style.filter).toBe('brightness(85%)');
 
     fireEvent.click(screen.getByRole('combobox', { name: '字体' }));
     fireEvent.click(await screen.findByRole('option', { name: '无衬线' }));
 
     await waitFor(() => expect(chapter.style.fontFamily).toContain('PingFang SC'));
+    expect(chapter.style.fontFamily).toContain('Noto Sans SC Local');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/novel/account/preferences/reading',
       expect.objectContaining({
@@ -327,6 +372,172 @@ describe('reader page modes', () => {
         body: JSON.stringify({ bookId: 7, chapterId: 102, offset: 0 }),
       }),
     ));
+  });
+
+  it('loads visible comments for only the active chapter instead of using the book detail comments', async () => {
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      bookDetail: {
+        ...detail,
+        comments: [{
+          id: 301,
+          bookId: 7,
+          chapterId: 102,
+          userId: 8,
+          authorName: '其他章节读者',
+          content: '详情接口中的全书评论',
+          status: 'VISIBLE',
+          createdAt: '2026-07-21T00:00:00Z',
+        }],
+      },
+      chapterComments: {
+        101: [{
+          id: 302,
+          bookId: 7,
+          chapterId: 101,
+          userId: 9,
+          authorName: '本章读者',
+          content: '只属于第一章的评论',
+          status: 'VISIBLE',
+          createdAt: '2026-07-21T00:00:00Z',
+        }],
+      },
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/public/books/7/comments?chapterId=101',
+      expect.anything(),
+    ));
+    expect(await screen.findByText('只属于第一章的评论')).toBeTruthy();
+    expect(screen.queryByText('详情接口中的全书评论')).toBeNull();
+  });
+
+  it('ignores a slower comment response from the previously selected chapter', async () => {
+    const firstChapterComments = deferred<Response>();
+    const secondChapterComments = deferred<Response>();
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      chapterCommentsHandler: (chapterId) => chapterId === 101
+        ? firstChapterComments.promise
+        : secondChapterComments.promise,
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/public/books/7/comments?chapterId=101',
+      expect.anything(),
+    ));
+    fireEvent.click(screen.getByRole('button', { name: '下一章' }));
+    await screen.findByRole('heading', { name: '灯塔来信' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/public/books/7/comments?chapterId=102',
+      expect.anything(),
+    ));
+
+    firstChapterComments.resolve(response({
+      items: [{
+        id: 303,
+        bookId: 7,
+        chapterId: 101,
+        userId: 10,
+        authorName: '慢响应读者',
+        content: '迟到的第一章评论',
+        status: 'VISIBLE',
+        createdAt: '2026-07-21T00:00:00Z',
+      }],
+      meta: { total: 1, page: 0, size: 20 },
+    }));
+    await waitFor(() => expect(screen.queryByText('迟到的第一章评论')).toBeNull());
+
+    secondChapterComments.resolve(response({
+      items: [{
+        id: 304,
+        bookId: 7,
+        chapterId: 102,
+        userId: 11,
+        authorName: '第二章读者',
+        content: '第二章的当前评论',
+        status: 'VISIBLE',
+        createdAt: '2026-07-21T00:00:00Z',
+      }],
+      meta: { total: 1, page: 0, size: 20 },
+    }));
+    expect(await screen.findByText('第二章的当前评论')).toBeTruthy();
+  });
+
+  it('shows a visible comment immediately and keeps it when an older list request finishes', async () => {
+    const chapterComments = deferred<Response>();
+    const publishedComment = {
+      id: 305,
+      bookId: 7,
+      chapterId: 101,
+      userId: 3,
+      authorName: '演示读者',
+      content: '刚刚发布的章评',
+      status: 'VISIBLE',
+      createdAt: '2026-07-21T00:00:00Z',
+    };
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      chapterCommentsHandler: () => chapterComments.promise,
+      commentPostHandler: () => Promise.resolve(response(publishedComment)),
+    });
+
+    const input = screen.getByRole('textbox', { name: '发表评论' });
+    fireEvent.change(input, { target: { value: publishedComment.content } });
+    fireEvent.click(screen.getByRole('button', { name: '发布' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/books/7/comments',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ chapterId: 101, content: publishedComment.content }),
+      }),
+    ));
+    expect(await screen.findByText(publishedComment.content)).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe('');
+    expect(screen.getByText('评论已发布')).toBeTruthy();
+
+    chapterComments.resolve(response({ items: [], meta: { total: 0, page: 0, size: 20 } }));
+    await waitFor(() => expect(screen.getByText(publishedComment.content)).toBeTruthy());
+  });
+
+  it('keeps a failed comment submission and its draft visible to the reader', async () => {
+    await renderReader('slide', [], '潮汐之前', {
+      commentPostHandler: () => Promise.resolve(failedResponse('请先登录后发表评论')),
+    });
+
+    const input = screen.getByRole('textbox', { name: '发表评论' });
+    fireEvent.change(input, { target: { value: '登录失败时保留草稿' } });
+    fireEvent.click(screen.getByRole('button', { name: '发布' }));
+
+    expect(await screen.findByText('请先登录后发表评论')).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe('登录失败时保留草稿');
+  });
+
+  it('shows a recoverable error when the current chapter comments cannot be loaded', async () => {
+    let attempts = 0;
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      chapterCommentsHandler: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.resolve(failedResponse('评论服务暂不可用'))
+          : Promise.resolve(response({
+            items: [{
+              id: 306,
+              bookId: 7,
+              chapterId: 101,
+              userId: 12,
+              authorName: '恢复后的读者',
+              content: '重新加载后的本章评论',
+              status: 'VISIBLE',
+              createdAt: '2026-07-21T00:00:00Z',
+            }],
+            meta: { total: 1, page: 0, size: 20 },
+          }));
+      },
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('评论服务暂不可用');
+    fireEvent.click(screen.getByRole('button', { name: '重新加载本章评论' }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith('/public/books/7/comments?chapterId=101'))).toHaveLength(2));
+    expect(await screen.findByText('重新加载后的本章评论')).toBeTruthy();
   });
 
   it('sends a monthly vote through the reader BFF route', async () => {

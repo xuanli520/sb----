@@ -15,6 +15,14 @@ type SessionResponse = {
 };
 
 const loginNamePattern = /^[A-Za-z0-9._@+-]{3,120}$/;
+const acquisitionChannels = new Set(['DIRECT', 'ORGANIC', 'SEARCH', 'WECHAT', 'QQ', 'DOUYIN', 'XIAOHONGSHU', 'INVITE']);
+
+function registrationChannel(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const query = new URLSearchParams(window.location.search);
+  const candidate = (query.get('utm_source') ?? query.get('channel') ?? '').trim().toUpperCase();
+  return acquisitionChannels.has(candidate) ? candidate : undefined;
+}
 
 function authErrorMessage(message: string | undefined, fallback: string): string {
   switch (message) {
@@ -65,6 +73,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     setError('');
     try {
+      const channel = registrationChannel();
       const response = await fetch('/api/novel/session', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -73,6 +82,7 @@ export default function RegisterPage() {
           username: normalizedUsername,
           displayName: normalizedDisplayName,
           password,
+          ...(channel ? { channel } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({})) as SessionResponse;

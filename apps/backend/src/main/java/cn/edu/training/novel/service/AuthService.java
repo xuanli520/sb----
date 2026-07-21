@@ -36,6 +36,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AuthService {
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final Set<String> ACQUISITION_CHANNELS = Set.of(
+            "DIRECT", "ORGANIC", "SEARCH", "WECHAT", "QQ", "DOUYIN", "XIAOHONGSHU", "INVITE");
     private final JdbcTemplate jdbc;
     private final BCryptPasswordEncoder passwordEncoder;
     private final String absentAccountHash;
@@ -53,7 +55,17 @@ public class AuthService {
 
     @Transactional
     public AuthenticatedSession register(String username, String displayName, String password) {
+        return register(username, displayName, password, null);
+    }
+
+    /**
+     * Persists only a server-controlled, first-touch acquisition category. Raw UTM URLs,
+     * referrers, IP addresses and device identifiers are intentionally never accepted here.
+     */
+    @Transactional
+    public AuthenticatedSession register(String username, String displayName, String password, String channel) {
         String loginName = normalizeLoginName(username);
+        String normalizedChannel = normalizeAcquisitionChannel(channel);
         if (findAccountByLoginName(loginName).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
         }
@@ -74,6 +86,11 @@ public class AuthService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
         }
+        jdbc.update(
+                "INSERT INTO novel_channel_attribution(user_id, channel, attribution_source, attributed_at) "
+                        + "VALUES (?, ?, 'REGISTRATION', CURRENT_TIMESTAMP)",
+                accountId,
+                normalizedChannel);
         return createBffSession(new AccountRow(accountId, loginName, displayName.trim(), "", Set.of(Role.READER), true));
     }
 
@@ -248,6 +265,17 @@ public class AuthService {
 
     private static String normalizeLoginName(String username) {
         return username.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeAcquisitionChannel(String channel) {
+        if (channel == null || channel.isBlank()) {
+            return "DIRECT";
+        }
+        String normalized = channel.trim().toUpperCase(Locale.ROOT);
+        if (!ACQUISITION_CHANNELS.contains(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported acquisition channel");
+        }
+        return normalized;
     }
 
     private static Set<Role> parseRoles(String serialized) {

@@ -1,7 +1,9 @@
 package cn.edu.training.novel.service;
 
+import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -108,6 +110,60 @@ public class AuthorAnalyticsRepository {
     }
 
     /**
+     * The subscription ledger stores author and book ownership at redemption. The current catalog
+     * join is still required, so a report can only ever expose a work that the requesting author
+     * owns now; the snapshot predicate blocks malformed rows from crossing author boundaries.
+     */
+    public List<SubscriptionRow> findAuthorAttributedSubscriptions(AnalyticsFilter filter) {
+        QueryParts filters = ownerFilter(filter, "subscription.occurred_at");
+        return jdbc.query(
+                "SELECT subscription.reader_user_id, subscription.book_id, subscription.membership_days, subscription.occurred_at "
+                        + "FROM novel_author_subscription_ledger subscription "
+                        + "JOIN novel_book b ON b.id = subscription.book_id"
+                        + filters.where()
+                        + " AND subscription.author_id = b.author_id",
+                (resultSet, rowNumber) -> new SubscriptionRow(
+                        resultSet.getLong("reader_user_id"),
+                        resultSet.getLong("book_id"),
+                        resultSet.getInt("membership_days"),
+                        resultSet.getTimestamp("occurred_at").toInstant()),
+                filters.parameters().toArray());
+    }
+
+    /**
+     * Returns a bounded, immutable activity history for reader-work cohorts whose first event is
+     * in the report window. Activity dates are already persisted in Asia/Shanghai by the writer,
+     * avoiding database-session timezone conversion in both H2 and MySQL.
+     */
+    public List<RetentionActivityRow> findRetentionActivities(
+            AnalyticsFilter filter, LocalDate observedThrough, LocalDate cohortFrom, LocalDate cohortTo) {
+        QueryParts filters = ownerFilter(filter, null);
+        List<Object> parameters = new ArrayList<>(filters.parameters());
+        parameters.add(Date.valueOf(observedThrough));
+        parameters.add(Date.valueOf(cohortFrom));
+        parameters.add(Date.valueOf(cohortTo));
+        return jdbc.query(
+                "SELECT cohort.user_id, cohort.book_id, cohort.cohort_date, activity.activity_date "
+                        + "FROM (SELECT activity.user_id, activity.book_id, MIN(activity.activity_date) AS cohort_date "
+                        + "      FROM novel_reader_activity_event activity "
+                        + "      JOIN novel_book b ON b.id = activity.book_id"
+                        + filters.where()
+                        + " AND activity.event_type = 'READING_PROGRESS' "
+                        + "      GROUP BY activity.user_id, activity.book_id) cohort "
+                        + "JOIN novel_reader_activity_event activity ON activity.user_id = cohort.user_id "
+                        + " AND activity.book_id = cohort.book_id "
+                        + " AND activity.event_type = 'READING_PROGRESS' "
+                        + "WHERE activity.activity_date <= ? AND cohort.cohort_date >= ? AND cohort.cohort_date <= ? "
+                        + "ORDER BY cohort.cohort_date ASC, cohort.book_id ASC, cohort.user_id ASC, activity.activity_date ASC",
+                (resultSet, rowNumber) -> new RetentionActivityRow(
+                        resultSet.getLong("user_id"),
+                        resultSet.getLong("book_id"),
+                        resultSet.getDate("cohort_date").toLocalDate(),
+                        resultSet.getDate("activity_date").toLocalDate()),
+                parameters.toArray());
+    }
+
+    /**
      * Progress is an overwrite-only reader state. This query intentionally selects only records
      * updated in the requested window and only where the saved chapter remains published.
      */
@@ -176,6 +232,10 @@ public class AuthorAnalyticsRepository {
     public record TimedBookRow(long bookId, Instant recordedAt) {}
 
     public record PurchaseRow(long bookId, long tokenAmount, Instant acquiredAt) {}
+
+    public record SubscriptionRow(long readerUserId, long bookId, int membershipDays, Instant occurredAt) {}
+
+    public record RetentionActivityRow(long userId, long bookId, LocalDate cohortDate, LocalDate activityDate) {}
 
     public record BookCount(long bookId, long count) {}
 

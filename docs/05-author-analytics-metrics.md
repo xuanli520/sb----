@@ -1,22 +1,47 @@
-# 作者数据指标口径
+# 作者、渠道与留存指标口径
 
-`GET /api/v1/author/analytics` 是 FR-08 的作者数据接口。接口只能读取当前认证作者拥有的作品；传入不属于当前作者的 `bookId` 会被拒绝。所有日期按 `Asia/Shanghai` 自然日计算，`from` 和 `to` 同时提供时为闭区间；未提供时默认最近 28 个自然日，单次窗口最多 90 天。
+本文是已实现报表的计算契约。所有自然日使用 `Asia/Shanghai`，所有日期范围均为闭区间。
 
-## 已提供指标
+## 作者数据
 
-| 指标 | 计算口径 | 限制 |
-| --- | --- | --- |
-| 当前收藏 | 作者作品在 `novel_reader_bookshelf` 中当前仍存在的行数。 | 作品下线后仍保留的行也属于作者数据；不表示实时可见书架数。 |
-| 收藏趋势 | 所选窗口内当前书架行的 `added_at`，按上海自然日分组。 | 书架取消时行会删除，因此已取消收藏不会保留为历史事件；重新收藏只保留最后一次加入时间。 |
-| 付费购书 | `source_type = PURCHASE` 的整本权益，且存在同一读者、同一作品、同一代币额度的 `BOOK_PURCHASE` 扣减账本。 | 只统计可由当前数据双向验证的购买；兑换码赠书不计入付费购书。 |
-| 购书代币 | 上述可验证购买权益的 `purchase_amount` 之和，单位恒为 `TOKEN`。 | 代币不是人民币、法币收入、结算额或可提现余额。 |
-| 当前阅读完成度 | 对所选窗口内更新的、仍指向已发布章节的每个读者-作品当前进度，按 `(已完成章节数 + 当前章节偏移比例) / 当前已发布章节数` 计算；返回这些读者-作品对的平均百分比。章节偏移比例限制在 0 到 1。 | `novel_reader_progress` 只保存每个读者和作品的最新位置；新章节发布会改变当前分母。 |
+`GET /api/v1/author/analytics` 只能读取当前认证作者当前拥有的作品。传入其他作者的 `bookId` 返回 `403`。`from` 和 `to` 要么同时提供，要么同时省略；默认最近 28 天，最多 90 天。
 
-接口还返回按日收藏/购书趋势和受 `bookLimit` 限制的作品明细。默认最多 12 部，最大 50 部；当作者作品数超过返回上限时，`meta.bookMetricsTruncated` 为 `true`。
+| 指标 | 计算口径 |
+| --- | --- |
+| 当前收藏 | `novel_reader_bookshelf` 中当前仍存在的作者作品行数。取消收藏会删除行，因此不作为历史事件保留。 |
+| 收藏趋势 | 所选窗口内当前书架行的 `added_at`，按上海自然日分组。 |
+| 付费购书与代币 | 仅统计 `PURCHASE` 整本权益且存在同读者、同作品、同额度 `BOOK_PURCHASE` 代币扣减账本的记录。单位固定为 `TOKEN`，不是人民币、结算额或可提现余额。 |
+| 当前阅读完成度 | 对所选窗口内更新、且仍指向已发布章节的当前进度，按 `(已完成章节数 + 当前章节偏移比例) / 当前已发布章节数` 求平均。 |
+| 作品归因订阅 | `subscriptionMetrics` 仅统计“会员天数 + 指定作品”组合兑换码核销时写入的 `novel_author_subscription_ledger`。账本同时固化作品、作者、读者、会员天数、来源和发生时间；无作品归因的全站会员不计入作者订阅。 |
+| D1/D7 追读 | `retentionMetrics` 的队列单位为读者-作品。首个 `READING_PROGRESS` 不可变活动的上海日期为 cohort；同一读者同一作品在 `cohort + 1` 或 `cohort + 7` 有任意活动即分别计为 D1/D7 回访。只有在 `observedThrough` 已到达对应日期时才进入分母，未成熟队列的比例为 `null`，不是 `0%`。 |
 
-## 当前不可用指标
+阅读进度表仍只保存当前位置，但每次成功保存进度后，应用会在同一事务中向 `novel_reader_activity_event` 写入事件。唯一键 `(user_id, book_id, event_type, activity_date)` 保证同一读者、同一作品、同一上海日只保留一条活动，不会被高频翻页请求放大。
 
-- 订阅：现有会员权益没有作品或作者归因，也没有独立订阅事件，因此不能生成作者订阅数或订阅收入。
-- 留存：阅读进度是覆盖式状态，没有连续的打开、阅读或回访事件流，因此不能可靠计算次日、七日或任何留存率。
+## 全站与渠道
 
-这两项在接口 `availability` 中明确标记为不可用，作者页同样显示原因。后续若要启用它们，需先新增作者归因的订阅账本，以及不可变的阅读/会话事件流和已批准的留存窗口定义。
+`GET /api/v1/admin/analytics/retention` 仅允许 `ADMIN`。`from`/`to` 选择首读 cohort 日期，默认最近 28 天，最长 90 天；`asOf` 默认当前上海日期，用于重放历史报表时固定 D1/D7 的成熟边界，不能晚于当前日期。
+
+响应包含：
+
+- `summary`：窗口活跃读者，以及全站 cohort 的 D1/D7 分子、分母和比例。
+- `dailyCohorts`：按首读日期和渠道拆分的 cohort。
+- `channels`：按渠道聚合的窗口活跃读者、首读 cohort 与 D1/D7。
+- `meta`：时区、cohort、D1/D7、渠道和隐私口径。
+
+渠道是首次注册时的受控分类，允许值为 `DIRECT`、`ORGANIC`、`SEARCH`、`WECHAT`、`QQ`、`DOUYIN`、`XIAOHONGSHU`、`INVITE`。注册页只从 `utm_source` 或 `channel` 查询参数中提取上述值；BFF 可转发该分类，但后端再次做白名单校验。缺失归因和历史账号在查询时均归为 `DIRECT`。
+
+系统不保存原始 IP、Referer、完整 UTM URL、设备指纹、浏览器标识或任何可用于跨站跟踪的值。渠道分类不可在注册后覆盖，因此一个用户只有一个首触归因。
+
+## 可重复验证
+
+```bash
+DEBUG=false mvn --batch-mode --no-transfer-progress -pl apps/backend \
+  -Dtest=AuthorAnalyticsIntegrationTest,AuthorSubscriptionAttributionIntegrationTest,PlatformRetentionAnalyticsIntegrationTest,ReaderActivityAndChannelAttributionIntegrationTest test
+
+cd apps/web && npm run typecheck && npm test -- --run \
+  src/app/author/page.test.tsx \
+  src/app/novel-admin/page.test.tsx \
+  src/app/api/novel/session/route.test.ts
+```
+
+测试覆盖作者归属隔离、组合兑换码的作者快照、无归因会员排除、重复核销、活动日去重、上海日边界、D1/D7 成熟分母、渠道分组、无归因 `DIRECT` 回退、未知渠道拒绝、管理员授权和 BFF 转发。

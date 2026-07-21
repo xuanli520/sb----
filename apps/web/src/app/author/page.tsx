@@ -243,6 +243,10 @@ function formatAnalyticsPercent(value: number) {
   return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)}%`;
 }
 
+function formatRetentionPercent(value: number | null) {
+  return value === null ? '待观察' : formatAnalyticsPercent(value);
+}
+
 function ChapterStatusBadge({ status }: { status: string }) {
   const meta = {
     DRAFT: { label: '草稿', className: 'border-stone-300 bg-stone-100 text-stone-700' },
@@ -883,7 +887,7 @@ export default function AuthorPage() {
         <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold text-emerald-700">作品数据</p>
-            <h2 id="author-analytics-heading" className="mt-1 text-xl font-semibold text-stone-950">收藏、购书与阅读进度</h2>
+            <h2 id="author-analytics-heading" className="mt-1 text-xl font-semibold text-stone-950">收藏、订阅与阅读数据</h2>
           </div>
           <span className="text-sm text-stone-500" aria-live="polite">
             {analyticsLoading ? '正在加载' : analyticsReport ? `${analyticsReport.meta.from} 至 ${analyticsReport.meta.to}` : '暂未加载'}
@@ -946,16 +950,23 @@ export default function AuthorPage() {
               </div>
             </dl>
 
-            <div className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-2">
+            <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-3">
               <div className="bg-white px-5 py-4">
-                <p className="text-sm font-medium text-stone-900">订阅</p>
-                <p className="mt-1 text-sm text-stone-600">{analyticsReport.availability.subscription.available ? '数据已可用' : '暂不显示：当前没有按作品或作者归因的订阅事件。'}</p>
+                <dt className="text-sm font-medium text-stone-900">作品归因订阅</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.subscriptionMetrics.attributedGrantCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">次</span></dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.subscriptionMetrics.attributedReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.subscriptionMetrics.membershipDayCount.toLocaleString('zh-CN')} 会员天</p>
               </div>
               <div className="bg-white px-5 py-4">
-                <p className="text-sm font-medium text-stone-900">留存</p>
-                <p className="mt-1 text-sm text-stone-600">{analyticsReport.availability.retention.available ? '数据已可用' : '暂不显示：阅读进度只保存最新位置，无法还原读者回访序列。'}</p>
+                <dt className="text-sm font-medium text-stone-900">D1 追读</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{formatRetentionPercent(analyticsReport.retentionMetrics.day1RetentionPercent)}</dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.retentionMetrics.day1RetainedReaderBookCount.toLocaleString('zh-CN')} / {analyticsReport.retentionMetrics.day1EligibleReaderBookCount.toLocaleString('zh-CN')} 成熟读者-作品</p>
               </div>
-            </div>
+              <div className="bg-white px-5 py-4">
+                <dt className="text-sm font-medium text-stone-900">D7 追读</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{formatRetentionPercent(analyticsReport.retentionMetrics.day7RetentionPercent)}</dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.retentionMetrics.day7RetainedReaderBookCount.toLocaleString('zh-CN')} / {analyticsReport.retentionMetrics.day7EligibleReaderBookCount.toLocaleString('zh-CN')} 成熟读者-作品</p>
+              </div>
+            </dl>
 
             <div className="grid gap-7 px-5 py-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
               <section aria-labelledby="author-analytics-trend-heading">
@@ -1021,7 +1032,7 @@ export default function AuthorPage() {
               </section>
             </div>
 
-            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">收藏趋势仅统计当前仍保存在书架中的新增记录；购书仅统计有对应代币扣减账本的整本购买；阅读完成度按所选区间内更新的当前阅读位置与当前已发布章节计算。代币不是法币收入。</p>
+            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">收藏趋势仅统计当前仍保存在书架中的新增记录；购书仅统计有对应代币扣减账本的整本购买；订阅只统计与作品一同兑换的会员权益；D1/D7 以读者首次阅读该作品后的第 1/7 个上海自然日是否再次阅读计算，观测截止至 {analyticsReport.retentionMetrics.observedThrough}。代币不是法币收入。</p>
           </>
         ) : null}
       </section>

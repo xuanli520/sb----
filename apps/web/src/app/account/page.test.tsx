@@ -27,9 +27,17 @@ function errorResponse(msg: string) {
 function mockAccountApi(
   authorApplication: unknown | ((requestCount: number) => unknown) = null,
   profileUpdate: (requestCount: number) => Response = () => response({ id: 47, name: '更新后的阅界读者', roles: ['READER'] }),
+  commentsResponse: (requestCount: number) => Response = () => response({
+    items: [
+      { id: 71, bookId: 7, chapterId: 12, userId: 47, authorName: '阅界读者', content: '这一章的反转很有张力。', status: 'PENDING_REVIEW', createdAt: '2026-07-21T08:30:00Z' },
+      { id: 72, bookId: 404, chapterId: null, userId: 47, authorName: '阅界读者', content: '完整的书评会在审核后公开。', status: 'VISIBLE', createdAt: '2026-07-20T08:30:00Z' },
+    ],
+    meta: { total: 2, page: 0, size: 20 },
+  }),
 ) {
   let authorApplicationRequestCount = 0;
   let profileUpdateRequestCount = 0;
+  let commentsRequestCount = 0;
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const endpoint = String(input).replace('/api/novel/', '');
     const method = (init?.method ?? 'GET').toUpperCase();
@@ -73,6 +81,10 @@ function mockAccountApi(
           ? authorApplication(authorApplicationRequestCount)
           : authorApplication,
       ));
+    }
+    if (method === 'GET' && endpoint === 'account/comments?size=20') {
+      commentsRequestCount += 1;
+      return Promise.resolve(commentsResponse(commentsRequestCount));
     }
     if (method === 'POST' && endpoint === 'account/checkin') {
       return Promise.resolve(response({ points: 90, awarded: 10 }));
@@ -120,15 +132,49 @@ describe('reader account center', () => {
     expect(screen.getByRole('link', { name: '个人中心' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByText('80')).toBeTruthy();
     expect(screen.getByText('120')).toBeTruthy();
-    expect(screen.getAllByText('北岸灯塔').length).toBe(3);
-    expect(screen.getByText('作品 #404')).toBeTruthy();
+    expect(screen.getAllByText('北岸灯塔').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText('作品 #404').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('link', { name: '继续阅读《北岸灯塔》' }).every((link) => link.getAttribute('href') === '/reader/7')).toBe(true);
     expect(screen.getByRole('link', { name: '开始阅读《星海拾光》' }).getAttribute('href')).toBe('/reader/9');
     expect(screen.getByRole('link', { name: '阅读《北岸灯塔》' }).getAttribute('href')).toBe('/reader/7');
 
-    for (const endpoint of ['account/profile', 'account/bookshelf', 'account/progress', 'account/wallet', 'account/entitlements', 'account/author-applications']) {
+    for (const endpoint of ['account/profile', 'account/bookshelf', 'account/progress', 'account/wallet', 'account/entitlements', 'account/author-applications', 'account/comments?size=20']) {
       expect(fetchMock).toHaveBeenCalledWith(`/api/novel/${endpoint}`, expect.anything());
     }
+  });
+
+  it('shows the current reader comments with their location, moderation state, and time', async () => {
+    mockAccountApi();
+    render(<AccountPage />);
+
+    expect(await screen.findByRole('heading', { name: '我的评论' })).toBeTruthy();
+    expect(screen.getByText('这一章的反转很有张力。')).toBeTruthy();
+    expect(screen.getByText('完整的书评会在审核后公开。')).toBeTruthy();
+    expect(screen.getByText('作品 #7 · 北岸灯塔')).toBeTruthy();
+    expect(screen.getByText(/章节 #12/)).toBeTruthy();
+    expect(screen.getAllByText('待审核')).toHaveLength(1);
+    expect(screen.getAllByText('已公开')).toHaveLength(1);
+    expect(screen.getByRole('link', { name: '阅读评论所在作品 #7' }).getAttribute('href')).toBe('/reader/7');
+    expect(screen.getByRole('link', { name: '阅读评论所在作品 #404' }).getAttribute('href')).toBe('/reader/404');
+    expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
+  });
+
+  it('keeps account details available when comments fail and retries only the comments request', async () => {
+    const fetchMock = mockAccountApi(null, undefined, (requestCount) => requestCount === 1
+      ? errorResponse('评论服务暂不可用')
+      : response({
+        items: [{ id: 73, bookId: 7, chapterId: null, userId: 47, authorName: '阅界读者', content: '重试后可见的书评。', status: 'PENDING_REVIEW', createdAt: '2026-07-21T09:30:00Z' }],
+        meta: { total: 1, page: 0, size: 20 },
+      }));
+    render(<AccountPage />);
+
+    expect(await screen.findByRole('heading', { name: '阅界读者' })).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toContain('评论服务暂不可用');
+    expect(screen.queryByText('个人中心无法加载')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('重试后可见的书评。')).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/novel/account/comments?size=20')).toHaveLength(2);
   });
 
   it('shows current membership and book entitlements without making payment claims', async () => {

@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { AdminOperationsPanels } from '@/components/novel/AdminOperationsPanels';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
-import { Book, ParagraphAnnotation, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
+import { Book, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
 type Application = { id: number; penName: string; statement: string; status: string };
@@ -74,6 +74,10 @@ function formatRedemptionTime(value: string | null) {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return '时间未知';
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(timestamp);
+}
+
+function formatRetentionRate(value: number | null) {
+  return value === null ? '待观察' : `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)}%`;
 }
 
 function RedemptionStatusBadge({ status }: { status: string }) {
@@ -145,6 +149,9 @@ export default function NovelAdminPage() {
   const [importBatchNo, setImportBatchNo] = useState('');
   const [importBenefits, setImportBenefits] = useState<RedemptionBenefitsDraft>(emptyRedemptionBenefits);
   const [generatedBatch, setGeneratedBatch] = useState<GeneratedRedemptionCodeBatch>();
+  const [retentionReport, setRetentionReport] = useState<PlatformRetentionReport>();
+  const [retentionLoading, setRetentionLoading] = useState(true);
+  const [retentionError, setRetentionError] = useState('');
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
@@ -179,6 +186,20 @@ export default function NovelAdminPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadRetentionReport = useCallback(async () => {
+    setRetentionLoading(true);
+    setRetentionError('');
+    try {
+      setRetentionReport(await novelApi<PlatformRetentionReport>('admin/analytics/retention', 'admin'));
+    } catch (reason) {
+      setRetentionError(reason instanceof Error ? reason.message : '留存报表暂时无法加载。');
+    } finally {
+      setRetentionLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadRetentionReport(); }, [loadRetentionReport]);
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -405,6 +426,35 @@ export default function NovelAdminPage() {
           const Icon = metric.icon;
           return <div key={metric.name} className="bg-white px-5 py-5"><Icon size={18} className="text-emerald-700" aria-hidden="true" /><strong className="mt-3 block text-2xl font-semibold text-stone-950">{metric.value.toLocaleString('zh-CN')}</strong><span className="mt-1 block text-sm text-stone-700">{metric.name}</span><span className="mt-1 block text-xs text-stone-500">{metric.note}</span></div>;
         })}
+      </section>
+
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="platform-retention-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">全站数据</p>
+            <h2 id="platform-retention-heading" className="mt-1 text-xl font-semibold text-stone-950">渠道与读者留存</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">按读者首次阅读日期计算 D1/D7；渠道只保留受控首触分类，不采集原始来源或设备标识。</p>
+          </div>
+          <span className="text-sm text-stone-500" aria-live="polite">{retentionLoading ? '正在加载' : retentionReport ? `${retentionReport.meta.from} 至 ${retentionReport.meta.to}` : '暂未加载'}</span>
+        </div>
+        {retentionLoading && !retentionReport ? <div className="grid gap-px bg-stone-100 p-px sm:grid-cols-3"><Skeleton className="h-28 rounded-none bg-white" /><Skeleton className="h-28 rounded-none bg-white" /><Skeleton className="h-28 rounded-none bg-white" /></div> : null}
+        {retentionError ? <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"><InlineNotice tone="error">留存报表无法显示：{retentionError}</InlineNotice><Button type="button" variant="outline" onClick={() => void loadRetentionReport()} className="h-auto shrink-0 rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">重试</Button></div> : null}
+        {!retentionError && retentionReport ? (
+          <>
+            <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-3">
+              <div className="bg-white px-5 py-4"><dt className="text-sm text-stone-600">窗口活跃读者</dt><dd className="mt-1 text-2xl font-semibold text-stone-950">{retentionReport.summary.activeReaderCount.toLocaleString('zh-CN')}</dd><p className="mt-1 text-xs text-stone-500">{retentionReport.summary.metric.cohortReaderCount.toLocaleString('zh-CN')} 位首次阅读读者</p></div>
+              <div className="bg-white px-5 py-4"><dt className="text-sm text-stone-600">D1 留存</dt><dd className="mt-1 text-2xl font-semibold text-stone-950">{formatRetentionRate(retentionReport.summary.metric.day1RetentionPercent)}</dd><p className="mt-1 text-xs text-stone-500">{retentionReport.summary.metric.day1RetainedReaderCount.toLocaleString('zh-CN')} / {retentionReport.summary.metric.day1EligibleReaderCount.toLocaleString('zh-CN')} 成熟读者</p></div>
+              <div className="bg-white px-5 py-4"><dt className="text-sm text-stone-600">D7 留存</dt><dd className="mt-1 text-2xl font-semibold text-stone-950">{formatRetentionRate(retentionReport.summary.metric.day7RetentionPercent)}</dd><p className="mt-1 text-xs text-stone-500">{retentionReport.summary.metric.day7RetainedReaderCount.toLocaleString('zh-CN')} / {retentionReport.summary.metric.day7EligibleReaderCount.toLocaleString('zh-CN')} 成熟读者</p></div>
+            </dl>
+            <div className="overflow-x-auto px-5 py-5">
+              <Table className="min-w-[700px]">
+                <TableHeader className="border-stone-100 bg-stone-50 text-stone-600"><TableRow className="border-0 hover:bg-transparent"><TableHead className="px-4 py-3">渠道</TableHead><TableHead className="px-4 py-3 text-right">活跃读者</TableHead><TableHead className="px-4 py-3 text-right">首读队列</TableHead><TableHead className="px-4 py-3 text-right">D1</TableHead><TableHead className="px-4 py-3 text-right">D7</TableHead></TableRow></TableHeader>
+                <TableBody>{retentionReport.channels.map((channel) => <TableRow key={channel.channel} className="border-stone-100 hover:bg-stone-50"><TableCell className="px-4 py-3 font-medium text-stone-900">{channel.channel}</TableCell><TableCell className="px-4 py-3 text-right text-stone-700">{channel.activeReaderCount.toLocaleString('zh-CN')}</TableCell><TableCell className="px-4 py-3 text-right text-stone-700">{channel.metric.cohortReaderCount.toLocaleString('zh-CN')}</TableCell><TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{formatRetentionRate(channel.metric.day1RetentionPercent)}</TableCell><TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{formatRetentionRate(channel.metric.day7RetentionPercent)}</TableCell></TableRow>)}</TableBody>
+              </Table>
+            </div>
+            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">统计时区：{retentionReport.meta.timeZone}。D1/D7 仅在首读后第 1/7 个自然日已到达观测截止日时进入分母；未归因的历史账户归为 DIRECT。</p>
+          </>
+        ) : null}
       </section>
 
       <section className="mt-7" aria-labelledby="redemption-code-heading">

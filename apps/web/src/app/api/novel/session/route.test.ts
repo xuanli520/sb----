@@ -125,6 +125,24 @@ describe('novel BFF session route', () => {
     expect(`${fetchMock.mock.calls[1][0]}`).toBe('http://backend.example.test/api/v1/auth/register');
   });
 
+  it('forwards a controlled registration channel only with the registration payload', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      code: 200,
+      data: { sessionId: 'backend-session', user: { id: 7 }, expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1_000).toISOString() },
+    }));
+
+    const response = await POST(request({
+      method: 'POST',
+      body: JSON.stringify({ action: 'register', username: 'reader', password: 'secure-password', displayName: 'Reader', channel: 'WECHAT' }),
+    }, { origin: 'http://localhost:3000', 'content-type': 'application/json' }));
+
+    expect(response.status).toBe(200);
+    expect(`${fetchMock.mock.calls[0][0]}`).toBe('http://backend.example.test/api/v1/auth/register');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      username: 'reader', password: 'secure-password', displayName: 'Reader', channel: 'WECHAT',
+    });
+  });
+
   it('returns the same no-store 429 envelope for known and unknown submitted names before contacting the backend', async () => {
     const deniedLimiter: NovelAuthRateLimiter = {
       consume: vi.fn().mockResolvedValue({ allowed: false, retryAfterSeconds: 42 }),

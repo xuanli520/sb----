@@ -176,16 +176,15 @@ public class WalletRepository {
                 "UPDATE novel_membership_entitlement SET expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
                 Timestamp.from(validUntil),
                 userId);
-        jdbc.update(
-                "INSERT INTO novel_membership_ledger(user_id, membership_days, valid_from, valid_until, transaction_type, reference_type, reference_id, created_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+        long membershipLedgerId = appendMembershipLedger(
                 userId,
                 membershipDays,
-                Timestamp.from(validFrom),
-                Timestamp.from(validUntil),
+                validFrom,
+                validUntil,
                 transactionType,
                 referenceType,
                 referenceId);
+        recordAuthorAttributedSubscription(membershipLedgerId, transactionType, referenceType, referenceId);
         return validUntil;
     }
 
@@ -421,6 +420,57 @@ public class WalletRepository {
                 transactionType,
                 referenceType,
                 referenceId);
+    }
+
+    private long appendMembershipLedger(
+            long userId,
+            int membershipDays,
+            Instant validFrom,
+            Instant validUntil,
+            String transactionType,
+            String referenceType,
+            String referenceId) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO novel_membership_ledger(user_id, membership_days, valid_from, valid_until, transaction_type, reference_type, reference_id, created_at) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, userId);
+            statement.setInt(2, membershipDays);
+            statement.setTimestamp(3, Timestamp.from(validFrom));
+            statement.setTimestamp(4, Timestamp.from(validUntil));
+            statement.setString(5, transactionType);
+            statement.setString(6, referenceType);
+            statement.setString(7, referenceId);
+            return statement;
+        }, keyHolder);
+        return generatedId(keyHolder);
+    }
+
+    /**
+     * An author can only receive a subscription attribution when the redeemed membership code
+     * explicitly names one of that author's books. The INSERT SELECT snapshots that ownership and
+     * copies the source membership-ledger timestamp, so later catalog changes cannot rewrite the
+     * audit trail. The unique membership_ledger_id makes retries non-duplicating at the database
+     * boundary.
+     */
+    private void recordAuthorAttributedSubscription(
+            long membershipLedgerId, String transactionType, String referenceType, String referenceId) {
+        if (!"REDEMPTION".equals(transactionType) || !"REDEMPTION_CODE".equals(referenceType)) {
+            return;
+        }
+        jdbc.update(
+                "INSERT INTO novel_author_subscription_ledger("
+                        + "membership_ledger_id, reader_user_id, author_id, book_id, membership_days, source_type, source_reference, occurred_at) "
+                        + "SELECT membership.id, membership.user_id, book.author_id, code.book_id, membership.membership_days, "
+                        + "'MEMBERSHIP_REDEMPTION', membership.reference_id, membership.created_at "
+                        + "FROM novel_membership_ledger membership "
+                        + "JOIN novel_redemption_code code ON code.code = membership.reference_id "
+                        + "JOIN novel_book book ON book.id = code.book_id "
+                        + "WHERE membership.id = ? AND membership.transaction_type = 'REDEMPTION' "
+                        + "AND membership.reference_type = 'REDEMPTION_CODE' AND code.book_id IS NOT NULL",
+                membershipLedgerId);
     }
 
     private static Long nullableLong(Object value) {

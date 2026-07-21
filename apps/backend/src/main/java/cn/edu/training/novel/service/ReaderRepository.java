@@ -198,17 +198,41 @@ public class ReaderRepository {
 
     @Transactional
     public ReadingProgress saveProgress(long userId, long bookId, long chapterId, int offset) {
+        Instant occurredAt = Instant.now();
         jdbc.update(
                 "INSERT INTO novel_reader_progress(user_id, book_id, chapter_id, character_offset, updated_at) "
-                        + "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) "
+                        + "VALUES (?, ?, ?, ?, ?) "
                         + "ON DUPLICATE KEY UPDATE chapter_id = VALUES(chapter_id), "
                         + "character_offset = VALUES(character_offset), updated_at = CURRENT_TIMESTAMP",
                 userId,
                 bookId,
                 chapterId,
-                offset);
+                offset,
+                Timestamp.from(occurredAt));
+        recordReadingActivity(userId, bookId, chapterId, occurredAt);
         return progressForBook(userId, bookId)
                 .orElseThrow(() -> new IllegalStateException("reading progress was not saved"));
+    }
+
+    /**
+     * Retention needs durable return evidence, rather than the overwrite-only progress state.
+     * The unique key intentionally bounds this to one immutable event per reader/work/Shanghai
+     * day; repeated progress saves never inflate a cohort's active-reader count.
+     */
+    private void recordReadingActivity(long userId, long bookId, long chapterId, Instant occurredAt) {
+        try {
+            jdbc.update(
+                    "INSERT INTO novel_reader_activity_event(user_id, book_id, chapter_id, event_type, activity_date, occurred_at) "
+                            + "VALUES (?, ?, ?, 'READING_PROGRESS', ?, ?)",
+                    userId,
+                    bookId,
+                    chapterId,
+                    Date.valueOf(occurredAt.atZone(BUSINESS_ZONE).toLocalDate()),
+                    Timestamp.from(occurredAt));
+        } catch (DuplicateKeyException ignored) {
+            // A second save on the same book/day is expected and leaves the prior immutable event
+            // untouched. MySQL and H2 both permit the surrounding transaction to continue.
+        }
     }
 
     public List<ReadingProgress> progress(long userId) {

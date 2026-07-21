@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AnchorHTMLAttributes } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -80,6 +80,36 @@ function response(data: unknown) {
   return { ok: true, json: async () => ({ data }) } as Response;
 }
 
+function retentionReport() {
+  return {
+    summary: {
+      activeReaderCount: 14,
+      metric: {
+        cohortReaderCount: 10,
+        day1EligibleReaderCount: 8,
+        day1RetainedReaderCount: 5,
+        day1RetentionPercent: 62.5,
+        day7EligibleReaderCount: 4,
+        day7RetainedReaderCount: 2,
+        day7RetentionPercent: 50,
+      },
+    },
+    dailyCohorts: [],
+    channels: [
+      { channel: 'DIRECT', activeReaderCount: 8, metric: { cohortReaderCount: 6, day1EligibleReaderCount: 5, day1RetainedReaderCount: 3, day1RetentionPercent: 60, day7EligibleReaderCount: 3, day7RetainedReaderCount: 1, day7RetentionPercent: 33.33 } },
+      { channel: 'WECHAT', activeReaderCount: 6, metric: { cohortReaderCount: 4, day1EligibleReaderCount: 3, day1RetainedReaderCount: 2, day1RetentionPercent: 66.67, day7EligibleReaderCount: 1, day7RetainedReaderCount: 1, day7RetentionPercent: 100 } },
+    ],
+    meta: {
+      from: '2026-06-24', to: '2026-07-21', asOf: '2026-07-21', timeZone: 'Asia/Shanghai',
+      cohortDefinition: 'FIRST_READING_PROGRESS_ACTIVITY_DATE_PER_READER',
+      day1Definition: 'ANY_READING_PROGRESS_ACTIVITY_ON_COHORT_DATE_PLUS_1',
+      day7Definition: 'ANY_READING_PROGRESS_ACTIVITY_ON_COHORT_DATE_PLUS_7',
+      channelAttributionDefinition: 'FIRST_TOUCH_REGISTRATION_CHANNEL; MISSING_ATTRIBUTION_IS_DIRECT',
+      privacyBoundary: 'STORES_CONTROLLED_CHANNEL_CATEGORY_ONLY; NO_IP_REFERRER_URL_OR_DEVICE_FINGERPRINT',
+    },
+  };
+}
+
 function mockAdminApi(seedCodes = initialRedemptionCodes) {
   let redemptionCodes = seedCodes.map((code) => ({ ...code }));
   let annotations = [{ ...pendingAnnotation }];
@@ -103,6 +133,7 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
     if (path.endsWith('/admin/dashboard')) return Promise.resolve(response({ activeReaders: 14, todayReads: 33, publishedBooks: 5, pendingReviews: 1, auditLog: [] }));
+    if (path.endsWith('/admin/analytics/retention')) return Promise.resolve(response(retentionReport()));
     if (path.endsWith('/admin/reviews')) return Promise.resolve(response([]));
     if (path.endsWith('/admin/author-applications')) return Promise.resolve(response([]));
     if (path.endsWith('/admin/sensitive-words')) return Promise.resolve(response(['敏感词']));
@@ -246,6 +277,29 @@ describe('admin comment review queue', () => {
       method: 'POST',
       body: JSON.stringify({ approve: false, reason: '不符合社区规范，需要修改后重发' }),
     })));
+  });
+});
+
+describe('admin channel retention report', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    push.mockReset();
+    refresh.mockReset();
+  });
+
+  it('renders whole-platform D1/D7 and controlled channel attribution data', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    const retention = await screen.findByRole('region', { name: '渠道与读者留存' });
+    expect(within(retention).getByText('D1 留存')).toBeTruthy();
+    expect(within(retention).getByText('62.5%')).toBeTruthy();
+    expect(within(retention).getByText('D7 留存')).toBeTruthy();
+    expect(within(retention).getByText('DIRECT')).toBeTruthy();
+    expect(within(retention).getByText('WECHAT')).toBeTruthy();
+    expect(within(retention).getByText(/渠道只保留受控首触分类/)).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/analytics/retention', expect.anything()));
   });
 });
 

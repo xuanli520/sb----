@@ -1,5 +1,5 @@
 -- Consumption is deliberately kept in a separate domain model from accounts.
--- Development identities and migrated RuoYi identities both use their stable user id here,
+-- Account identities use their stable user id here,
 -- so these tables do not add a foreign key to novel_account.
 
 CREATE TABLE novel_redemption_code (
