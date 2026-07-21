@@ -11,6 +11,7 @@ services:
     networks:
       - edge
       - application
+      - object-storage
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
       interval: 10s
@@ -42,6 +43,13 @@ services:
       QWEN_AUDIT_MAX_RETRIES: ${QWEN_AUDIT_MAX_RETRIES:-0}
       QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE: ${QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE:-60}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # Storage credentials are server-only. The browser receives only relative /media URLs.
+      NOVEL_COVER_STORAGE_ENABLED: ${NOVEL_COVER_STORAGE_ENABLED:-false}
+      NOVEL_COVER_STORAGE_ENDPOINT: http://minio:9000
+      NOVEL_COVER_STORAGE_ACCESS_KEY: ${MINIO_COVER_ACCESS_KEY:?MINIO_COVER_ACCESS_KEY is required}
+      NOVEL_COVER_STORAGE_SECRET_KEY: ${MINIO_COVER_SECRET_KEY:?MINIO_COVER_SECRET_KEY is required}
+      NOVEL_COVER_STORAGE_BUCKET: novel-covers
+      NOVEL_COVER_STORAGE_PUBLIC_BASE_PATH: /media
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/novel_platform?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: novel
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
@@ -50,9 +58,12 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     networks:
       - application
       - mysql
+      - object-storage
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health > /dev/null"]
       interval: 15s
@@ -134,9 +145,55 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_BROWSER: "off"
+    volumes:
+      - minio-data:/data
+    networks:
+      - object-storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # This job is never exposed outside the internal object-storage network. It gives the backend a
+  # narrow writer identity and gives Nginx's private upstream path anonymous GET access only.
+  minio-init:
+    image: minio/mc:RELEASE.2025-05-21T01-59-54Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_COVER_ACCESS_KEY: ${MINIO_COVER_ACCESS_KEY:?MINIO_COVER_ACCESS_KEY is required}
+      MINIO_COVER_SECRET_KEY: ${MINIO_COVER_SECRET_KEY:?MINIO_COVER_SECRET_KEY is required}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing local/novel-covers
+        mc anonymous set download local/novel-covers
+        mc admin user add local "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY" || true
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*"]}]}' > /tmp/novel-cover-writer-policy.json
+        mc admin policy create local novel-cover-writer /tmp/novel-cover-writer-policy.json || mc admin policy update local novel-cover-writer /tmp/novel-cover-writer-policy.json
+        mc admin policy attach local novel-cover-writer --user "$$MINIO_COVER_ACCESS_KEY"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - object-storage
+    restart: "no"
 volumes:
   mysql-data:
   redis-data:
+  minio-data:
 
 networks:
   edge:
@@ -145,4 +202,6 @@ networks:
   mysql:
     internal: true
   redis:
+    internal: true
+  object-storage:
     internal: true

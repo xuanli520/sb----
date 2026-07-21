@@ -15,6 +15,7 @@ import cn.edu.training.novel.service.OperationsRepository;
 import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,6 +38,7 @@ class InteractionPersistenceIntegrationTest {
     @Autowired AuthService authService;
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void commentsRatingsVotesAndDurableCountersSurviveFreshRepositoryAndServiceInstances() {
@@ -67,7 +69,8 @@ class InteractionPersistenceIntegrationTest {
                 operationsRepository,
                 authService,
                 contentModerationService,
-                contentModerationReviewService);
+                contentModerationReviewService,
+                bookModerationSnapshotService);
 
         assertThat(reloadedStore.comments(1L)).containsExactly(visible);
         assertThat(reloadedInteractions.findCommentsForUser(81L, "PENDING_REVIEW", 0, 20).items())

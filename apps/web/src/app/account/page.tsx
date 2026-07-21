@@ -27,6 +27,7 @@ import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
 import { Textarea } from '@/app/components/ui/textarea';
 import { NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
+import { BookCover } from '@/components/novel/BookCover';
 import {
   type AccountEntitlements,
   type AccountProfile,
@@ -723,9 +724,7 @@ export default function AccountPage() {
                       <Card key={book.id} className="gap-0 rounded-none border-stone-200 bg-white p-4">
                         <CardContent className="p-0 [&:last-child]:pb-0">
                           <div className="flex gap-3">
-                            <span className="grid size-10 shrink-0 place-items-center bg-stone-100 text-emerald-800">
-                              <BookOpen size={19} aria-hidden="true" />
-                            </span>
+                            <BookCover cover={book.cover} title={book.title} category={book.category} showLabel={false} className="size-10 shrink-0" />
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <h3 className="min-w-0 truncate font-medium text-stone-950">{book.title}</h3>

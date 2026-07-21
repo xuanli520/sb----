@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class ContentModerationService {
     public static final String CHAPTER = "CHAPTER";
+    /** Clear audit type for immutable whole-work snapshot chunks, never a live chapter row. */
+    public static final String BOOK_SNAPSHOT_CHUNK = "BOOK_SNAPSHOT_CHUNK";
     private static final String LOCAL_PROVIDER = "LOCAL_SENSITIVE_WORD";
 
     private final OperationsRepository operationsRepository;
@@ -36,17 +38,77 @@ public class ContentModerationService {
 
     public ContentModerationAudit moderateChapter(
             long chapterId, String title, String content, ModerationTrigger trigger) {
+        return persistPrepared(prepareModeration(
+                CHAPTER,
+                chapterId,
+                chapterContentVersionHash(title, content),
+                title,
+                content,
+                trigger));
+    }
+
+    /**
+     * Evaluates an immutable snapshot chunk without persisting or holding a database lock. The
+     * worker persists the returned audit only after it proves that its claim token is still active.
+     */
+    ContentModerationAudit prepareSnapshotChunk(
+            long snapshotChunkId, String contentHash, String title, String content) {
+        return prepareModeration(
+                BOOK_SNAPSHOT_CHUNK,
+                snapshotChunkId,
+                contentHash,
+                title,
+                content,
+                ModerationTrigger.BOOK_SNAPSHOT);
+    }
+
+    /** A bounded snapshot rejection is auditable but intentionally never sent to a model. */
+    ContentModerationAudit prepareSnapshotBoundaryFailure(
+            long snapshotChunkId, String contentHash, int inputCharacters) {
+        Instant now = Instant.now();
+        return new ContentModerationAudit(
+                0,
+                BOOK_SNAPSHOT_CHUNK,
+                snapshotChunkId,
+                contentHash,
+                ModerationTrigger.BOOK_SNAPSHOT,
+                "SNAPSHOT_BOUNDARY",
+                null,
+                ModerationDecision.MODEL_ERROR,
+                "Full-work snapshot exceeded the configured safety bound; human review is required.",
+                properties.policyVersion(),
+                properties.promptVersion(),
+                Math.max(0, inputCharacters),
+                UUID.randomUUID().toString(),
+                null,
+                "snapshot-input-bound-exceeded",
+                false,
+                now,
+                now);
+    }
+
+    /** Persists a previously evaluated audit inside the caller's short database transaction. */
+    ContentModerationAudit persistPrepared(ContentModerationAudit audit) {
+        return auditRepository.save(audit);
+    }
+
+    private ContentModerationAudit prepareModeration(
+            String contentType,
+            long contentId,
+            String contentHash,
+            String title,
+            String content,
+            ModerationTrigger trigger) {
         String normalizedTitle = title == null ? "" : title;
         String normalizedContent = content == null ? "" : content;
-        String contentHash = chapterContentVersionHash(normalizedTitle, normalizedContent);
         int inputCharacters = normalizedTitle.length() + normalizedContent.length();
         Instant startedAt = Instant.now();
 
         if (inputCharacters > properties.maxInputCharacters()) {
-            return persist(new ContentModerationAudit(
+            return new ContentModerationAudit(
                     0,
-                    CHAPTER,
-                    chapterId,
+                    contentType,
+                    contentId,
                     contentHash,
                     trigger,
                     "LOCAL_POLICY",
@@ -61,15 +123,15 @@ public class ContentModerationService {
                     "input-bound-exceeded",
                     false,
                     startedAt,
-                    Instant.now()));
+                    Instant.now());
         }
 
         // This remains the first-line screen even when a Qwen client is configured.
         if (operationsRepository.containsSensitiveWord(normalizedTitle + "\n" + normalizedContent)) {
-            return persist(new ContentModerationAudit(
+            return new ContentModerationAudit(
                     0,
-                    CHAPTER,
-                    chapterId,
+                    contentType,
+                    contentId,
                     contentHash,
                     trigger,
                     LOCAL_PROVIDER,
@@ -84,14 +146,14 @@ public class ContentModerationService {
                     null,
                     false,
                     startedAt,
-                    Instant.now()));
+                    Instant.now());
         }
 
         ModelModerationResult result;
         try {
             result = modelClient.moderate(new ContentModerationRequest(
-                    CHAPTER,
-                    chapterId,
+                    contentType,
+                    contentId,
                     contentHash,
                     normalizedTitle,
                     normalizedContent,
@@ -107,14 +169,17 @@ public class ContentModerationService {
                     UUID.randomUUID().toString(),
                     startedAt);
         }
-        return persist(fromModelResult(chapterId, contentHash, trigger, inputCharacters, startedAt, result));
+        return fromModelResult(contentType, contentId, contentHash, trigger, inputCharacters, startedAt, result);
     }
 
     /** Canonical version hash shared by moderation and the human-review evidence linker. */
     public static String chapterContentVersionHash(String title, String content) {
-        String normalizedTitle = title == null ? "" : title;
-        String normalizedContent = content == null ? "" : content;
-        return ContentModerationSanitizer.sha256(CHAPTER + "\n" + normalizedTitle + "\n" + normalizedContent);
+        return contentVersionHash(CHAPTER, title, content);
+    }
+
+    /** Canonical hash for an immutable snapshot chunk, separate from a live chapter version. */
+    public static String snapshotChunkContentVersionHash(String title, String content) {
+        return contentVersionHash(BOOK_SNAPSHOT_CHUNK, title, content);
     }
 
     public List<ContentModerationAudit> recentAudits(String contentType, int limit) {
@@ -122,7 +187,8 @@ public class ContentModerationService {
     }
 
     private ContentModerationAudit fromModelResult(
-            long chapterId,
+            String contentType,
+            long contentId,
             String contentHash,
             ModerationTrigger trigger,
             int inputCharacters,
@@ -148,8 +214,8 @@ public class ContentModerationService {
                 : ContentModerationSanitizer.bounded(result.rawResponse(), properties.maxResponseCharacters());
         return new ContentModerationAudit(
                 0,
-                CHAPTER,
-                chapterId,
+                contentType,
+                contentId,
                 contentHash,
                 trigger,
                 nonBlank(result.provider(), "MODEL_BOUNDARY", 64),
@@ -165,10 +231,6 @@ public class ContentModerationService {
                 result.simulated() && decision == ModerationDecision.SIMULATED_PASS,
                 startedAt,
                 completedAt);
-    }
-
-    private ContentModerationAudit persist(ContentModerationAudit audit) {
-        return auditRepository.save(audit);
     }
 
     private static ModerationDecision normalizeDecision(ModerationDecision decision, boolean simulated) {
@@ -189,5 +251,11 @@ public class ContentModerationService {
     private static String nonBlank(String value, String fallback, int limit) {
         String bounded = ContentModerationSanitizer.bounded(value, limit);
         return bounded == null || bounded.isBlank() ? fallback : bounded;
+    }
+
+    private static String contentVersionHash(String contentType, String title, String content) {
+        String normalizedTitle = title == null ? "" : title;
+        String normalizedContent = content == null ? "" : content;
+        return ContentModerationSanitizer.sha256(contentType + "\n" + normalizedTitle + "\n" + normalizedContent);
     }
 }

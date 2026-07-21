@@ -24,6 +24,10 @@ bash -n scripts/backup-mysql.sh scripts/restore-mysql.sh scripts/backup-restore-
 NOVEL_INTERNAL_API_KEY=verification-internal-key \
 MYSQL_PASSWORD=verification-mysql-password \
 MYSQL_ROOT_PASSWORD=verification-root-password \
+MINIO_ROOT_USER=verification-minio-root \
+MINIO_ROOT_PASSWORD=verification-minio-root-password \
+MINIO_COVER_ACCESS_KEY=verification-cover-writer \
+MINIO_COVER_SECRET_KEY=verification-cover-writer-secret \
 NOVEL_PUBLIC_ORIGIN=https://novel.example.test \
 "$DOCKER_BIN" compose config --quiet
 "$DOCKER_BIN" run --rm \

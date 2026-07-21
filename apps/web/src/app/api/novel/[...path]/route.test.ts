@@ -187,6 +187,35 @@ describe('novel BFF route', () => {
     expect(fetchMock.mock.calls[0][1]?.body).toBeUndefined();
   });
 
+  it('proxies an author cover multipart payload with its browser-generated boundary and CSRF gate intact', async () => {
+    const { sessionId, csrfToken } = await backendSession();
+    const form = new FormData();
+    form.append('file', new Blob(['actual-png-bytes'], { type: 'image/png' }), 'untrusted-name.png');
+    const browserRequest = request('http://localhost:3000/api/novel/author/books/7/cover', {
+      method: 'POST',
+      headers: {
+        host: 'localhost:3000',
+        origin: 'http://localhost:3000',
+        cookie: protectedCookies(sessionId, csrfToken),
+        'x-novel-csrf': csrfToken,
+      },
+      body: form,
+    });
+    const originalContentType = browserRequest.headers.get('content-type');
+    const originalBody = await browserRequest.clone().arrayBuffer();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ code: 200, data: { cover: '/media/covers/test.png' } }));
+
+    const response = await POST(browserRequest, context(['author', 'books', '7', 'cover']));
+
+    expect(response.status).toBe(200);
+    expect(`${fetchMock.mock.calls[0][0]}`).toBe('http://backend.example.test/api/v1/author/books/7/cover');
+    const outbound = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(outbound.get('content-type')).toBe(originalContentType);
+    expect(outbound.get('content-type')).toMatch(/^multipart\/form-data; boundary=/);
+    expect(outbound.get('x-novel-bff-session')).toBe('backend-session');
+    expect(await new Response(fetchMock.mock.calls[0][1]?.body).arrayBuffer()).toEqual(originalBody);
+  });
+
   it('permits the localhost/127.0.0.1 development alias only on the same protocol and port', async () => {
     const { sessionId, csrfToken } = await backendSession();
     fetchMock.mockResolvedValueOnce(jsonResponse({ code: 200, data: { ok: true } }));

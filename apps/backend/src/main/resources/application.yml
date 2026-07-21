@@ -28,6 +28,12 @@ spring:
         # Provider retries are disabled here. The moderation workflow fails closed and never
         # retries an arbitrary provider/schema failure by framework default.
         max-retries: ${QWEN_AUDIT_MAX_RETRIES:0}
+  servlet:
+    multipart:
+      # The application performs its own byte and decoded-image checks below. These limits stop
+      # the servlet container from accepting an arbitrarily large multipart request first.
+      max-file-size: ${NOVEL_COVER_MAX_BYTES:5242880}
+      max-request-size: ${NOVEL_COVER_MAX_BYTES:5242880}
 server:
   port: ${SERVER_PORT:8080}
 management:
@@ -61,7 +67,30 @@ novel:
       # This must be explicitly enabled only for local/test development. Production defaults to
       # fail closed when Qwen is unavailable or unconfigured.
       development-simulation-enabled: ${NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED:false}
+    full-book:
+      # Submission only writes an immutable snapshot. A background worker claims bounded chunks
+      # and calls Qwen after its database transaction has committed.
+      max-chunk-characters: ${NOVEL_FULL_BOOK_AUDIT_MAX_CHUNK_CHARACTERS:12000}
+      max-chunks: ${NOVEL_FULL_BOOK_AUDIT_MAX_CHUNKS:256}
+      max-snapshot-characters: ${NOVEL_FULL_BOOK_AUDIT_MAX_SNAPSHOT_CHARACTERS:1000000}
+      max-claims-per-run: ${NOVEL_FULL_BOOK_AUDIT_MAX_CLAIMS_PER_RUN:8}
+      claim-lease: ${NOVEL_FULL_BOOK_AUDIT_CLAIM_LEASE:PT2M}
+      scheduler-enabled: ${NOVEL_FULL_BOOK_AUDIT_SCHEDULER_ENABLED:true}
+      fixed-delay: ${NOVEL_FULL_BOOK_AUDIT_FIXED_DELAY:PT15S}
+      initial-delay: ${NOVEL_FULL_BOOK_AUDIT_INITIAL_DELAY:PT5S}
   scheduled-publication:
     enabled: ${NOVEL_SCHEDULED_PUBLICATION_ENABLED:true}
     fixed-delay: ${NOVEL_SCHEDULED_PUBLICATION_FIXED_DELAY:PT30S}
     initial-delay: ${NOVEL_SCHEDULED_PUBLICATION_INITIAL_DELAY:PT5S}
+  cover-storage:
+    # Cover upload is deliberately opt-in. An enabled but incomplete configuration remains
+    # unavailable at the endpoint rather than letting the application fall back to local disk.
+    enabled: ${NOVEL_COVER_STORAGE_ENABLED:false}
+    endpoint: ${NOVEL_COVER_STORAGE_ENDPOINT:}
+    access-key: ${NOVEL_COVER_STORAGE_ACCESS_KEY:}
+    secret-key: ${NOVEL_COVER_STORAGE_SECRET_KEY:}
+    bucket: ${NOVEL_COVER_STORAGE_BUCKET:novel-covers}
+    public-base-path: ${NOVEL_COVER_STORAGE_PUBLIC_BASE_PATH:/media}
+    max-bytes: ${NOVEL_COVER_MAX_BYTES:5242880}
+    max-width: ${NOVEL_COVER_MAX_WIDTH:4096}
+    max-height: ${NOVEL_COVER_MAX_HEIGHT:4096}

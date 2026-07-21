@@ -14,6 +14,7 @@ import cn.edu.training.novel.domain.Chapter;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.Volume;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -51,6 +52,7 @@ class AuthorContentEditingIntegrationTest {
     @Autowired NovelStore store;
     @Autowired CatalogRepository catalogRepository;
     @Autowired JdbcTemplate jdbc;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void authorCanEditDraftAndScheduledChapterWithoutLosingScheduleOrWordCount() throws Exception {
@@ -108,6 +110,7 @@ class AuthorContentEditingIntegrationTest {
                         .content("{\"title\":\"second change\",\"content\":\"second copy\"}"))
                 .andExpect(status().isConflict());
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
         mvc.perform(author(post("/api/v1/admin/reviews/1"), "admin")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"full work approved\"}"))
@@ -128,6 +131,7 @@ class AuthorContentEditingIntegrationTest {
                 .andExpect(jsonPath("$.data.reviewReason").value("命中本地敏感词，已暂停已发布章节修改并标记整书复核"));
         assertThat(auditCount("%update published chapter=1001 author=2 screened=blocked book=1%")).isEqualTo(1);
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
         mvc.perform(author(post("/api/v1/admin/reviews/1"), "admin")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":false,\"reason\":\"needs a rewrite\"}"))

@@ -15,6 +15,7 @@ import cn.edu.training.novel.domain.ContentModerationReview;
 import cn.edu.training.novel.domain.ModerationDecision;
 import cn.edu.training.novel.domain.ModerationReviewDecision;
 import cn.edu.training.novel.service.NovelStore;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -45,6 +46,7 @@ class ContentModerationReviewIntegrationTest {
 
     @Autowired NovelStore store;
     @Autowired MockMvc mvc;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void adminReviewAppendsOnlyCurrentEvidenceIncludingAlreadyPublishedChapters() throws Exception {
@@ -80,6 +82,12 @@ class ContentModerationReviewIntegrationTest {
         assertThat(currentRevisionAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
         assertThat(currentPublishedAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
+        Set<Long> expectedReviewAuditIds = new java.util.LinkedHashSet<>(expectedCurrentAuditIds);
+        store.moderationAudits("BOOK_SNAPSHOT_CHUNK", 50).stream()
+                .map(ContentModerationAudit::id)
+                .forEach(expectedReviewAuditIds::add);
+
         String reason = "current evidence approved by administrator";
         mvc.perform(post("/api/v1/admin/reviews/{bookId}", book.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
@@ -90,10 +98,10 @@ class ContentModerationReviewIntegrationTest {
                 .andExpect(jsonPath("$.data.status").value("PUBLISHED"));
 
         List<ContentModerationReview> reviews = store.moderationReviews(book.id(), 50);
-        assertThat(reviews).hasSize(2);
+        assertThat(reviews).hasSize(expectedReviewAuditIds.size());
         assertThat(reviews)
                 .extracting(ContentModerationReview::moderationAuditId)
-                .containsExactlyInAnyOrderElementsOf(expectedCurrentAuditIds);
+                .containsExactlyInAnyOrderElementsOf(expectedReviewAuditIds);
         assertThat(reviews)
                 .allSatisfy(review -> {
                     assertThat(review.bookId()).isEqualTo(book.id());
@@ -108,7 +116,7 @@ class ContentModerationReviewIntegrationTest {
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(DEVELOPMENT_PRINCIPAL, "admin"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data.length()").value(expectedReviewAuditIds.size()))
                 .andExpect(jsonPath("$.data[0].reviewerUserId").value(1))
                 .andExpect(jsonPath("$.data[0].decision").value("APPROVED"))
                 .andExpect(jsonPath("$.data[0].reason").value(reason));
@@ -126,6 +134,8 @@ class ContentModerationReviewIntegrationTest {
                 held.id(),
                 chapterHash(held.title(), held.content()));
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
+
         Book rejected = store.review(1L, book.id(), false, "rewrite required");
         Chapter returnedDraft = store.authorChapters(2L, book.id()).getFirst();
         List<ContentModerationReview> archivedReviews = store.moderationReviews(book.id(), 50);
@@ -134,8 +144,9 @@ class ContentModerationReviewIntegrationTest {
         assertThat(returnedDraft.status()).isEqualTo(ChapterStatus.DRAFT);
         assertThat(archivedReviews)
                 .extracting(ContentModerationReview::moderationAuditId)
-                .containsExactly(audit.id());
-        assertThat(archivedReviews.getFirst().decision()).isEqualTo(ModerationReviewDecision.REJECTED);
+                .contains(audit.id());
+        assertThat(archivedReviews)
+                .allSatisfy(review -> assertThat(review.decision()).isEqualTo(ModerationReviewDecision.REJECTED));
 
         store.deleteBook(2L, book.id());
 

@@ -13,6 +13,7 @@ import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.ContentModerationAudit;
 import cn.edu.training.novel.domain.ModerationDecision;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.NovelStore;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class ContentModerationWorkflowIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @Autowired ApplicationContext context;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void localSensitiveWordWinsBeforeModelAndCreatesAnAuditableHeldChapter() throws Exception {
@@ -83,6 +85,7 @@ class ContentModerationWorkflowIntegrationTest {
         assertThatThrownBy(() -> store.publishedBook(draftBook.id()))
                 .hasMessage("book not published");
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
         Book reviewed = store.review(1L, draftBook.id(), true, "站长完整作品人工审核通过");
         assertThat(reviewed.status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(catalogRepository.findPublishedChaptersByBookId(draftBook.id()))

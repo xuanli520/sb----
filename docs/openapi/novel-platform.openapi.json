@@ -486,6 +486,21 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
+    "/api/v1/author/books/{bookId}/cover": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "uploadAuthorBookCover",
+        "summary": "Upload a PNG or JPEG cover for an author-owned draft or rejected book",
+        "description": "The browser sends multipart data only through the same-origin BFF, which retains its generated boundary and CSRF protection. The backend ignores the filename and declared MIME type, validates actual PNG/JPEG bytes and dimensions, stores a random managed object key, and returns only a relative `/media/` URL. Object-store endpoints and credentials are never part of this contract.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Book",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/CoverUploadRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
     "/api/v1/author/books/{bookId}/volumes": {
       "get": {
         "tags": ["Author workspace"],
@@ -782,6 +797,19 @@
         "x-required-role": "ADMIN",
         "x-response-data-schema": "#/components/schemas/ContentModerationReviewList",
         "parameters": [{ "$ref": "#/components/parameters/RequiredBookIdQuery" }, { "$ref": "#/components/parameters/ModerationLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/moderation-snapshots": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getWholeWorkModerationSnapshots",
+        "summary": "Get safe whole-work moderation snapshot status for one book",
+        "description": "Returns queue and aggregate state only. Immutable snapshot text, chunk text, provider credentials, and untrusted model output are never exposed.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/BookModerationSnapshotList",
+        "parameters": [{ "$ref": "#/components/parameters/RequiredBookIdQuery" }, { "$ref": "#/components/parameters/SnapshotLimit" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
     },
@@ -1221,6 +1249,7 @@
       "BookLimit": { "name": "bookLimit", "in": "query", "schema": { "type": "integer", "default": 12, "minimum": 1, "maximum": 50 } },
       "ContentType": { "name": "contentType", "in": "query", "schema": { "type": "string" } },
       "ModerationLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } },
+      "SnapshotLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
       "AuditLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
       "AccountQuery": { "name": "query", "in": "query", "schema": { "type": "string" } },
       "AccountStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["ENABLED", "SUSPENDED", "ALL"] } },
@@ -1246,6 +1275,7 @@
       "RedeemRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RedeemRequest" } } } },
       "BookRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookRequest" } } } },
       "BookUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookUpdateRequest" } } } },
+      "CoverUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; filename and declared MIME type are not trusted." } }, "additionalProperties": false } } } },
       "VolumeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeRequest" } } } },
       "ChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterRequest" } } } },
       "DraftChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DraftChapterRequest" } } } },
@@ -1290,7 +1320,7 @@
         "type": "object",
         "required": ["id", "title", "author", "category", "words", "serialStatus", "synopsis", "cover", "status", "authorId", "heat", "purchasePrice"],
         "properties": {
-          "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "author": { "type": "string" }, "category": { "type": "string" }, "words": { "type": "integer" }, "serialStatus": { "type": "string" }, "synopsis": { "type": "string" }, "cover": { "type": "string" }, "status": { "type": "string", "enum": ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "NEEDS_REVIEW", "REJECTED", "OFFLINE"] }, "authorId": { "type": "integer", "format": "int64" }, "heat": { "type": "integer", "format": "int64" }, "purchasePrice": { "type": "integer", "format": "int64", "description": "Server-owned platform-token amount." }
+          "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "author": { "type": "string" }, "category": { "type": "string" }, "words": { "type": "integer" }, "serialStatus": { "type": "string" }, "synopsis": { "type": "string" }, "cover": { "type": "string", "description": "A legacy CSS color or a server-generated relative `/media/covers/<uuid>.png|jpg` path; never an object-store endpoint." }, "status": { "type": "string", "enum": ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "NEEDS_REVIEW", "REJECTED", "OFFLINE"] }, "authorId": { "type": "integer", "format": "int64" }, "heat": { "type": "integer", "format": "int64" }, "purchasePrice": { "type": "integer", "format": "int64", "description": "Server-owned platform-token amount." }
         }
       },
       "BookList": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } },
@@ -1348,10 +1378,12 @@
       "AuthorRewardRecord": { "type": "object", "required": ["id", "bookId", "bookTitle", "rewarderUserId", "tokenAmount", "rewardedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "rewarderUserId": { "type": "integer", "format": "int64" }, "tokenAmount": { "type": "integer", "format": "int64" }, "rewardedAt": { "type": "string", "format": "date-time" } } },
       "AuthorRewardSummary": { "type": "object", "required": ["rewardCount", "totalTokens", "amountUnit"], "properties": { "rewardCount": { "type": "integer", "format": "int64" }, "totalTokens": { "type": "integer", "format": "int64" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
       "AuthorRewardMetadata": { "type": "object", "required": ["total", "page", "size", "timeZone", "dateBoundary", "recordInclusion"], "properties": { "total": { "type": "integer", "format": "int64" }, "page": { "type": "integer" }, "size": { "type": "integer" }, "bookId": { "type": ["integer", "null"], "format": "int64" }, "from": { "type": ["string", "null"], "format": "date" }, "to": { "type": ["string", "null"], "format": "date" }, "timeZone": { "type": "string", "const": "Asia/Shanghai" }, "dateBoundary": { "type": "string", "const": "FROM_INCLUSIVE_TO_INCLUSIVE" }, "recordInclusion": { "type": "string", "const": "SUCCESSFUL_BOOK_REWARD_DEBIT_ONLY" } } },
-      "ContentModerationAudit": { "type": "object", "required": ["id", "contentType", "contentId", "contentVersionHash", "trigger", "provider", "model", "decision", "reason", "policyVersion", "promptVersion", "inputCharacters", "requestId", "rawResponse", "errorSummary", "simulated", "startedAt", "completedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "contentType": { "type": "string" }, "contentId": { "type": "integer", "format": "int64" }, "contentVersionHash": { "type": "string" }, "trigger": { "type": "string", "enum": ["CHAPTER_SUBMISSION", "SCHEDULED_PUBLICATION", "PUBLISHED_CHAPTER_REVISION"] }, "provider": { "type": "string" }, "model": { "type": "string" }, "decision": { "type": "string", "enum": ["PASS", "MANUAL_REVIEW", "REJECT", "LOCAL_SENSITIVE_WORD", "MODEL_UNAVAILABLE", "MODEL_ERROR", "INVALID_OUTPUT", "SIMULATED_PASS"] }, "reason": { "type": "string" }, "policyVersion": { "type": "string" }, "promptVersion": { "type": "string" }, "inputCharacters": { "type": "integer" }, "requestId": { "type": "string" }, "rawResponse": { "type": "string" }, "errorSummary": { "type": "string" }, "simulated": { "type": "boolean" }, "startedAt": { "type": "string", "format": "date-time" }, "completedAt": { "type": "string", "format": "date-time" } } },
+      "ContentModerationAudit": { "type": "object", "required": ["id", "contentType", "contentId", "contentVersionHash", "trigger", "provider", "model", "decision", "reason", "policyVersion", "promptVersion", "inputCharacters", "requestId", "rawResponse", "errorSummary", "simulated", "startedAt", "completedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "contentType": { "type": "string" }, "contentId": { "type": "integer", "format": "int64" }, "contentVersionHash": { "type": "string" }, "trigger": { "type": "string", "enum": ["CHAPTER_SUBMISSION", "SCHEDULED_PUBLICATION", "PUBLISHED_CHAPTER_REVISION", "BOOK_SNAPSHOT"] }, "provider": { "type": "string" }, "model": { "type": "string" }, "decision": { "type": "string", "enum": ["PASS", "MANUAL_REVIEW", "REJECT", "LOCAL_SENSITIVE_WORD", "MODEL_UNAVAILABLE", "MODEL_ERROR", "INVALID_OUTPUT", "SIMULATED_PASS"] }, "reason": { "type": "string" }, "policyVersion": { "type": "string" }, "promptVersion": { "type": "string" }, "inputCharacters": { "type": "integer" }, "requestId": { "type": "string" }, "rawResponse": { "type": "string" }, "errorSummary": { "type": "string" }, "simulated": { "type": "boolean" }, "startedAt": { "type": "string", "format": "date-time" }, "completedAt": { "type": "string", "format": "date-time" } } },
       "ContentModerationAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/ContentModerationAudit" } },
       "ContentModerationReview": { "type": "object", "required": ["id", "bookId", "moderationAuditId", "reviewerUserId", "decision", "reason", "reviewedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "moderationAuditId": { "type": "integer", "format": "int64" }, "reviewerUserId": { "type": "integer", "format": "int64" }, "decision": { "type": "string", "enum": ["APPROVED", "REJECTED"] }, "reason": { "type": "string" }, "reviewedAt": { "type": "string", "format": "date-time" } } },
       "ContentModerationReviewList": { "type": "array", "items": { "$ref": "#/components/schemas/ContentModerationReview" } },
+      "BookModerationSnapshot": { "type": "object", "required": ["id", "bookId", "contentVersionHash", "status", "aggregateDecision", "aggregateReason", "totalChunks", "completedChunks", "current", "createdAt", "completedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "contentVersionHash": { "type": "string", "description": "SHA-256 hash of the immutable whole-work version; no work text is exposed." }, "status": { "type": "string", "enum": ["QUEUED", "PROCESSING", "COMPLETED", "STALE"] }, "aggregateDecision": { "type": ["string", "null"], "enum": ["PASS", "MANUAL_REVIEW", "REJECT", null] }, "aggregateReason": { "type": ["string", "null"] }, "totalChunks": { "type": "integer", "minimum": 1 }, "completedChunks": { "type": "integer", "minimum": 0 }, "current": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" }, "completedAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "BookModerationSnapshotList": { "type": "array", "items": { "$ref": "#/components/schemas/BookModerationSnapshot" } },
       "AdminDashboard": { "type": "object", "required": ["activeReaders", "todayReads", "publishedBooks", "pendingReviews", "auditLog"], "properties": { "activeReaders": { "type": "integer" }, "todayReads": { "type": "integer" }, "publishedBooks": { "type": "integer" }, "pendingReviews": { "type": "integer" }, "auditLog": { "type": "array", "items": {} } } },
       "AdminAccount": { "type": "object", "required": ["id", "loginName", "displayName", "roles", "enabled", "createdAt", "updatedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "loginName": { "type": "string" }, "displayName": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } }, "enabled": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
       "AdminAccountPage": { "type": "object", "required": ["items", "total", "page", "size"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AdminAccount" } }, "total": { "type": "integer", "format": "int64" }, "page": { "type": "integer" }, "size": { "type": "integer" } } },

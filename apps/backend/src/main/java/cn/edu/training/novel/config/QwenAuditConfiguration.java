@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 @EnableConfigurationProperties({
         QwenAuditProperties.class,
         ContentModerationProperties.class,
+        FullBookModerationProperties.class,
         NovelRuntimeProperties.class
 })
 public class QwenAuditConfiguration {

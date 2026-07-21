@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
+import { BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, ImageUp, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/app/components/ui/alert-dialog';
 import { Badge } from '@/app/components/ui/badge';
@@ -16,6 +16,7 @@ import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, Tabl
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
 import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
+import { BookCover } from '@/components/novel/BookCover';
 import { AuthorAnalyticsReport, AuthorCommentPage, Book, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
@@ -293,6 +294,7 @@ export default function AuthorPage() {
   const [bookEditCategory, setBookEditCategory] = useState(bookCategories[0]);
   const [bookEditSynopsis, setBookEditSynopsis] = useState('');
   const [bookEditSerialStatus, setBookEditSerialStatus] = useState(serialStatuses[0]);
+  const [bookCoverFile, setBookCoverFile] = useState<File>();
   const [editingChapter, setEditingChapter] = useState<AuthorChapter>();
   const [chapterEditTitle, setChapterEditTitle] = useState('');
   const [chapterEditContent, setChapterEditContent] = useState('');
@@ -312,6 +314,7 @@ export default function AuthorPage() {
   const annotationRequestId = useRef(0);
   const rewardRequestId = useRef(0);
   const analyticsRequestId = useRef(0);
+  const bookCoverInputRef = useRef<HTMLInputElement>(null);
 
   const loadBooks = useCallback(async () => {
     setLoading(true);
@@ -546,12 +549,16 @@ export default function AuthorPage() {
     setBookEditCategory(book.category);
     setBookEditSynopsis(book.synopsis);
     setBookEditSerialStatus(normalizedSerialStatus(book.serialStatus));
+    setBookCoverFile(undefined);
+    if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
     setEditError('');
   };
 
   const closeBookEditor = () => {
-    if (pendingAction === 'update-book') return;
+    if (pendingAction === 'update-book' || pendingAction === 'upload-cover') return;
     setEditingBook(undefined);
+    setBookCoverFile(undefined);
+    if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
     setEditError('');
   };
 
@@ -584,6 +591,34 @@ export default function AuthorPage() {
       const message = failureMessage(reason, '服务暂时无法保存作品信息。');
       setEditError(`作品信息未保存：${message}`);
       announce(`作品信息未保存：${message}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const uploadBookCover = async () => {
+    if (!editingBook || !bookCoverFile) {
+      setEditError('请先选择 PNG 或 JPEG 封面文件。');
+      return;
+    }
+    setPendingAction('upload-cover');
+    setEditError('');
+    try {
+      const form = new FormData();
+      form.append('file', bookCoverFile);
+      const updated = await novelApi<Book>(`author/books/${editingBook.id}/cover`, 'author', {
+        method: 'POST',
+        body: form,
+      });
+      setBooks((current) => current.map((book) => book.id === updated.id ? updated : book));
+      setEditingBook(updated);
+      setBookCoverFile(undefined);
+      if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
+      announce(`《${updated.title}》的新封面已上传`);
+    } catch (reason) {
+      const message = failureMessage(reason, '服务暂时无法上传封面。');
+      setEditError(`封面未上传：${message}`);
+      announce(`封面未上传：${message}`, 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -1499,9 +1534,21 @@ export default function AuthorPage() {
               <Label htmlFor="edit-book-synopsis" className="text-stone-700">作品简介</Label>
               <Textarea id="edit-book-synopsis" aria-label="编辑作品简介" required value={bookEditSynopsis} onChange={(event) => setBookEditSynopsis(event.target.value)} className="mt-2 h-32 resize-y rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
             </div>
+            <div className="mt-5 border-t border-stone-200 pt-5">
+              <div className="flex gap-4">
+                <BookCover cover={editingBook?.cover} title={editingBook?.title ?? '作品'} category={editingBook?.category} showLabel={false} className="h-24 w-16 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <Label htmlFor="edit-book-cover" className="text-stone-700">作品封面</Label>
+                  <Input ref={bookCoverInputRef} id="edit-book-cover" aria-label="上传作品封面" type="file" accept="image/png,image/jpeg" onChange={(event) => setBookCoverFile(event.target.files?.[0])} disabled={pendingAction !== undefined} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+                  <p className="mt-2 text-xs leading-5 text-stone-500">仅 PNG 或 JPEG，最大 5 MB；上传后由服务端验证图片内容。</p>
+                  {bookCoverFile ? <p className="mt-1 truncate text-xs text-stone-600">已选择：{bookCoverFile.name}</p> : null}
+                  <Button type="button" variant="outline" onClick={() => void uploadBookCover()} disabled={!bookCoverFile || pendingAction !== undefined} className="mt-3 h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><ImageUp size={16} aria-hidden="true" />{pendingAction === 'upload-cover' ? '上传中' : '上传新封面'}</Button>
+                </div>
+              </div>
+            </div>
             <DialogFooter className="mt-6">
-              <Button type="button" variant="outline" onClick={closeBookEditor} disabled={pendingAction === 'update-book'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
-              <Button type="submit" disabled={pendingAction === 'update-book'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-book' ? '保存中' : '保存作品信息'}</Button>
+              <Button type="button" variant="outline" onClick={closeBookEditor} disabled={pendingAction === 'update-book' || pendingAction === 'upload-cover'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
+              <Button type="submit" disabled={pendingAction === 'update-book' || pendingAction === 'upload-cover'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-book' ? '保存中' : '保存作品信息'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

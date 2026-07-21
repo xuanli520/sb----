@@ -18,3 +18,6 @@ novel:
       # Test-only, explicit development simulation. It exercises the normal pass lifecycle without
       # constructing or calling a remote Qwen client. Production configuration remains fail closed.
       development-simulation-enabled: true
+    full-book:
+      # Snapshot tests invoke the worker directly; no background test thread may race assertions.
+      scheduler-enabled: false

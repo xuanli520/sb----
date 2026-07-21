@@ -209,7 +209,8 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const endpoint = String(input).replace('/api/novel/', '');
     const method = (init?.method ?? 'GET').toUpperCase();
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+    const multipart = typeof FormData !== 'undefined' && init?.body instanceof FormData ? init.body : undefined;
+    const body = init?.body && !multipart ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
 
     if (method === 'GET' && endpoint === 'author/books') return Promise.resolve(response(bookItems));
 
@@ -268,6 +269,16 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       const bookId = Number(bookDetail[1]);
       bookItems = bookItems.filter((book) => book.id !== bookId);
       return Promise.resolve(response({ id: bookId, deleted: true }));
+    }
+
+    const coverUpload = endpoint.match(/^author\/books\/(\d+)\/cover$/);
+    if (method === 'POST' && coverUpload) {
+      const bookId = Number(coverUpload[1]);
+      const item = bookItems.find((book) => book.id === bookId);
+      if (!item || !multipart?.get('file')) return Promise.resolve(rejected('cover image file is required'));
+      const updated = { ...item, cover: '/media/covers/11111111-1111-1111-1111-111111111111.png' };
+      bookItems = bookItems.map((book) => book.id === bookId ? updated : book);
+      return Promise.resolve(response(updated));
     }
 
     const volumeList = endpoint.match(/^author\/books\/(\d+)\/volumes$/);
@@ -590,6 +601,29 @@ describe('author manuscript workspace', () => {
     await screen.findByText('《夜航新岸》的作品信息已保存');
     expect(screen.getByText('夜航新岸')).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: '修改作品信息' })).toBeNull();
+  });
+
+  it('uploads a selected author cover as multipart without forcing a JSON content type', async () => {
+    const fetchMock = mockAuthorApi();
+    render(<AuthorPage />);
+
+    await screen.findByRole('button', { name: '编辑作品《夜航南岸》' });
+    fireEvent.click(screen.getByRole('button', { name: '编辑作品《夜航南岸》' }));
+    const file = new File(['actual-image-bytes'], 'cover.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('上传作品封面'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: '上传新封面' }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([input]) => String(input) === '/api/novel/author/books/2/cover');
+      expect(call).toBeDefined();
+      const init = call?.[1] as RequestInit;
+      expect(init.method).toBe('POST');
+      expect(init.body).toBeInstanceOf(FormData);
+      expect((init.body as FormData).get('file')).toBe(file);
+      expect(new Headers(init.headers).has('content-type')).toBe(false);
+    });
+    await screen.findByText('《夜航南岸》的新封面已上传');
+    expect(screen.getByRole('img', { name: '《夜航南岸》封面' }).getAttribute('src')).toBe('/media/covers/11111111-1111-1111-1111-111111111111.png');
   });
 
   it('edits a scheduled chapter without losing its scheduled publication state', async () => {

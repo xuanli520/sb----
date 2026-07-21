@@ -17,6 +17,7 @@ import cn.edu.training.novel.service.OperationsRepository;
 import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,6 +37,7 @@ class ReaderPersistenceIntegrationTest {
     @Autowired AuthService authService;
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void readerStateSurvivesFreshRepositoryAndServiceLookup() {
@@ -72,7 +74,8 @@ class ReaderPersistenceIntegrationTest {
                 operationsRepository,
                 authService,
                 contentModerationService,
-                contentModerationReviewService);
+                contentModerationReviewService,
+                bookModerationSnapshotService);
 
         assertThat(reloadedStore.shelf(readerId)).containsExactly(1L);
         assertThat(reloadedStore.pointBalance(readerId)).isEqualTo(10);

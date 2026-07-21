@@ -15,6 +15,7 @@ import cn.edu.training.novel.domain.Comment;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.ContentModerationService;
 import cn.edu.training.novel.service.ContentModerationReviewService;
@@ -58,6 +59,7 @@ class OperationsPersistenceIntegrationTest {
     @Autowired AuthService authService;
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
     @Autowired AuditTrail auditTrail;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired MockMvc mvc;
@@ -270,7 +272,8 @@ class OperationsPersistenceIntegrationTest {
                 new OperationsRepository(jdbcTemplate),
                 authService,
                 contentModerationService,
-                contentModerationReviewService);
+                contentModerationReviewService,
+                bookModerationSnapshotService);
     }
 
     private static void awaitLatch(CountDownLatch latch) {

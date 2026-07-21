@@ -15,6 +15,7 @@ import cn.edu.training.novel.service.OperationsRepository;
 import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.BookModerationSnapshotService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,7 @@ class CatalogPersistenceIntegrationTest {
     @Autowired AuthService authService;
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
+    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
     @Autowired JdbcTemplate jdbcTemplate;
 
     @Test
@@ -60,7 +62,8 @@ class CatalogPersistenceIntegrationTest {
                 operationsRepository,
                 authService,
                 contentModerationService,
-                contentModerationReviewService);
+                contentModerationReviewService,
+                bookModerationSnapshotService);
         Book reloadedBook = recreatedStore.book(draft.id());
         List<Chapter> reloadedChapters = reloadedRepository.findChaptersByBookId(draft.id());
 
@@ -68,6 +71,7 @@ class CatalogPersistenceIntegrationTest {
         assertThat(reloadedBook.status()).isEqualTo(BookStatus.PENDING_REVIEW);
         assertThat(reloadedChapters).containsExactly(chapter);
 
+        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
         recreatedStore.review(1L, draft.id(), true, "人工审核通过");
 
         assertThat(reloadedRepository.findPublished("持久化", "科幻", "连载中"))

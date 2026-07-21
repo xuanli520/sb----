@@ -139,9 +139,10 @@ export type AuthorAnalyticsReport = {
   };
 };
 function csrfToken(){return typeof document==='undefined'?'':document.cookie.split('; ').find(item=>item.startsWith('novel_csrf='))?.slice('novel_csrf='.length)||'';}
+function isFormDataBody(body: BodyInit | null | undefined): body is FormData { return typeof FormData !== 'undefined' && body instanceof FormData; }
 export async function novelApi<T>(path:string, _role='reader', init:RequestInit={}):Promise<T> {
   // The BFF derives identity from the server-side session. Retain this argument
   // temporarily so existing role-aware call sites do not transmit a spoofable role.
   void _role;
-  const method=(init.method||'GET').toUpperCase();const headers=new Headers(init.headers);headers.set('Content-Type','application/json');if(['POST','PUT','PATCH','DELETE'].includes(method))headers.set('X-Novel-CSRF',csrfToken());const response=await fetch(`/api/novel/${path}`,{...init,headers});const body=await response.json();if(!response.ok)throw new Error(body.msg||'请求失败');return body.data as T;
+  const method=(init.method||'GET').toUpperCase();const headers=new Headers(init.headers);if(!isFormDataBody(init.body)&&!headers.has('Content-Type'))headers.set('Content-Type','application/json');if(['POST','PUT','PATCH','DELETE'].includes(method))headers.set('X-Novel-CSRF',csrfToken());const response=await fetch(`/api/novel/${path}`,{...init,headers});const body=await response.json();if(!response.ok)throw new Error(body.msg||'请求失败');return body.data as T;
 }

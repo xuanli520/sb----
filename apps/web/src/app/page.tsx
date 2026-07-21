@@ -17,6 +17,7 @@ import { Input } from '@/app/components/ui/input';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
 import { InlineNotice, NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
+import { BookCover } from '@/components/novel/BookCover';
 import {
   type Book,
   type DiscoveryWordCountRange,
@@ -404,10 +405,7 @@ export default function BookstorePage() {
           <div id="books" className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {books.map((book) => (
               <Card key={book.id} className="group grid min-h-56 grid-cols-[88px_minmax(0,1fr)] gap-4 rounded-none border-stone-200 bg-white p-4 transition-colors hover:border-emerald-700">
-                <div className="flex min-h-44 flex-col justify-between p-3 text-white" style={{ backgroundColor: book.cover }}>
-                  <span className="text-xs font-semibold text-white/80">{book.category}</span>
-                  <span className="text-sm font-semibold leading-5">{book.title.slice(0, 4)}</span>
-                </div>
+                <BookCover cover={book.cover} title={book.title} category={book.category} className="min-h-44" />
                 <CardContent className="flex min-w-0 flex-col p-0 [&:last-child]:pb-0">
                   <p className="text-xs font-medium text-emerald-700">{book.category} · {book.serialStatus}</p>
                   <h3 className="mt-1 truncate text-lg font-semibold text-stone-950">{highlightText(book.title, filters.query)}</h3>

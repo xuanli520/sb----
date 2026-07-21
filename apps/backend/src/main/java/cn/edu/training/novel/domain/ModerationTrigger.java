@@ -4,5 +4,6 @@ package cn.edu.training.novel.domain;
 public enum ModerationTrigger {
     CHAPTER_SUBMISSION,
     SCHEDULED_PUBLICATION,
-    PUBLISHED_CHAPTER_REVISION
+    PUBLISHED_CHAPTER_REVISION,
+    BOOK_SNAPSHOT
 }

@@ -17,6 +17,7 @@ public class NovelStore {
     private final AuthService authService;
     private final ContentModerationService contentModerationService;
     private final ContentModerationReviewService contentModerationReviewService;
+    private final BookModerationSnapshotService bookModerationSnapshotService;
     public NovelStore(
             AuditTrail auditTrail,
             CatalogRepository catalogRepository,
@@ -26,7 +27,8 @@ public class NovelStore {
             OperationsRepository operationsRepository,
             AuthService authService,
             ContentModerationService contentModerationService,
-            ContentModerationReviewService contentModerationReviewService) {
+            ContentModerationReviewService contentModerationReviewService,
+            BookModerationSnapshotService bookModerationSnapshotService) {
         this.auditTrail = auditTrail;
         this.catalogRepository = catalogRepository;
         this.walletRepository = walletRepository;
@@ -36,6 +38,7 @@ public class NovelStore {
         this.authService = authService;
         this.contentModerationService = contentModerationService;
         this.contentModerationReviewService = contentModerationReviewService;
+        this.bookModerationSnapshotService = bookModerationSnapshotService;
     }
     public List<Book> published(String query, String category, String status) {
         return catalogRepository.findPublished(query, category, status);
@@ -479,7 +482,11 @@ public class NovelStore {
                     "",
                     chapter.orderNo());
             catalogRepository.updateChapter(updated);
-            catalogRepository.updateBook(copyBook(book, words, book.status()));
+            Book updatedBook = copyBook(book, words, book.status());
+            catalogRepository.updateBook(updatedBook);
+            if (awaitingFullWorkReview(updatedBook.status())) {
+                queueWholeWorkSnapshot(updatedBook);
+            }
             audit("update chapter=" + updated.id() + " author=" + userId + " state=" + updated.status());
             return updated;
         }
@@ -506,7 +513,9 @@ public class NovelStore {
                         : chapterRevisionReviewReason(moderation),
                 chapter.orderNo());
         catalogRepository.updateChapter(queuedRevision);
-        catalogRepository.updateBook(copyBook(book, words, BookStatus.NEEDS_REVIEW));
+        Book queuedBook = copyBook(book, words, BookStatus.NEEDS_REVIEW);
+        catalogRepository.updateBook(queuedBook);
+        queueWholeWorkSnapshot(queuedBook);
         audit("update published chapter=" + queuedRevision.id() + " author=" + userId
                 + " screened=" + (localSensitiveHit ? "blocked" : moderation.decision().name()) + " book=" + book.id());
         return queuedRevision;
@@ -523,7 +532,11 @@ public class NovelStore {
             throw new IllegalStateException("chapter has reader records and cannot be deleted");
         }
         catalogRepository.deleteChapter(chapter.id());
-        catalogRepository.updateBook(copyBook(book, updatedWordCount(book.words(), chapter.content(), ""), book.status()));
+        Book updatedBook = copyBook(book, updatedWordCount(book.words(), chapter.content(), ""), book.status());
+        catalogRepository.updateBook(updatedBook);
+        if (awaitingFullWorkReview(updatedBook.status())) {
+            queueWholeWorkSnapshot(updatedBook);
+        }
         audit("delete chapter=" + chapter.id() + " author=" + userId + " book=" + book.id());
     }
 
@@ -564,7 +577,11 @@ public class NovelStore {
                 "",
                 catalogRepository.nextChapterOrder(bookId)));
         if (!submit) {
-            catalogRepository.updateBook(copyBook(book, addWords(book.words(), normalizedContent.length()), book.status()));
+            Book updatedBook = copyBook(book, addWords(book.words(), normalizedContent.length()), book.status());
+            catalogRepository.updateBook(updatedBook);
+            if (awaitingFullWorkReview(updatedBook.status())) {
+                queueWholeWorkSnapshot(updatedBook);
+            }
             audit("chapter=" + draft.id() + " state=" + ChapterStatus.DRAFT);
             return draft;
         }
@@ -587,7 +604,9 @@ public class NovelStore {
                 chapterSubmissionReviewReason(moderation),
                 draft.orderNo());
         Chapter persisted = catalogRepository.updateChapter(submitted);
-        catalogRepository.updateBook(copyBook(book, addWords(book.words(), normalizedContent.length()), bookStatus));
+        Book submittedBook = copyBook(book, addWords(book.words(), normalizedContent.length()), bookStatus);
+        catalogRepository.updateBook(submittedBook);
+        queueWholeWorkSnapshot(submittedBook);
         audit("chapter=" + persisted.id() + " state=" + chapterStatus + " moderation=" + moderation.decision());
         return persisted;
     }
@@ -618,7 +637,9 @@ public class NovelStore {
                 chapterSubmissionReviewReason(moderation),
                 chapter.orderNo());
         Chapter persisted = catalogRepository.updateChapter(submitted);
-        catalogRepository.updateBook(copyBook(book, book.words(), bookStatus));
+        Book submittedBook = copyBook(book, book.words(), bookStatus);
+        catalogRepository.updateBook(submittedBook);
+        queueWholeWorkSnapshot(submittedBook);
         audit("submit chapter=" + persisted.id() + " author=" + userId + " state=" + chapterStatus
                 + " moderation=" + moderation.decision());
         return persisted;
@@ -722,7 +743,9 @@ public class NovelStore {
                         scheduledPublicationReviewReason(moderation),
                         chapter.orderNo());
                 catalogRepository.updateChapter(held);
-                catalogRepository.updateBook(copyBook(book, book.words(), BookStatus.NEEDS_REVIEW));
+                Book heldBook = copyBook(book, book.words(), BookStatus.NEEDS_REVIEW);
+                catalogRepository.updateBook(heldBook);
+                queueWholeWorkSnapshot(heldBook);
                 audit("scheduled chapter=" + held.id() + " blocked="
                         + (moderation.decision() == ModerationDecision.LOCAL_SENSITIVE_WORD
                                 ? "sensitive-word"
@@ -754,6 +777,7 @@ public class NovelStore {
         Book book = lockedOwned(userId, bookId);
         Book updated = copyBook(book, book.words(), BookStatus.PENDING_REVIEW);
         catalogRepository.updateBook(updated);
+        queueWholeWorkSnapshot(updated);
         audit("submit book=" + updated.id() + " author=" + userId);
         return updated;
     }
@@ -769,8 +793,14 @@ public class NovelStore {
         }
         String normalizedReason = requireTextAtMost(reason, "review reason is required", 900);
         List<Chapter> chapters = catalogRepository.findChaptersByBookIdForUpdate(book.id());
-        contentModerationReviewService.recordCurrentChapterEvidence(
-                book.id(), reviewerUserId, approve, normalizedReason, chapters);
+        BookModerationSnapshot snapshot = bookModerationSnapshotService.requireCurrentTerminalSnapshot(book, chapters);
+        contentModerationReviewService.recordCurrentBookEvidence(
+                book.id(),
+                reviewerUserId,
+                approve,
+                normalizedReason,
+                chapters,
+                bookModerationSnapshotService.completedAuditIds(snapshot));
         for (Chapter chapter : chapters) {
             if (chapter.status() != ChapterStatus.NEEDS_REVIEW) {
                 continue;
@@ -817,6 +847,9 @@ public class NovelStore {
     public List<ContentModerationReview> moderationReviews(long bookId, int limit) {
         return contentModerationReviewService.recentReviews(bookId, limit);
     }
+    public List<BookModerationSnapshot> moderationSnapshots(long bookId, int limit) {
+        return bookModerationSnapshotService.recentSnapshots(bookId, limit);
+    }
     private Book owned(long userId,long bookId) { Book b=book(bookId); if(b.authorId()!=userId) throw new SecurityException("resource does not belong to current author"); return b; }
     private Book lockedOwned(long userId,long bookId) { Book b=lockedBook(bookId); if(b.authorId()!=userId) throw new SecurityException("resource does not belong to current author"); return b; }
     private Book lockedBook(long bookId) { return catalogRepository.findByIdForUpdate(bookId).orElseThrow(()->new NoSuchElementException("book not found")); }
@@ -835,6 +868,15 @@ public class NovelStore {
             throw new SecurityException("chapter does not belong to current book");
         }
         return chapter;
+    }
+    /** Caller holds the book lock; acquiring all chapter locks makes the copied version atomic. */
+    private void queueWholeWorkSnapshot(Book book) {
+        bookModerationSnapshotService.queueCurrentSnapshot(
+                book,
+                catalogRepository.findChaptersByBookIdForUpdate(book.id()));
+    }
+    private static boolean awaitingFullWorkReview(BookStatus status) {
+        return status == BookStatus.PENDING_REVIEW || status == BookStatus.NEEDS_REVIEW;
     }
     /** A model result may release a chapter, but only a human review can set a book to PUBLISHED. */
     private static BookStatus nextBookStatusForChapterSubmission(

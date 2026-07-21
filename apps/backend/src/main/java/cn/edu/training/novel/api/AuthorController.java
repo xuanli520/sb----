@@ -11,14 +11,19 @@ import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController @RequestMapping("/api/v1/author")
 public class AuthorController implements UserResolver {
     private final NovelStore store;
-    public AuthorController(NovelStore store){this.store=store;}
+    private final CoverUploadService coverUploadService;
+    public AuthorController(NovelStore store, CoverUploadService coverUploadService){this.store=store;this.coverUploadService=coverUploadService;}
     @GetMapping("/books") ApiResponse<List<Book>> list(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.authorBooks(u.id()));}
     @PostMapping("/books") ApiResponse<Book> create(HttpServletRequest request,@Valid @RequestBody BookRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.createBook(u.id(),body.title(),body.category(),body.synopsis()));}
     @PutMapping("/books/{bookId}") ApiResponse<Book> updateBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookUpdateRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.updateBookMetadata(u.id(),bookId,body.title(),body.category(),body.synopsis(),body.serialStatus(),body.cover()));}
+    @PostMapping(path="/books/{bookId}/cover", consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    ApiResponse<Book> uploadCover(HttpServletRequest request,@PathVariable long bookId,@RequestPart("file") MultipartFile file){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(coverUploadService.upload(u.id(),bookId,file));}
     @DeleteMapping("/books/{bookId}") ApiResponse<DeleteResult> deleteBook(HttpServletRequest request,@PathVariable long bookId){CurrentUser u=current(request);u.require(Role.AUTHOR);store.deleteBook(u.id(),bookId);return ApiResponse.ok(new DeleteResult(bookId,true));}
     @GetMapping("/books/{bookId}/volumes") ApiResponse<List<Volume>> volumes(HttpServletRequest request,@PathVariable long bookId){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.authorVolumes(u.id(),bookId));}
     @PostMapping("/books/{bookId}/volumes") ApiResponse<Volume> createVolume(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody VolumeRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.createVolume(u.id(),bookId,body.title()));}
