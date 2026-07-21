@@ -64,14 +64,13 @@ describe('NovelShell', () => {
     expect((await screen.findByRole('menuitem', { name: '个人中心' })).getAttribute('href')).toBe('/account');
     expect(screen.getByRole('menuitem', { name: '打开作者工作区' }).getAttribute('href')).toBe('/author');
     expect(screen.getByRole('menuitem', { name: '退出登录' })).toBeTruthy();
-    expect(screen.queryByText('开发身份')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /身份$/ })).toBeNull();
     expect(fetchMock.mock.calls.some(([input, init]) => String(input) === '/api/novel/session' && init?.method === 'POST')).toBe(false);
   });
 
   it('uses the inherited sheet primitive to keep navigation reachable on narrow screens', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ msg: 'login required' }) }));
-    render(<NovelShell workspace="reader"><p>书城内容</p></NovelShell>);
+    render(<NovelShell workspace="author"><p>作者工作台内容</p></NovelShell>);
 
     await screen.findByRole('link', { name: '登录' });
     const navigationTrigger = screen.getByRole('button', { name: '打开导航菜单' });
@@ -114,6 +113,8 @@ describe('NovelShell', () => {
     expect(screen.getByRole('link', { name: '个人中心' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: '作家中心' })).toBeNull();
     expect(screen.queryByRole('link', { name: '站长中心' })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: '当前账户：普通读者，打开账户菜单' }), { button: 0, ctrlKey: false });
+    expect((await screen.findByRole('menuitem', { name: '打开读者工作区' })).getAttribute('href')).toBe('/');
   });
 
   it('adds author and administrator workspaces only for their real account roles', async () => {

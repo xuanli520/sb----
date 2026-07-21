@@ -241,7 +241,7 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
           <MobileNavigation pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} accountName={account?.name} />
           {sessionStatus !== 'checking' ? <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" /> : null}
           {sessionStatus === 'anonymous' ? <AuthenticationActions /> : null}
-          {authenticated && account ? <AccountMenu workspace={workspace} account={account} loggingOut={loggingOut} onLogout={logout} /> : null}
+          {authenticated && account ? <AccountMenu workspace={workspace} permittedWorkspaces={permittedWorkspaces} account={account} loggingOut={loggingOut} onLogout={logout} /> : null}
         </div>
       </div>
       {loggingOut ? <p className="sr-only" role="status">正在退出登录</p> : null}
@@ -369,16 +369,19 @@ function AuthenticationActions() {
 
 function AccountMenu({
   workspace,
+  permittedWorkspaces,
   account,
   loggingOut,
   onLogout,
 }: {
   workspace: Workspace;
+  permittedWorkspaces: Set<Workspace>;
   account: AuthenticatedAccount;
   loggingOut: boolean;
   onLogout: () => Promise<void>;
 }) {
-  const workspaceLabel = `${workspaceLabels[workspace]}工作区`;
+  const currentWorkspace = permittedWorkspaces.has(workspace) ? workspace : 'reader';
+  const workspaceLabel = `${workspaceLabels[currentWorkspace]}工作区`;
   const avatarInitial = account.name.slice(0, 1);
 
   return (
@@ -411,7 +414,7 @@ function AccountMenu({
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link href={workspaceDestinations[workspace]}>
+          <Link href={workspaceDestinations[currentWorkspace]}>
             <BookOpenText size={16} aria-hidden="true" />
             打开{workspaceLabel}
           </Link>
