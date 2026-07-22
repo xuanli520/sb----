@@ -40,14 +40,18 @@ NOVEL_PUBLIC_ORIGIN=https://novel.example.com
 变量。
 
 `minio-init` 幂等创建 `novel-covers` 桶、设置该桶匿名下载，并绑定写入账户的最小策略。
-这并不将 MinIO 公开：服务只在 `object-storage` 内部网络，Nginx 是唯一的公开入口，且
-只允许 `GET /media/...`，会移除浏览器携带的 `Authorization`、Cookie 和转发身份头。
-Nginx 将 `/media/covers/<uuid>.png|jpg` 映射到该固定桶；不要把 MinIO endpoint 或桶名
-改写进 `Book.cover`。
+它只将“写入账户已存在”视为可重试状态；随后会用部署中提供的账户和密钥实际写入并删除
+受限前缀下的探针对象。因此，错误的根凭据、已有账户的错误密钥或策略绑定失败都会让初始化
+失败，而不会让后端带着不可用的写入凭据启动。这并不将 MinIO 公开：服务只在
+`object-storage` 内部网络，Nginx 是唯一的公开入口，且只允许
+`GET /media/covers/<uuid>.png|jpg`，会移除浏览器携带的 `Authorization`、Cookie 和转发身份头。
+所有其他 `/media` 路径及非 GET 方法都会被 Nginx 拒绝；不要把 MinIO endpoint 或桶名改写进
+`Book.cover`。
 
 后端端点只允许作者上传自己处于草稿或驳回状态作品的单个 `file` multipart 字段。它不会
 信任 filename 或请求 MIME，而是以 ImageIO 解码验证 PNG/JPEG、5 MiB 字节上限、4096x4096
-尺寸和像素上限。配置关闭、不完整或存储不可用时会返回明确的 `503`，不会降级为本地磁盘。
+尺寸和像素上限。Nginx 也以 `client_max_body_size 5m` 在 BFF 前拒绝超过该传输边界的请求。
+配置关闭、不完整或存储不可用时会返回明确的 `503`，不会降级为本地磁盘。
 每次上传使用随机对象键；数据库更新回滚会补偿删除新对象，旧对象只在事务提交后删除，且
 只会删除本系统生成的 `/media/covers/<uuid>` URL。旧的 CSS 颜色封面保持兼容。
 
@@ -61,9 +65,10 @@ docker compose ps
 curl --fail http://127.0.0.1:${HTTP_PORT:-80}/api/healthz
 ```
 
-MySQL、Redis 和 MinIO 使用各自的原生命令健康检查。MinIO 初始化完成后后端才启动；后端通过
-`/actuator/health`，Web 通过 `/api/healthz`，Nginx 通过 `/nginx-health` 检查；Web
-会等待后端和 Redis 健康后启动，Nginx 会等待 Web 健康后启动。浏览器认证只能在真实
+MySQL、Redis 和 MinIO 使用各自的原生命令健康检查，并以 `unless-stopped` 重启策略维持持久化
+服务。MinIO 初始化完成后后端才启动；后端通过 `/actuator/health`，Web 通过 `/api/healthz`，
+Nginx 通过 `/nginx-health` 检查；Web 会等待后端和 Redis 健康后启动，Nginx 会等待 Web
+健康后启动。Web 运行镜像以无特权 `novel` 用户执行。浏览器认证只能在真实
 HTTPS origin 下验证，HTTP 健康检查不代表生产 Cookie/CSRF 配置已验收。
 
 运行静态部署检查：

@@ -1,11 +1,13 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.ManagedRedemptionCode;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
-import java.time.temporal.ChronoUnit;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -80,6 +82,26 @@ public class WalletRepository {
                 (resultSet, rowNumber) -> resultSet.getLong(1),
                 userId);
         return balances.isEmpty() ? 0 : asApiBalance(balances.getFirst());
+    }
+
+    /** A durable book entitlement is sufficient even when its original redemption has expired. */
+    public boolean hasBookEntitlement(long userId, long bookId) {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_book_entitlement WHERE user_id = ? AND book_id = ?",
+                Long.class,
+                userId,
+                bookId);
+        return count != null && count > 0;
+    }
+
+    /** Membership grants reader access only while its server-owned expiration is still in the future. */
+    public boolean hasActiveMembership(long userId, Instant now) {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_membership_entitlement WHERE user_id = ? AND expires_at > ?",
+                Long.class,
+                userId,
+                Timestamp.from(now));
+        return count != null && count > 0;
     }
 
     /** Adds tokens and creates the matching append-only ledger entry while holding the wallet row lock. */
@@ -283,6 +305,33 @@ public class WalletRepository {
             // Keep the exception inside this participating transaction. Letting it escape a
             // MANDATORY proxy marks the outer transaction rollback-only before it can replay.
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Conditionally adds a pending reward to its reader's Shanghai calendar-day allocation. The
+     * conditional update is the durable concurrency boundary; a later debit failure rolls this
+     * reservation back with the reward record and token ledger mutation.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void reserveRewardDailyQuota(long userId, LocalDate usageDate, long amount, long dailyLimit) {
+        if (amount <= 0 || dailyLimit <= 0 || amount > dailyLimit) {
+            throw new IllegalArgumentException("reward daily quota reservation is invalid");
+        }
+        jdbc.update(
+                "INSERT INTO novel_reward_daily_usage(user_id, usage_date, used_tokens, updated_at) "
+                        + "VALUES (?, ?, 0, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE user_id = user_id",
+                userId,
+                Date.valueOf(usageDate));
+        int changed = jdbc.update(
+                "UPDATE novel_reward_daily_usage SET used_tokens = used_tokens + ?, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE user_id = ? AND usage_date = ? AND used_tokens <= ?",
+                amount,
+                userId,
+                Date.valueOf(usageDate),
+                dailyLimit - amount);
+        if (changed != 1) {
+            throw new IllegalStateException("daily reward limit reached");
         }
     }
 

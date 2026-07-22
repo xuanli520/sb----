@@ -38,6 +38,29 @@ public class AccountInteractionController implements UserResolver {
         return ApiResponse.ok(page(store.userComments(user.id(), status, page, size)));
     }
 
+    @GetMapping("/books/{bookId}/comments")
+    ApiResponse<Map<String, Object>> readableChapterComments(
+            HttpServletRequest request,
+            @PathVariable long bookId,
+            @RequestParam(required = false) Long chapterId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        CurrentUser user = current(request);
+        return ApiResponse.ok(page(store.readerComments(user, bookId, chapterId, page, size)));
+    }
+
+    @GetMapping("/books/{bookId}/chapters/{chapterId}/annotations")
+    ApiResponse<Map<String, Object>> readableChapterPublicAnnotations(
+            HttpServletRequest request,
+            @PathVariable long bookId,
+            @PathVariable long chapterId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        CurrentUser user = current(request);
+        return ApiResponse.ok(publicAnnotationPage(
+                store.readerPublicParagraphAnnotations(user, bookId, chapterId, page, size)));
+    }
+
     @GetMapping("/annotations")
     ApiResponse<Map<String, Object>> annotations(
             HttpServletRequest request,
@@ -58,8 +81,7 @@ public class AccountInteractionController implements UserResolver {
             @Valid @RequestBody ParagraphAnnotationRequest body) {
         CurrentUser user = current(request);
         return ApiResponse.ok(store.annotateParagraph(
-                user.id(),
-                user.name(),
+                user,
                 bookId,
                 chapterId,
                 body.paragraphIndex(),
@@ -89,4 +111,32 @@ public class AccountInteractionController implements UserResolver {
                 "items", annotations.items(),
                 "meta", Map.of("total", annotations.total(), "page", annotations.page(), "size", annotations.size()));
     }
+
+    private static Map<String, Object> publicAnnotationPage(ParagraphAnnotationPage annotations) {
+        return Map.of(
+                "items", annotations.items().stream().map(annotation -> new PublicParagraphAnnotation(
+                        annotation.id(),
+                        annotation.bookId(),
+                        annotation.chapterId(),
+                        annotation.authorName(),
+                        annotation.paragraphIndex(),
+                        annotation.selectionStart(),
+                        annotation.selectionEnd(),
+                        annotation.selectedText(),
+                        annotation.note(),
+                        annotation.createdAt())).toList(),
+                "meta", Map.of("total", annotations.total(), "page", annotations.page(), "size", annotations.size()));
+    }
+
+    private record PublicParagraphAnnotation(
+            long id,
+            long bookId,
+            long chapterId,
+            String authorName,
+            int paragraphIndex,
+            int selectionStart,
+            int selectionEnd,
+            String selectedText,
+            String note,
+            java.time.Instant createdAt) {}
 }

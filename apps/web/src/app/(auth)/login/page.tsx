@@ -14,7 +14,7 @@ type SessionResponse = {
   msg?: string;
 };
 
-const loginNamePattern = /^[A-Za-z0-9._@+-]{3,120}$/;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function authErrorMessage(message: string | undefined, fallback: string): string {
   switch (message) {
@@ -41,8 +41,8 @@ export default function LoginPage() {
     event.preventDefault();
     const normalizedUsername = username.trim();
 
-    if (!loginNamePattern.test(normalizedUsername)) {
-      setError('请输入 3 至 120 位的用户名、邮箱或账号。');
+    if (normalizedUsername.length > 120 || !emailPattern.test(normalizedUsername)) {
+      setError('请输入有效的邮箱地址。');
       return;
     }
     if (password.length < 12 || password.length > 128) {
@@ -95,18 +95,18 @@ export default function LoginPage() {
             <div className="my-auto max-w-sm py-10 lg:py-0">
               <p className="text-xs font-semibold text-emerald-700">读者登录</p>
               <h2 id="login-title" className="mt-2 text-3xl font-semibold text-stone-950">欢迎回来</h2>
-              <p className="mt-3 text-sm leading-6 text-stone-600">使用账号登录，继续阅读与管理书架。</p>
+              <p className="mt-3 text-sm leading-6 text-stone-600">使用已验证邮箱登录，继续阅读与管理书架。</p>
 
               {error ? <Alert variant="destructive" className="mt-6 rounded-none border-l-4 border-rose-600 bg-rose-50 px-3 py-2 text-rose-800"><AlertDescription className="text-inherit">{error}</AlertDescription></Alert> : null}
 
               <form className="mt-7 space-y-5" onSubmit={submit} noValidate>
                 <div>
-                  <Label htmlFor="login-username" className="text-stone-800">用户名或邮箱</Label>
+                  <Label htmlFor="login-username" className="text-stone-800">邮箱</Label>
                   <Input
                     id="login-username"
                     name="username"
-                    type="text"
-                    autoComplete="username"
+                    type="email"
+                    autoComplete="email"
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
                     disabled={submitting}

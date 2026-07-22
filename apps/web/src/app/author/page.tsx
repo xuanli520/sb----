@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/ta
 import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
-import { AuthorAnalyticsReport, AuthorCommentPage, Book, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
+import { AuthorAnalyticsReport, AuthorCommentPage, AuthorModerationAdvice, Book, BookStatusAudit, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
 type AuthorChapter = {
@@ -309,11 +309,16 @@ export default function AuthorPage() {
   const [loading, setLoading] = useState(true);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
+  const [bookStatusAudits, setBookStatusAudits] = useState<BookStatusAudit[]>([]);
+  const [bookStatusAuditsLoading, setBookStatusAuditsLoading] = useState(false);
+  const [bookStatusAuditsError, setBookStatusAuditsError] = useState('');
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<string>();
+  const [moderationAdviceReasons, setModerationAdviceReasons] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice>();
   const workspaceRequestId = useRef(0);
+  const bookStatusAuditRequestId = useRef(0);
   const commentRequestId = useRef(0);
   const annotationRequestId = useRef(0);
   const rewardRequestId = useRef(0);
@@ -401,6 +406,23 @@ export default function AuthorPage() {
     }
   }, []);
 
+  const loadBookStatusAudits = useCallback(async (bookId: number) => {
+    const requestId = ++bookStatusAuditRequestId.current;
+    setBookStatusAuditsLoading(true);
+    setBookStatusAuditsError('');
+    try {
+      const audits = await novelApi<BookStatusAudit[]>(`author/books/${bookId}/status-audits?limit=20`, 'author');
+      if (requestId === bookStatusAuditRequestId.current) setBookStatusAudits(audits);
+    } catch (reason) {
+      if (requestId === bookStatusAuditRequestId.current) {
+        setBookStatusAudits([]);
+        setBookStatusAuditsError(failureMessage(reason, '作品处置反馈暂时无法加载。'));
+      }
+    } finally {
+      if (requestId === bookStatusAuditRequestId.current) setBookStatusAuditsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedBookId) {
       workspaceRequestId.current += 1;
@@ -416,6 +438,17 @@ export default function AuthorPage() {
     setSelectedDraftId(undefined);
     void loadBookWorkspace(selectedBookId);
   }, [loadBookWorkspace, selectedBookId]);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      bookStatusAuditRequestId.current += 1;
+      setBookStatusAudits([]);
+      setBookStatusAuditsError('');
+      setBookStatusAuditsLoading(false);
+      return;
+    }
+    void loadBookStatusAudits(selectedBookId);
+  }, [loadBookStatusAudits, selectedBookId]);
 
   useEffect(() => {
     setSelectedVolumeId((current) => volumes.some((volume) => volume.id === current) ? current : volumes[0]?.id);
@@ -500,6 +533,44 @@ export default function AuthorPage() {
   const pendingBooks = useMemo(() => books.filter((book) => ['PENDING_REVIEW', 'NEEDS_REVIEW'].includes(book.status)).length, [books]);
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
+
+  const submitModerationAdvice = async (
+    resource: 'comments' | 'annotations',
+    interactionId: number,
+    recommendVisible: boolean,
+  ) => {
+    if (!selectedBook) return;
+    const actionKey = `moderation-advice-${resource}-${interactionId}`;
+    const reason = (moderationAdviceReasons[`${resource}-${interactionId}`] ?? '').trim();
+    if (!reason) {
+      announce('请先说明建议理由，站长会据此完成最终审核。', 'error');
+      return;
+    }
+    setPendingAction(actionKey);
+    try {
+      const advice = await novelApi<AuthorModerationAdvice>(
+        `author/books/${selectedBook.id}/${resource}/${interactionId}/moderation-advice`,
+        'author',
+        { method: 'POST', body: JSON.stringify({ recommendVisible, reason }) },
+      );
+      if (resource === 'comments') {
+        setCommentPage((current) => current ? {
+          ...current,
+          items: current.items.map((item) => item.id === interactionId ? { ...item, authorModerationAdvice: advice } : item),
+        } : current);
+      } else {
+        setAnnotationPage((current) => current ? {
+          ...current,
+          items: current.items.map((item) => item.id === interactionId ? { ...item, authorModerationAdvice: advice } : item),
+        } : current);
+      }
+      announce(recommendVisible ? '已提交公开建议，等待站长最终审核。' : '已提交驳回建议，等待站长最终审核。');
+    } catch (reason) {
+      announce(failureMessage(reason, '审核建议暂时无法提交。'), 'error');
+    } finally {
+      setPendingAction((current) => current === actionKey ? undefined : current);
+    }
+  };
 
   const applyRewardFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1254,7 +1325,14 @@ export default function AuthorPage() {
             <>
               <div className="mt-3 flex items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-stone-950">{selectedBook.title}</h2><p className="mt-1 text-sm text-stone-600">{selectedBook.category} · {formatWordCount(selectedBook.words)}</p></div><NovelStatusBadge status={selectedBook.status} /></div>
               <p className="mt-5 text-sm leading-6 text-stone-600">章节提交后会先经过自动筛查；完整作品仍需站长人工审核才会在线上书城显示。</p>
-              <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</Button>
+              <div className="mt-5 border-l-2 border-emerald-700 bg-white/70 px-4 py-3" aria-labelledby="book-status-feedback-heading">
+                <p id="book-status-feedback-heading" className="text-xs font-semibold text-emerald-700">站长处置反馈</p>
+                {bookStatusAuditsLoading ? <Skeleton className="mt-3 h-12 rounded-none bg-stone-100" /> : null}
+                {bookStatusAuditsError ? <p className="mt-2 text-sm leading-6 text-rose-800">处置反馈暂时无法显示：{bookStatusAuditsError}</p> : null}
+                {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length === 0 ? <p className="mt-2 text-sm leading-6 text-stone-600">当前没有下线或恢复处置记录。</p> : null}
+                {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length > 0 ? <ol className="mt-3 space-y-3">{bookStatusAudits.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '作品已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatCommentTime(audit.createdAt) || '时间未知'}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol> : null}
+              </div>
+              {['DRAFT', 'REJECTED'].includes(selectedBook.status) ? <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</Button> : <p className="mt-5 text-xs leading-5 text-stone-600">{selectedBook.status === 'OFFLINE' ? '该作品已下线，等待站长根据处置反馈决定是否重新进入审核。' : '该作品已进入审核或发布流程，当前仅可查看审核与处置反馈。'}</p>}
 
               <div className="mt-6 border-t border-emerald-950/10 pt-5">
                 <div className="flex items-start gap-2"><CalendarClock className="mt-0.5 text-emerald-700" size={18} aria-hidden="true" /><div><p className="text-xs font-semibold text-emerald-700">草稿排期</p><h2 className="mt-1 text-lg font-semibold text-stone-950">选择存稿，设置未来发布时间</h2></div></div>
@@ -1288,9 +1366,9 @@ export default function AuthorPage() {
           <div>
             <p className="text-xs font-semibold text-emerald-700">读者反馈</p>
             <h2 id="author-feedback-heading" className="mt-1 text-xl font-semibold text-stone-950">{selectedBook ? `《${selectedBook.title}》的互动反馈` : '作品互动反馈'}</h2>
-            <p className="mt-1 text-sm leading-6 text-stone-600">仅展示当前作者作品的评论，以及读者明确发起分享的段评。审核状态由站长处理。</p>
+            <p className="mt-1 text-sm leading-6 text-stone-600">仅展示当前作者作品的评论，以及读者明确发起分享的段评。待审核内容可提交处理建议，最终公开或驳回仍由站长决定。</p>
           </div>
-          <span className="text-sm text-stone-500">{selectedBook ? '当前作品的只读反馈视图' : '选择作品后查看反馈'}</span>
+          <span className="text-sm text-stone-500">{selectedBook ? '作者建议不改变审核状态' : '选择作品后查看反馈'}</span>
         </div>
 
         <Tabs value={feedbackTab} onValueChange={(value) => {
@@ -1316,7 +1394,7 @@ export default function AuthorPage() {
             ) : null}
             {selectedBook && !commentsLoading && !commentError && commentPage && commentPage.items.length > 0 ? (
               <>
-                <Table className="min-w-[680px]">
+                <Table className="min-w-[860px]">
                   <TableCaption className="sr-only">当前作品的读者评论及其审核状态。</TableCaption>
                   <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
                     <TableRow className="border-0 hover:bg-transparent">
@@ -1324,6 +1402,7 @@ export default function AuthorPage() {
                       <TableHead className="px-4 py-3">位置</TableHead>
                       <TableHead className="px-4 py-3">评论内容</TableHead>
                       <TableHead className="px-4 py-3">状态</TableHead>
+                      <TableHead className="px-4 py-3">处理建议</TableHead>
                       <TableHead className="px-4 py-3">时间</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1334,6 +1413,28 @@ export default function AuthorPage() {
                         <TableCell className="whitespace-nowrap px-4 py-4 text-sm text-stone-600">{comment.chapterId ? `章节 #${comment.chapterId}` : '书评'}</TableCell>
                         <TableCell className="max-w-xl px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{comment.content}</span></TableCell>
                         <TableCell className="whitespace-nowrap px-4 py-4"><InteractionStatusBadge status={comment.status} /></TableCell>
+                        <TableCell className="min-w-72 px-4 py-4 align-top">
+                          {comment.status === 'PENDING_REVIEW' ? (
+                            <div className="space-y-2">
+                              <Label htmlFor={`comment-moderation-advice-${comment.id}`} className="sr-only">评论 {comment.id} 的审核建议说明</Label>
+                              <Input
+                                id={`comment-moderation-advice-${comment.id}`}
+                                aria-label={`评论 ${comment.id} 的审核建议说明`}
+                                maxLength={1024}
+                                value={moderationAdviceReasons[`comments-${comment.id}`] ?? comment.authorModerationAdvice?.reason ?? ''}
+                                onChange={(event) => setModerationAdviceReasons((current) => ({ ...current, [`comments-${comment.id}`]: event.target.value }))}
+                                className="h-9 rounded-none border-stone-300 bg-white px-2 text-sm text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"
+                                placeholder="说明建议理由"
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button type="button" variant="outline" size="sm" aria-label={`建议站长公开评论 ${comment.id}`} disabled={pendingAction === `moderation-advice-comments-${comment.id}`} onClick={() => void submitModerationAdvice('comments', comment.id, true)} className="h-auto rounded-none border-emerald-300 bg-white px-2.5 py-1.5 text-emerald-800 hover:border-emerald-700 hover:text-emerald-950">建议公开</Button>
+                                <Button type="button" variant="outline" size="sm" aria-label={`建议站长驳回评论 ${comment.id}`} disabled={pendingAction === `moderation-advice-comments-${comment.id}`} onClick={() => void submitModerationAdvice('comments', comment.id, false)} className="h-auto rounded-none border-rose-200 bg-white px-2.5 py-1.5 text-rose-700 hover:border-rose-500 hover:text-rose-900">建议驳回</Button>
+                              </div>
+                            </div>
+                          ) : comment.authorModerationAdvice ? (
+                            <p className="text-xs leading-5 text-stone-600">已建议{comment.authorModerationAdvice.recommendation === 'RECOMMEND_VISIBLE' ? '公开' : '驳回'}，最终状态由站长决定。</p>
+                          ) : <p className="text-xs leading-5 text-stone-500">仅待审核内容可提交建议。</p>}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-500"><time dateTime={comment.createdAt}>{formatCommentTime(comment.createdAt) || '时间未知'}</time></TableCell>
                       </TableRow>
                     ))}
@@ -1355,7 +1456,7 @@ export default function AuthorPage() {
             ) : null}
             {selectedBook && !annotationsLoading && !annotationError && annotationPage && sharedAnnotations.length > 0 ? (
               <>
-                <Table className="min-w-[760px]">
+                <Table className="min-w-[980px]">
                   <TableCaption className="sr-only">当前作品中读者明确分享的段评及其审核状态。</TableCaption>
                   <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
                     <TableRow className="border-0 hover:bg-transparent">
@@ -1364,6 +1465,7 @@ export default function AuthorPage() {
                       <TableHead className="px-4 py-3">选中文本</TableHead>
                       <TableHead className="px-4 py-3">段评</TableHead>
                       <TableHead className="px-4 py-3">状态</TableHead>
+                      <TableHead className="px-4 py-3">处理建议</TableHead>
                       <TableHead className="px-4 py-3">时间</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1375,6 +1477,28 @@ export default function AuthorPage() {
                         <TableCell className="max-w-sm px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{annotation.selectedText}</span></TableCell>
                         <TableCell className="max-w-sm px-4 py-4 text-sm leading-6 text-stone-700"><span className="block whitespace-pre-wrap">{annotation.note || '—'}</span></TableCell>
                         <TableCell className="whitespace-nowrap px-4 py-4"><InteractionStatusBadge status={annotation.status} /></TableCell>
+                        <TableCell className="min-w-72 px-4 py-4 align-top">
+                          {annotation.status === 'PENDING_REVIEW' ? (
+                            <div className="space-y-2">
+                              <Label htmlFor={`annotation-moderation-advice-${annotation.id}`} className="sr-only">段评 {annotation.id} 的审核建议说明</Label>
+                              <Input
+                                id={`annotation-moderation-advice-${annotation.id}`}
+                                aria-label={`段评 ${annotation.id} 的审核建议说明`}
+                                maxLength={1024}
+                                value={moderationAdviceReasons[`annotations-${annotation.id}`] ?? annotation.authorModerationAdvice?.reason ?? ''}
+                                onChange={(event) => setModerationAdviceReasons((current) => ({ ...current, [`annotations-${annotation.id}`]: event.target.value }))}
+                                className="h-9 rounded-none border-stone-300 bg-white px-2 text-sm text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"
+                                placeholder="说明建议理由"
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button type="button" variant="outline" size="sm" aria-label={`建议站长公开段评 ${annotation.id}`} disabled={pendingAction === `moderation-advice-annotations-${annotation.id}`} onClick={() => void submitModerationAdvice('annotations', annotation.id, true)} className="h-auto rounded-none border-emerald-300 bg-white px-2.5 py-1.5 text-emerald-800 hover:border-emerald-700 hover:text-emerald-950">建议公开</Button>
+                                <Button type="button" variant="outline" size="sm" aria-label={`建议站长驳回段评 ${annotation.id}`} disabled={pendingAction === `moderation-advice-annotations-${annotation.id}`} onClick={() => void submitModerationAdvice('annotations', annotation.id, false)} className="h-auto rounded-none border-rose-200 bg-white px-2.5 py-1.5 text-rose-700 hover:border-rose-500 hover:text-rose-900">建议驳回</Button>
+                              </div>
+                            </div>
+                          ) : annotation.authorModerationAdvice ? (
+                            <p className="text-xs leading-5 text-stone-600">已建议{annotation.authorModerationAdvice.recommendation === 'RECOMMEND_VISIBLE' ? '公开' : '驳回'}，最终状态由站长决定。</p>
+                          ) : <p className="text-xs leading-5 text-stone-500">仅待审核内容可提交建议。</p>}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-500"><time dateTime={annotation.createdAt}>{formatCommentTime(annotation.createdAt) || '时间未知'}</time></TableCell>
                       </TableRow>
                     ))}

@@ -5,6 +5,21 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:novel_platform;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}
     username: ${SPRING_DATASOURCE_USERNAME:sa}
     password: ${SPRING_DATASOURCE_PASSWORD:}
+  mail:
+    # QQ Mail and other authenticated SMTP providers use an app-specific SMTP authorization code
+    # here, never a browser-provided credential. An empty deployment configuration leaves the
+    # email-verification endpoint unavailable (503); it never falls back to a local sender.
+    host: ${NOVEL_SMTP_HOST:}
+    port: ${NOVEL_SMTP_PORT:465}
+    username: ${NOVEL_SMTP_USERNAME:}
+    password: ${NOVEL_SMTP_PASSWORD:}
+    protocol: smtp
+    properties:
+      "[mail.smtp.auth]": ${NOVEL_SMTP_AUTH:true}
+      "[mail.smtp.ssl.enable]": ${NOVEL_SMTP_SSL_ENABLE:true}
+      "[mail.smtp.connectiontimeout]": ${NOVEL_SMTP_CONNECTION_TIMEOUT_MILLIS:5000}
+      "[mail.smtp.timeout]": ${NOVEL_SMTP_TIMEOUT_MILLIS:10000}
+      "[mail.smtp.writetimeout]": ${NOVEL_SMTP_WRITE_TIMEOUT_MILLIS:10000}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -44,6 +59,18 @@ novel:
   # mode can allow the opt-in local moderation simulation.
   runtime-mode: ${NOVEL_RUNTIME_MODE:PRODUCTION}
   internal-api-key: ${NOVEL_INTERNAL_API_KEY:}
+  email-verification:
+    # This remains a real SMTP capability only. If any required SMTP/from/hash-secret value is
+    # absent, email registration and code delivery fail closed with 503 instead of emitting a
+    # development code or accepting an unverified account.
+    enabled: ${NOVEL_EMAIL_VERIFICATION_ENABLED:true}
+    from: ${NOVEL_EMAIL_VERIFICATION_FROM:}
+    hash-secret: ${NOVEL_EMAIL_VERIFICATION_HASH_SECRET:}
+    code-ttl: ${NOVEL_EMAIL_VERIFICATION_CODE_TTL:PT10M}
+    resend-cooldown: ${NOVEL_EMAIL_VERIFICATION_RESEND_COOLDOWN:PT60S}
+    max-requests-per-window: ${NOVEL_EMAIL_VERIFICATION_MAX_REQUESTS_PER_WINDOW:5}
+    request-window: ${NOVEL_EMAIL_VERIFICATION_REQUEST_WINDOW:PT1H}
+    max-verification-attempts: ${NOVEL_EMAIL_VERIFICATION_MAX_VERIFICATION_ATTEMPTS:5}
   # Production has no implicit administrator. Set all three deployment variables to create the
   # first account, or safely elevate an existing account whose password matches the configured
   # secret. Leaving all three unset is an intentional no-op.

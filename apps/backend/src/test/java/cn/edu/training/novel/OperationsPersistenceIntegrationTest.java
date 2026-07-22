@@ -17,6 +17,7 @@ import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.CommercialRuleService;
 import cn.edu.training.novel.service.ContentModerationService;
 import cn.edu.training.novel.service.ContentModerationReviewService;
 import cn.edu.training.novel.service.InteractionRepository;
@@ -61,6 +62,7 @@ class OperationsPersistenceIntegrationTest {
     @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
     @Autowired AuditTrail auditTrail;
+    @Autowired CommercialRuleService commercialRuleService;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired MockMvc mvc;
     @Autowired OperationsRepository operationsRepository;
@@ -267,6 +269,7 @@ class OperationsPersistenceIntegrationTest {
                 auditTrail,
                 new CatalogRepository(jdbcTemplate),
                 new WalletRepository(jdbcTemplate),
+                commercialRuleService,
                 new ReaderRepository(jdbcTemplate),
                 new InteractionRepository(jdbcTemplate),
                 new OperationsRepository(jdbcTemplate),

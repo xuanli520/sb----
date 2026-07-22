@@ -47,6 +47,7 @@ type ChapterCommentsHandler = (chapterId: number, input: RequestInfo | URL, init
 type CommentPostHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type ReaderApiOptions = {
   bookDetail?: unknown;
+  protectedReading?: unknown;
   rewardHandler?: RewardHandler;
   annotationHandler?: AnnotationHandler;
   purchaseHandler?: PurchaseHandler;
@@ -54,6 +55,8 @@ type ReaderApiOptions = {
   chapterCommentsHandler?: ChapterCommentsHandler;
   commentPostHandler?: CommentPostHandler;
   annotations?: unknown[];
+  publicAnnotations?: Record<number, unknown[]>;
+  interactionStats?: { visibleCommentCount: number; ratingCount: number; averageRating: number; recommendationVoteCount: number; monthlyVoteCount: number };
   wallet?: { tokens: number };
   entitlements?: { membership: unknown; books: unknown[] };
 };
@@ -94,6 +97,16 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: Read
     const path = String(input);
 
     if (path.endsWith('/public/books/7')) return Promise.resolve(response(options.bookDetail ?? detail));
+    if (path.endsWith('/account/books/7/reading')) {
+      return Promise.resolve(options.protectedReading === undefined ? failedResponse('login required') : response(options.protectedReading));
+    }
+    if (path.endsWith('/public/books/7/interactions')) return Promise.resolve(response(options.interactionStats ?? {
+      visibleCommentCount: 0,
+      ratingCount: 0,
+      averageRating: 0,
+      recommendationVoteCount: 0,
+      monthlyVoteCount: 0,
+    }));
     const chapterCommentsMatch = path.match(/\/public\/books\/7\/comments\?chapterId=(\d+)$/);
     if (chapterCommentsMatch) {
       const chapterId = Number(chapterCommentsMatch[1]);
@@ -113,7 +126,16 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: Read
     }
     if (path.endsWith('/account/wallet')) return Promise.resolve(response(options.wallet ?? { tokens: 120 }));
     if (path.endsWith('/account/entitlements')) return Promise.resolve(response(options.entitlements ?? { membership: null, books: [] }));
+    const publicAnnotationsMatch = path.match(/\/public\/books\/7\/chapters\/(\d+)\/annotations$/);
+    if (publicAnnotationsMatch) {
+      const items = options.publicAnnotations?.[Number(publicAnnotationsMatch[1])] ?? [];
+      return Promise.resolve(response({ items, meta: { total: items.length, page: 0, size: 20 } }));
+    }
     if (path.endsWith('/account/books/7/chapters/101/annotations')) {
+      if (init?.method === 'GET') {
+        const items = options.publicAnnotations?.[101] ?? [];
+        return Promise.resolve(response({ items, meta: { total: items.length, page: 0, size: 20 } }));
+      }
       return options.annotationHandler?.(input, init) ?? Promise.resolve(response({
         id: 91,
         bookId: 7,
@@ -336,7 +358,7 @@ describe('reader page modes', () => {
         body: JSON.stringify({ bookId: 7, chapterId: 101, offset: 0 }),
       }),
     ));
-    expect(screen.getByRole('heading', { name: '潮汐之前' })).toBeTruthy();
+    expect(screen.getByTestId('reader-current-chapter').textContent).toContain('潮汐之前');
   });
 
   it('skips visual animation under reduced motion while keeping keyboard chapter navigation available', async () => {
@@ -372,6 +394,59 @@ describe('reader page modes', () => {
         body: JSON.stringify({ bookId: 7, chapterId: 102, offset: 0 }),
       }),
     ));
+  });
+
+  it('keeps locked chapter bodies out of the reader and routes a reader to the entitlement decision', async () => {
+    const lockedDetail = {
+      ...detail,
+      access: { fullBookAccess: false, source: 'PREVIEW' },
+      chapters: [
+        { ...detail.chapters[0], readable: true, access: 'PREVIEW' },
+        { ...detail.chapters[1], content: null, readable: false, access: 'ENTITLEMENT_REQUIRED' },
+      ],
+    };
+    await renderReader('slide', [], '潮汐之前', { bookDetail: lockedDetail });
+
+    expect(screen.queryByText('第三段。')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '第 2 章 · 灯塔来信，需要阅读权益' }));
+
+    expect(screen.getByTestId('reader-current-chapter').textContent).toContain('潮汐之前');
+    expect(await screen.findByRole('heading', { name: '获得整本阅读权益' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('第 2 章《灯塔来信》需要整本阅读权益');
+  });
+
+  it('loads approved public paragraph annotations for the active readable chapter', async () => {
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      publicAnnotations: {
+        101: [{
+          id: 501,
+          bookId: 7,
+          chapterId: 101,
+          authorName: '公开读者',
+          paragraphIndex: 0,
+          selectionStart: 0,
+          selectionEnd: 3,
+          selectedText: '第一段',
+          note: '这个开场很有画面感。',
+          createdAt: '2026-07-21T00:00:00Z',
+        }],
+      },
+      interactionStats: {
+        visibleCommentCount: 5,
+        ratingCount: 3,
+        averageRating: 4.7,
+        recommendationVoteCount: 9,
+        monthlyVoteCount: 2,
+      },
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/public/books/7/chapters/101/annotations',
+      expect.anything(),
+    ));
+    expect(await screen.findByText('这个开场很有画面感。')).toBeTruthy();
+    expect(screen.getByText('4.7 分 · 3 人评分 · 推荐票 9 · 月票 2')).toBeTruthy();
+    expect(readerParagraph(0).querySelector('mark')?.getAttribute('data-annotation-source')).toBe('public');
   });
 
   it('loads visible comments for only the active chapter instead of using the book detail comments', async () => {

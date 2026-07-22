@@ -9,6 +9,7 @@ import cn.edu.training.novel.domain.ReadingPreference;
 import cn.edu.training.novel.domain.ReadingProgress;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.CommercialRuleService;
 import cn.edu.training.novel.service.ContentModerationService;
 import cn.edu.training.novel.service.ContentModerationReviewService;
 import cn.edu.training.novel.service.InteractionRepository;
@@ -32,6 +33,7 @@ import org.springframework.test.annotation.DirtiesContext;
 class ReaderPersistenceIntegrationTest {
     @Autowired NovelStore store;
     @Autowired AuditTrail auditTrail;
+    @Autowired CommercialRuleService commercialRuleService;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired OperationsRepository operationsRepository;
     @Autowired AuthService authService;
@@ -69,6 +71,7 @@ class ReaderPersistenceIntegrationTest {
                 auditTrail,
                 new CatalogRepository(jdbcTemplate),
                 new WalletRepository(jdbcTemplate),
+                commercialRuleService,
                 reloadedReaderRepository,
                 new InteractionRepository(jdbcTemplate),
                 operationsRepository,

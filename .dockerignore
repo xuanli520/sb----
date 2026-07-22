@@ -3,3 +3,36 @@
 .vscode
 *.log
 README.md
+
+# Credentials and local runtime configuration never belong in the backend build context.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Dependency trees and generated output are rebuilt in the image stages.
+node_modules
+**/node_modules
+target
+**/target
+.next
+**/.next
+.out
+**/.out
+out
+**/out
+build
+**/build
+dist
+**/dist
+coverage
+**/coverage
+.nyc_output
+**/.nyc_output
+*.tsbuildinfo
+
+# Local verification output and imported source snapshots are not application inputs.
+backups
+playwright-report
+test-results
+tmp

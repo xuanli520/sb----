@@ -36,7 +36,7 @@ class ProductionIdentityIntegrationTest {
         String body = mvc.perform(post("/api/v1/auth/register")
                         .header("X-Novel-Internal-Key", "local-novel-internal-key")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"production.reader@example.test\",\"displayName\":\"生产读者\",\"password\":\"correct-horse-battery-staple\"}"))
+                        .content("{\"username\":\"production.reader\",\"displayName\":\"生产读者\",\"password\":\"correct-horse-battery-staple\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         String sessionId = JsonPath.read(body, "$.data.sessionId");
@@ -55,4 +55,5 @@ class ProductionIdentityIntegrationTest {
                         .header("X-Novel-Development-Principal", "author"))
                 .andExpect(status().isForbidden());
     }
+
 }

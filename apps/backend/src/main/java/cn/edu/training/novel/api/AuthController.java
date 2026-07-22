@@ -2,7 +2,9 @@ package cn.edu.training.novel.api;
 
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.CurrentUser;
+import cn.edu.training.novel.service.EmailVerificationService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -20,13 +22,24 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
     private final AuthService authService;
+    private final EmailVerificationService emailVerificationService;
 
-    public AuthController(AuthService authService) { this.authService = authService; }
+    public AuthController(AuthService authService, EmailVerificationService emailVerificationService) {
+        this.authService = authService;
+        this.emailVerificationService = emailVerificationService;
+    }
+
+    @PostMapping("/email-verification")
+    ApiResponse<EmailVerificationDeliveryData> requestEmailVerification(
+            @Valid @RequestBody EmailVerificationRequest request) {
+        EmailVerificationService.VerificationDelivery delivery = emailVerificationService.requestRegistrationCode(request.email());
+        return ApiResponse.ok(new EmailVerificationDeliveryData(delivery.expiresAt(), delivery.resendAvailableAt()));
+    }
 
     @PostMapping("/register")
     ApiResponse<SessionData> register(@Valid @RequestBody RegisterRequest request) {
-        return ApiResponse.ok(toSessionData(authService.register(
-                request.username(), request.displayName(), request.password(), request.channel())));
+        return ApiResponse.ok(toSessionData(authService.registerFromBff(
+                request.username(), request.displayName(), request.password(), request.channel(), request.verificationCode())));
     }
 
     @PostMapping("/login")
@@ -55,12 +68,17 @@ public class AuthController {
             @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
             @NotBlank @Size(min = 1, max = 128) String displayName,
             @NotBlank @Size(min = 12, max = 128) String password,
-            @Size(max = 32) String channel) {}
+            @Size(max = 32) String channel,
+            @Pattern(regexp = "[0-9]{6}", message = "must contain six digits") String verificationCode) {}
+
+    public record EmailVerificationRequest(
+            @NotBlank @Email @Size(max = 120) String email) {}
 
     public record LoginRequest(
             @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
             @NotBlank @Size(min = 12, max = 128) String password) {}
 
     public record SessionData(String sessionId, UserData user, Instant expiresAt) {}
+    public record EmailVerificationDeliveryData(Instant expiresAt, Instant resendAvailableAt) {}
     public record UserData(long id, String name, java.util.Set<cn.edu.training.novel.domain.Role> roles) {}
 }

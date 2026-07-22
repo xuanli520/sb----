@@ -30,11 +30,8 @@ public class PublicController {
     }
 
     @GetMapping("/books/{id}")
-    ApiResponse<java.util.Map<String, Object>> book(@PathVariable long id) {
-        return ApiResponse.ok(java.util.Map.of(
-                "book", store.publishedBook(id),
-                "chapters", store.publishedChapters(id),
-                "comments", store.comments(id)));
+    ApiResponse<ReaderBookDetail> book(@PathVariable long id) {
+        return ApiResponse.ok(store.publicReaderBook(id));
     }
 
     @GetMapping("/home")

@@ -92,6 +92,7 @@ const statusStyles: Record<string, { label: string; className: string }> = {
   PENDING_REVIEW: { label: '待审核', className: 'border-amber-200 bg-amber-50 text-amber-800' },
   NEEDS_REVIEW: { label: '需复核', className: 'border-rose-200 bg-rose-50 text-rose-800' },
   PUBLISHED: { label: '已上线', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+  OFFLINE: { label: '已下线', className: 'border-rose-300 bg-rose-50 text-rose-800' },
   REJECTED: { label: '已驳回', className: 'border-rose-200 bg-rose-50 text-rose-800' },
   VISIBLE: { label: '已发布', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
   PENDING: { label: '待处理', className: 'border-amber-200 bg-amber-50 text-amber-800' },

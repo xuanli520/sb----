@@ -4,6 +4,7 @@ import cn.edu.training.novel.domain.GeneratedRedemptionCodeBatch;
 import cn.edu.training.novel.domain.ManagedRedemptionCode;
 import cn.edu.training.novel.domain.RedemptionCodePage;
 import cn.edu.training.novel.domain.Role;
+import cn.edu.training.novel.domain.CommercialRules;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,14 +35,17 @@ public class RedemptionCodeAdminService {
 
     private final WalletRepository walletRepository;
     private final CatalogRepository catalogRepository;
+    private final CommercialRuleService commercialRuleService;
     private final AuditTrail auditTrail;
 
     public RedemptionCodeAdminService(
             WalletRepository walletRepository,
             CatalogRepository catalogRepository,
+            CommercialRuleService commercialRuleService,
             AuditTrail auditTrail) {
         this.walletRepository = walletRepository;
         this.catalogRepository = catalogRepository;
+        this.commercialRuleService = commercialRuleService;
         this.auditTrail = auditTrail;
     }
 
@@ -189,6 +193,10 @@ public class RedemptionCodeAdminService {
         }
         if (membershipDays < 0 || membershipDays > MAX_MEMBERSHIP_DAYS) {
             throw badRequest("membership days is out of range");
+        }
+        CommercialRules rules = commercialRuleService.current();
+        if (membershipDays > rules.membershipDaysMaximumPerCode()) {
+            throw badRequest("membership days exceeds the configured per-code maximum");
         }
         if (rawBookId != null) {
             if (rawBookId <= 0) {

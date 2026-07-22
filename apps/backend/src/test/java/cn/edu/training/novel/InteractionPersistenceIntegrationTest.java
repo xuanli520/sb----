@@ -7,6 +7,7 @@ import cn.edu.training.novel.domain.Comment;
 import cn.edu.training.novel.domain.InteractionStats;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
+import cn.edu.training.novel.service.CommercialRuleService;
 import cn.edu.training.novel.service.ContentModerationService;
 import cn.edu.training.novel.service.ContentModerationReviewService;
 import cn.edu.training.novel.service.InteractionRepository;
@@ -32,6 +33,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class InteractionPersistenceIntegrationTest {
     @Autowired NovelStore store;
     @Autowired AuditTrail auditTrail;
+    @Autowired CommercialRuleService commercialRuleService;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired OperationsRepository operationsRepository;
@@ -64,6 +66,7 @@ class InteractionPersistenceIntegrationTest {
                 auditTrail,
                 new CatalogRepository(jdbc),
                 new WalletRepository(jdbc),
+                commercialRuleService,
                 new ReaderRepository(jdbc),
                 reloadedInteractions,
                 operationsRepository,

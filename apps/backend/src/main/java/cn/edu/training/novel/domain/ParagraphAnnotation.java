@@ -1,5 +1,6 @@
 package cn.edu.training.novel.domain;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 
 /**
@@ -20,4 +21,5 @@ public record ParagraphAnnotation(
         String note,
         boolean shareIntent,
         String status,
-        Instant createdAt) {}
+        Instant createdAt,
+        @JsonInclude(JsonInclude.Include.NON_NULL) AuthorModerationAdvice authorModerationAdvice) {}

@@ -3,14 +3,17 @@ package cn.edu.training.novel.service;
 import cn.edu.training.novel.domain.*;
 import java.time.Instant;
 import java.util.*;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class NovelStore {
     private final AuditTrail auditTrail;
     private final CatalogRepository catalogRepository;
     private final WalletRepository walletRepository;
+    private final CommercialRuleService commercialRuleService;
     private final ReaderRepository readerRepository;
     private final InteractionRepository interactionRepository;
     private final OperationsRepository operationsRepository;
@@ -22,6 +25,7 @@ public class NovelStore {
             AuditTrail auditTrail,
             CatalogRepository catalogRepository,
             WalletRepository walletRepository,
+            CommercialRuleService commercialRuleService,
             ReaderRepository readerRepository,
             InteractionRepository interactionRepository,
             OperationsRepository operationsRepository,
@@ -32,6 +36,7 @@ public class NovelStore {
         this.auditTrail = auditTrail;
         this.catalogRepository = catalogRepository;
         this.walletRepository = walletRepository;
+        this.commercialRuleService = commercialRuleService;
         this.readerRepository = readerRepository;
         this.interactionRepository = interactionRepository;
         this.operationsRepository = operationsRepository;
@@ -46,6 +51,55 @@ public class NovelStore {
     public Book book(long id) { return catalogRepository.findById(id).orElseThrow(()->new NoSuchElementException("book not found")); }
     public Book publishedBook(long id) { Book b=book(id); if (b.status()!=BookStatus.PUBLISHED) throw new NoSuchElementException("book not published"); return b; }
     public List<Chapter> publishedChapters(long id) { return catalogRepository.findPublishedChaptersByBookId(id); }
+
+    /** Anonymous readers receive only the first currently published chapter as a preview. */
+    public ReaderBookDetail publicReaderBook(long bookId) {
+        return readerBook(null, bookId);
+    }
+
+    /**
+     * Builds the only reader-content projection which can contain a later chapter's body.  Catalog
+     * metadata remains visible for locked chapters, but their content is never serialised to an
+     * unentitled account.
+     */
+    public ReaderBookDetail readerBook(CurrentUser actor, long bookId) {
+        if (actor != null) ensureActive(actor.id());
+        Book book = publishedBook(bookId);
+        String fullAccessSource = fullBookAccessSource(actor, book);
+        List<Chapter> chapters = publishedChapters(bookId);
+        List<ReaderChapter> readerChapters = new ArrayList<>(chapters.size());
+        for (int index = 0; index < chapters.size(); index++) {
+            Chapter chapter = chapters.get(index);
+            boolean preview = index == 0;
+            boolean readable = fullAccessSource != null || preview;
+            readerChapters.add(new ReaderChapter(
+                    chapter.id(),
+                    chapter.bookId(),
+                    chapter.volumeId(),
+                    chapter.title(),
+                    readable ? chapter.content() : null,
+                    chapter.published(),
+                    chapter.status(),
+                    chapter.scheduledPublishAt(),
+                    chapter.publishedAt(),
+                    chapter.reviewReason(),
+                    chapter.orderNo(),
+                    readable,
+                    readable ? (fullAccessSource == null ? "PREVIEW" : fullAccessSource) : "ENTITLEMENT_REQUIRED"));
+        }
+        Set<Long> readableChapterIds = readerChapters.stream()
+                .filter(ReaderChapter::readable)
+                .map(ReaderChapter::id)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        List<Comment> visibleComments = comments(bookId).stream()
+                .filter(comment -> comment.chapterId() == null || readableChapterIds.contains(comment.chapterId()))
+                .toList();
+        return new ReaderBookDetail(
+                book,
+                readerChapters,
+                visibleComments,
+                new ReaderBookAccess(fullAccessSource != null, fullAccessSource == null ? "PREVIEW" : fullAccessSource));
+    }
     @Transactional
     public boolean toggleShelf(long userId, long bookId) {
         ensureActive(userId);
@@ -97,20 +151,42 @@ public class NovelStore {
                 "balance", balance);
     }
     public int tokenBalance(long userId) { return walletRepository.tokenBalance(userId); }
+    public CommercialRules commercialRules(long userId) { ensureActive(userId); return commercialRuleService.current(); }
     public ReadingPreference preference(long userId) { return readerRepository.preference(userId).orElseGet(ReadingPreference::defaults); }
     @Transactional
     public ReadingPreference savePreference(long userId, ReadingPreference preference) { ensureActive(userId); validatePreference(preference); return readerRepository.savePreference(userId, preference); }
     @Transactional
-    public ReadingProgress saveProgress(long userId, long bookId, long chapterId, int offset) { ensureActive(userId); publishedBook(bookId); if (publishedChapters(bookId).stream().noneMatch(c -> c.id()==chapterId)) throw new IllegalArgumentException("chapter is not published for this book"); if (offset<0) throw new IllegalArgumentException("offset must be non-negative"); return readerRepository.saveProgress(userId, bookId, chapterId, offset); }
+    public ReadingProgress saveProgress(long userId, long bookId, long chapterId, int offset) {
+        return saveProgress(readerActor(userId), bookId, chapterId, offset);
+    }
+    @Transactional
+    public ReadingProgress saveProgress(CurrentUser actor, long bookId, long chapterId, int offset) {
+        ensureActive(actor.id());
+        requireReadablePublishedChapter(actor, bookId, chapterId);
+        if (offset < 0) throw new IllegalArgumentException("offset must be non-negative");
+        return readerRepository.saveProgress(actor.id(), bookId, chapterId, offset);
+    }
     public List<ReadingProgress> progress(long userId) { return readerRepository.progress(userId); }
     @Transactional
-    public Bookmark bookmark(long userId,long bookId,long chapterId,int offset,String note) { ensureActive(userId); saveProgress(userId,bookId,chapterId,offset); return readerRepository.createBookmark(userId, bookId, chapterId, offset, note==null?"":note); }
+    public Bookmark bookmark(long userId,long bookId,long chapterId,int offset,String note) {
+        return bookmark(readerActor(userId), bookId, chapterId, offset, note);
+    }
+    @Transactional
+    public Bookmark bookmark(CurrentUser actor,long bookId,long chapterId,int offset,String note) {
+        saveProgress(actor, bookId, chapterId, offset);
+        return readerRepository.createBookmark(actor.id(), bookId, chapterId, offset, note == null ? "" : note);
+    }
     public List<Bookmark> bookmarks(long userId,long bookId) { return readerRepository.bookmarks(userId, bookId); }
     @Transactional
     public Comment comment(long userId,String userName,long bookId,Long chapterId,String content) {
-        ensureActive(userId);
+        return comment(new CurrentUser(userId, userName, Set.of(Role.READER)), bookId, chapterId, content);
+    }
+    @Transactional
+    public Comment comment(CurrentUser actor,long bookId,Long chapterId,String content) {
+        ensureActive(actor.id());
         publishedBook(bookId);
         validatePublishedCommentChapter(bookId, chapterId);
+        if (chapterId != null) requireReadablePublishedChapter(actor, bookId, chapterId);
         String normalizedContent = requireText(content, "comment content is required");
         if (normalizedContent.length() > 4000) {
             throw new IllegalArgumentException("comment content is too long");
@@ -118,8 +194,8 @@ public class NovelStore {
         String status = containsSensitive(normalizedContent)
                 ? InteractionRepository.PENDING_REVIEW
                 : InteractionRepository.VISIBLE;
-        Comment comment = interactionRepository.createComment(bookId, chapterId, userId, userName, normalizedContent, status);
-        audit("comment=" + comment.id() + " book=" + bookId + " user=" + userId + " state=" + status);
+        Comment comment = interactionRepository.createComment(bookId, chapterId, actor.id(), actor.name(), normalizedContent, status);
+        audit("comment=" + comment.id() + " book=" + bookId + " user=" + actor.id() + " state=" + status);
         return comment;
     }
     public List<Comment> comments(long bookId) {
@@ -128,7 +204,19 @@ public class NovelStore {
     }
     public CommentPage publicComments(long bookId, Long chapterId, int page, int size) {
         publishedBook(bookId);
-        validatePublishedCommentChapter(bookId, chapterId);
+        if (chapterId == null) {
+            return interactionRepository.findPublicBookLevelComments(bookId, page, size);
+        }
+        requirePublicPreviewChapter(bookId, chapterId);
+        return interactionRepository.findPublicComments(bookId, chapterId, page, size);
+    }
+    public CommentPage readerComments(CurrentUser actor, long bookId, Long chapterId, int page, int size) {
+        ensureActive(actor.id());
+        publishedBook(bookId);
+        if (chapterId == null) {
+            return interactionRepository.findPublicBookLevelComments(bookId, page, size);
+        }
+        requireReadablePublishedChapter(actor, bookId, chapterId);
         return interactionRepository.findPublicComments(bookId, chapterId, page, size);
     }
     public CommentPage userComments(long userId, String status, int page, int size) {
@@ -148,6 +236,27 @@ public class NovelStore {
         return comment;
     }
     /**
+     * A book owner may give the station owner a reasoned recommendation for a queued comment.
+     * This deliberately leaves the interaction in PENDING_REVIEW: final visibility stays with the
+     * administrator review endpoint.
+     */
+    @Transactional
+    public AuthorModerationAdvice adviseOnComment(
+            long authorUserId,
+            long bookId,
+            long commentId,
+            boolean recommendVisible,
+            String reason) {
+        ensureActive(authorUserId);
+        owned(authorUserId, bookId);
+        String normalizedReason = requireTextAtMost(reason, "author moderation reason is required", 1024).trim();
+        AuthorModerationAdvice advice = interactionRepository.adviseOnComment(
+                authorUserId, bookId, commentId, recommendVisible, normalizedReason);
+        audit("author comment moderation advice=" + commentId + " book=" + bookId + " user=" + authorUserId
+                + " recommendation=" + advice.recommendation());
+        return advice;
+    }
+    /**
      * Creates a reader-owned paragraph highlight only after proving that the client-submitted
      * anchor is an exact slice of a currently published chapter.  This blocks forged excerpts,
      * cross-book chapter ids, and annotations created against draft content.
@@ -164,8 +273,23 @@ public class NovelStore {
             String selectedText,
             String note,
             boolean shareIntent) {
-        ensureActive(userId);
+        return annotateParagraph(new CurrentUser(userId, userName, Set.of(Role.READER)), bookId, chapterId,
+                paragraphIndex, selectionStart, selectionEnd, selectedText, note, shareIntent);
+    }
+    @Transactional
+    public ParagraphAnnotation annotateParagraph(
+            CurrentUser actor,
+            long bookId,
+            long chapterId,
+            int paragraphIndex,
+            int selectionStart,
+            int selectionEnd,
+            String selectedText,
+            String note,
+            boolean shareIntent) {
+        ensureActive(actor.id());
         publishedBook(bookId);
+        requireReadablePublishedChapter(actor, bookId, chapterId);
         Chapter chapter = publishedAnnotationChapter(bookId, chapterId);
         String normalizedSelectedText = requireTextAtMost(selectedText, "selected text is required", 2000);
         String normalizedNote = note == null ? "" : note.trim();
@@ -177,8 +301,8 @@ public class NovelStore {
         ParagraphAnnotation annotation = interactionRepository.createParagraphAnnotation(
                 bookId,
                 chapterId,
-                userId,
-                userName,
+                actor.id(),
+                actor.name(),
                 paragraphIndex,
                 selectionStart,
                 selectionEnd,
@@ -187,12 +311,23 @@ public class NovelStore {
                 shareIntent,
                 status);
         audit("paragraph annotation=" + annotation.id() + " book=" + bookId + " chapter=" + chapterId
-                + " user=" + userId + " share=" + shareIntent + " state=" + status);
+                + " user=" + actor.id() + " share=" + shareIntent + " state=" + status);
         return annotation;
     }
     public ParagraphAnnotationPage publicParagraphAnnotations(long bookId, long chapterId, int page, int size) {
         publishedBook(bookId);
-        publishedAnnotationChapter(bookId, chapterId);
+        requirePublicPreviewChapter(bookId, chapterId);
+        return interactionRepository.findPublicParagraphAnnotations(bookId, chapterId, page, size);
+    }
+    /**
+     * Paid/member/management readers may inspect the same approved public-share projection for a
+     * readable later chapter. The public endpoint remains preview-only so it cannot be replayed
+     * without the current account's entitlement check.
+     */
+    public ParagraphAnnotationPage readerPublicParagraphAnnotations(
+            CurrentUser actor, long bookId, long chapterId, int page, int size) {
+        ensureActive(actor.id());
+        requireReadablePublishedChapter(actor, bookId, chapterId);
         return interactionRepository.findPublicParagraphAnnotations(bookId, chapterId, page, size);
     }
     public ParagraphAnnotationPage userParagraphAnnotations(
@@ -220,6 +355,23 @@ public class NovelStore {
                 + " state=" + annotation.status());
         return annotation;
     }
+    /** See {@link #adviseOnComment(long, long, long, boolean, String)}. */
+    @Transactional
+    public AuthorModerationAdvice adviseOnParagraphAnnotation(
+            long authorUserId,
+            long bookId,
+            long annotationId,
+            boolean recommendVisible,
+            String reason) {
+        ensureActive(authorUserId);
+        owned(authorUserId, bookId);
+        String normalizedReason = requireTextAtMost(reason, "author moderation reason is required", 1024).trim();
+        AuthorModerationAdvice advice = interactionRepository.adviseOnParagraphAnnotation(
+                authorUserId, bookId, annotationId, recommendVisible, normalizedReason);
+        audit("author paragraph annotation moderation advice=" + annotationId + " book=" + bookId
+                + " user=" + authorUserId + " recommendation=" + advice.recommendation());
+        return advice;
+    }
     @Transactional
     public double rate(long userId,long bookId,int rating) {
         ensureActive(userId);
@@ -232,9 +384,18 @@ public class NovelStore {
     public Map<String,Object> vote(long userId,long bookId,String type) {
         ensureActive(userId);
         publishedBook(bookId);
-        long count = interactionRepository.recordVote(userId, bookId, type);
-        audit("vote book=" + bookId + " user=" + userId + " type=" + type);
-        return Map.of("type",type,"count",count);
+        CommercialRules rules = commercialRuleService.current();
+        InteractionRepository.VoteReceipt receipt = interactionRepository.recordVote(
+                userId,
+                bookId,
+                type,
+                rules.voteLimit(normalizedVoteType(type)));
+        audit("vote book=" + bookId + " user=" + userId + " type=" + receipt.type());
+        return Map.of(
+                "type", receipt.type(),
+                "count", receipt.count(),
+                "remaining", receipt.remaining(),
+                "limit", receipt.limit());
     }
     public InteractionStats interactionStats(long bookId) {
         publishedBook(bookId);
@@ -249,6 +410,10 @@ public class NovelStore {
         if (existing.isPresent()) {
             return replayReward(existing.get(), bookId, amount);
         }
+        CommercialRules rules = commercialRuleService.current();
+        if (amount < rules.rewardMinimumTokens() || amount > rules.rewardMaximumTokensPerReward()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "reward amount is outside the configured range");
+        }
         Book book = publishedBook(bookId);
         Optional<WalletRepository.RewardRecord> created =
                 walletRepository.createRewardRecord(userId, book.authorId(), bookId, amount, key);
@@ -260,6 +425,11 @@ public class NovelStore {
             return replayReward(committed, bookId, amount);
         }
         WalletRepository.RewardRecord reward = created.get();
+        walletRepository.reserveRewardDailyQuota(
+                userId,
+                java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")),
+                amount,
+                rules.rewardMaximumTokensPerDay());
         int balance = walletRepository.debitTokens(
                 userId,
                 amount,
@@ -432,6 +602,7 @@ public class NovelStore {
     @Transactional
     public Volume createVolume(long userId, long bookId, String title) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         String normalizedTitle = requireText(title, "volume title is required");
         Volume volume = catalogRepository.createVolume(book.id(), normalizedTitle, catalogRepository.nextVolumeOrder(book.id()));
         audit("create volume=" + volume.id() + " book=" + book.id());
@@ -457,6 +628,7 @@ public class NovelStore {
             String content,
             Long volumeId) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
         String normalizedTitle = requireTextAtMost(title, "chapter title is required", 255).trim();
         String normalizedContent = requireTextAtMost(content, "chapter content is required", 20000);
@@ -524,6 +696,7 @@ public class NovelStore {
     @Transactional
     public void deleteChapter(long userId, long bookId, long chapterId) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
         if (!isChapterSafeToDelete(chapter.status())) {
             throw new IllegalStateException("only draft or scheduled chapters can be deleted");
@@ -558,6 +731,7 @@ public class NovelStore {
     @Transactional
     public Chapter addChapter(long userId, long bookId, Long volumeId, String title, String content, boolean submit) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         String normalizedTitle = requireTextAtMost(title, "chapter title is required", 255).trim();
         String normalizedContent = requireTextAtMost(content, "chapter content is required", 20000);
         if (volumeId != null) {
@@ -615,6 +789,7 @@ public class NovelStore {
     @Transactional
     public Chapter submitChapter(long userId, long bookId, long chapterId) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
         if (chapter.status() != ChapterStatus.DRAFT) {
             throw new IllegalStateException("only draft chapters can be submitted");
@@ -651,6 +826,7 @@ public class NovelStore {
             throw new IllegalArgumentException("scheduled publication time must be in the future");
         }
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
         if (chapter.status() != ChapterStatus.DRAFT) {
             throw new IllegalStateException("only draft chapters can be scheduled");
@@ -715,6 +891,9 @@ public class NovelStore {
             if (expectedAuthorId != null && book.authorId() != expectedAuthorId) {
                 continue;
             }
+            if (book.status() == BookStatus.OFFLINE) {
+                continue;
+            }
             Chapter chapter;
             try {
                 chapter = lockedChapterForBook(book, candidate.id());
@@ -775,6 +954,10 @@ public class NovelStore {
     @Transactional
     public Book submitBook(long userId,long bookId) {
         Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
+        if (book.status() != BookStatus.DRAFT && book.status() != BookStatus.REJECTED) {
+            throw new IllegalStateException("only draft or rejected books can be submitted for review");
+        }
         Book updated = copyBook(book, book.words(), BookStatus.PENDING_REVIEW);
         catalogRepository.updateBook(updated);
         queueWholeWorkSnapshot(updated);
@@ -840,6 +1023,59 @@ public class NovelStore {
     }
     public List<Book> authorBooks(long userId) { return catalogRepository.findByAuthorId(userId); }
     public List<Book> pending() { return catalogRepository.findPendingReview(); }
+    public List<Book> availabilityManagedBooks() { return catalogRepository.findAvailabilityManagedBooks(); }
+
+    /**
+     * Removes a currently public work from every public catalog query. The row remains available
+     * to its author and administrators, and the mandatory reason is retained independently of a
+     * transient dashboard log.
+     */
+    @Transactional
+    public Book takeDownBook(long operatorUserId, long bookId, String reason) {
+        requireOperatorUserId(operatorUserId);
+        String normalizedReason = requireTextAtMost(reason, "book takedown reason is required", 1024).trim();
+        Book book = lockedBook(bookId);
+        if (book.status() != BookStatus.PUBLISHED) {
+            throw new IllegalStateException("only published books can be taken down");
+        }
+        Book updated = copyBook(book, book.words(), BookStatus.OFFLINE);
+        catalogRepository.updateBook(updated);
+        catalogRepository.recordBookStatusAudit(
+                book.id(), "TAKEDOWN", book.status(), updated.status(), normalizedReason, operatorUserId);
+        audit("book-takedown operator=" + operatorUserId + " book=" + book.id());
+        return updated;
+    }
+
+    /**
+     * A takedown is never reversed directly to public visibility. Reinstatement creates fresh
+     * immutable evidence and returns the work to the normal full-work human review queue.
+     */
+    @Transactional
+    public Book restoreBookForReview(long operatorUserId, long bookId, String reason) {
+        requireOperatorUserId(operatorUserId);
+        String normalizedReason = requireTextAtMost(reason, "book restoration reason is required", 1024).trim();
+        Book book = lockedBook(bookId);
+        if (book.status() != BookStatus.OFFLINE) {
+            throw new IllegalStateException("only offline books can be restored for review");
+        }
+        Book updated = copyBook(book, book.words(), BookStatus.PENDING_REVIEW);
+        catalogRepository.updateBook(updated);
+        queueWholeWorkSnapshot(updated);
+        catalogRepository.recordBookStatusAudit(
+                book.id(), "RESTORE_FOR_REVIEW", book.status(), updated.status(), normalizedReason, operatorUserId);
+        audit("book-restore-for-review operator=" + operatorUserId + " book=" + book.id());
+        return updated;
+    }
+
+    public List<BookStatusAudit> bookStatusAudits(long bookId, int limit) {
+        book(bookId);
+        return catalogRepository.findBookStatusAudits(bookId, limit);
+    }
+
+    public List<BookStatusAudit> authorBookStatusAudits(long userId, long bookId, int limit) {
+        owned(userId, bookId);
+        return catalogRepository.findBookStatusAudits(bookId, limit);
+    }
     public List<String> audits() { return auditTrail.recent(); }
     public List<ContentModerationAudit> moderationAudits(String contentType, int limit) {
         return contentModerationService.recentAudits(contentType, limit);
@@ -877,6 +1113,16 @@ public class NovelStore {
     }
     private static boolean awaitingFullWorkReview(BookStatus status) {
         return status == BookStatus.PENDING_REVIEW || status == BookStatus.NEEDS_REVIEW;
+    }
+    private static void requireOperatorUserId(long operatorUserId) {
+        if (operatorUserId <= 0) {
+            throw new IllegalArgumentException("operator user id is required");
+        }
+    }
+    private static void requireNotOfflineForAuthorMutation(Book book) {
+        if (book.status() == BookStatus.OFFLINE) {
+            throw new IllegalStateException("offline books can only be restored by an administrator");
+        }
     }
     /** A model result may release a chapter, but only a human review can set a book to PUBLISHED. */
     private static BookStatus nextBookStatusForChapterSubmission(
@@ -929,6 +1175,49 @@ public class NovelStore {
         }
         return normalized;
     }
+
+    private String fullBookAccessSource(CurrentUser actor, Book book) {
+        if (actor == null) return null;
+        if (actor.roles().contains(Role.ADMIN)) return "ADMIN";
+        if (actor.roles().contains(Role.AUTHOR) && actor.id() == book.authorId()) return "AUTHOR";
+        if (walletRepository.hasBookEntitlement(actor.id(), book.id())) return "BOOK_ENTITLEMENT";
+        if (walletRepository.hasActiveMembership(actor.id(), Instant.now())) return "MEMBERSHIP";
+        return null;
+    }
+
+    /** Validates both publication and the same entitlement policy used by reader content views. */
+    private void requireReadablePublishedChapter(CurrentUser actor, long bookId, long chapterId) {
+        Book book = publishedBook(bookId);
+        List<Chapter> chapters = publishedChapters(bookId);
+        int chapterIndex = -1;
+        for (int index = 0; index < chapters.size(); index++) {
+            if (chapters.get(index).id() == chapterId) {
+                chapterIndex = index;
+                break;
+            }
+        }
+        if (chapterIndex < 0) {
+            throw new IllegalArgumentException("chapter is not published for this book");
+        }
+        if (chapterIndex == 0 || fullBookAccessSource(actor, book) != null) return;
+        throw new SecurityException("reading entitlement is required for this chapter");
+    }
+
+    /** Public annotation excerpts must not become a side channel around a locked chapter body. */
+    private void requirePublicPreviewChapter(long bookId, long chapterId) {
+        List<Chapter> chapters = publishedChapters(bookId);
+        if (chapters.stream().noneMatch(chapter -> chapter.id() == chapterId)) {
+            throw new IllegalArgumentException("chapter is not published for this book");
+        }
+        if (chapters.isEmpty() || chapters.getFirst().id() != chapterId) {
+            throw new SecurityException("reading entitlement is required for this chapter");
+        }
+    }
+
+    private static CurrentUser readerActor(long userId) {
+        return new CurrentUser(userId, "", Set.of(Role.READER));
+    }
+
     private void validatePublishedCommentChapter(long bookId, Long chapterId) {
         if (chapterId != null && publishedChapters(bookId).stream().noneMatch(chapter -> chapter.id() == chapterId.longValue())) {
             throw new IllegalArgumentException("chapter is not published for this book");
@@ -1027,6 +1316,13 @@ public class NovelStore {
     private static String normalizeRedemptionCode(String code) {
         if (code == null || code.isBlank()) throw new IllegalArgumentException("兑换码不能为空");
         return code.trim().toUpperCase(Locale.ROOT);
+    }
+    private static String normalizedVoteType(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("recommendation", "monthly").contains(normalized)) {
+            throw new IllegalArgumentException("unsupported vote type");
+        }
+        return normalized;
     }
     private Map<String,Object> replayReward(WalletRepository.RewardRecord reward, long bookId, int amount) {
         if (reward.bookId() != bookId || reward.amount() != amount) {

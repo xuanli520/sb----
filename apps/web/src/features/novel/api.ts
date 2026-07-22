@@ -1,4 +1,14 @@
 export type Book = { id:number; title:string; author:string; category:string; words:number; synopsis:string; status:string; serialStatus:string; cover:string; heat?:number; purchasePrice:number };
+export type BookStatusAudit = {
+  id:number;
+  bookId:number;
+  action:'TAKEDOWN' | 'RESTORE_FOR_REVIEW';
+  previousStatus:'PUBLISHED' | 'OFFLINE';
+  status:'OFFLINE' | 'PENDING_REVIEW';
+  reason:string;
+  operatorUserId:number;
+  createdAt:string;
+};
 export type EditorialRecommendation = { book:Book; rank:number };
 export type EditorialRecommendationAudit = {
   id:number;
@@ -47,7 +57,29 @@ export type AccountEntitlements = {
   membership:AccountMembershipEntitlement | null;
   books:AccountBookEntitlement[];
 };
+export type CommercialRules = {
+  membershipDaysMaximumPerCode:number;
+  recommendationVotesPerDay:number;
+  monthlyVotesPerMonth:number;
+  rewardMinimumTokens:number;
+  rewardMaximumTokensPerReward:number;
+  rewardMaximumTokensPerDay:number;
+  updatedAt:string;
+};
+export type CommercialRuleAudit = {
+  id:number;
+  previousRules:CommercialRules;
+  updatedRules:CommercialRules;
+  reason:string;
+  operatorUserId:number;
+  createdAt:string;
+};
 export type NovelCommentStatus = 'PENDING_REVIEW' | 'VISIBLE' | 'REJECTED';
+export type AuthorModerationAdvice = {
+  recommendation:'RECOMMEND_VISIBLE' | 'RECOMMEND_REJECTED';
+  reason:string;
+  updatedAt:string;
+};
 export type NovelComment = {
   id:number;
   bookId:number;
@@ -57,6 +89,7 @@ export type NovelComment = {
   content:string;
   status:NovelCommentStatus;
   createdAt:string;
+  authorModerationAdvice?:AuthorModerationAdvice;
 };
 export type NovelCommentPage = {
   items:NovelComment[];
@@ -80,10 +113,34 @@ export type ParagraphAnnotation = {
   shareIntent:boolean;
   status:ParagraphAnnotationStatus;
   createdAt:string;
+  authorModerationAdvice?:AuthorModerationAdvice;
 };
 export type ParagraphAnnotationPage = {
   items:ParagraphAnnotation[];
   meta:{ total:number; page:number; size:number };
+};
+export type PublicParagraphAnnotation = {
+  id:number;
+  bookId:number;
+  chapterId:number;
+  authorName:string;
+  paragraphIndex:number;
+  selectionStart:number;
+  selectionEnd:number;
+  selectedText:string;
+  note:string;
+  createdAt:string;
+};
+export type PublicParagraphAnnotationPage = {
+  items:PublicParagraphAnnotation[];
+  meta:{ total:number; page:number; size:number };
+};
+export type InteractionStats = {
+  visibleCommentCount:number;
+  ratingCount:number;
+  averageRating:number;
+  recommendationVoteCount:number;
+  monthlyVoteCount:number;
 };
 export type DiscoveryWordCountRange = { key:string; label:string; minWords:number | null; maxWords:number | null };
 export type DiscoveryFacets = { categories:string[]; serialStatuses:string[]; wordCountRanges:DiscoveryWordCountRange[] };

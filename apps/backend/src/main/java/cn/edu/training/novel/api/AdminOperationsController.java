@@ -3,6 +3,8 @@ package cn.edu.training.novel.api;
 import cn.edu.training.novel.domain.AccountStatusAudit;
 import cn.edu.training.novel.domain.AccountStatusChange;
 import cn.edu.training.novel.domain.AdminAccountPage;
+import cn.edu.training.novel.domain.AdminUserBehaviorEventPage;
+import cn.edu.training.novel.domain.AdminUserBehaviorSummary;
 import cn.edu.training.novel.domain.OperatingTaxonomyAudit;
 import cn.edu.training.novel.domain.OperatingTaxonomyItem;
 import cn.edu.training.novel.domain.Role;
@@ -74,6 +76,24 @@ public class AdminOperationsController implements UserResolver {
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
         administrator(request);
         return ApiResponse.ok(service.accountStatusAudits(accountId, limit));
+    }
+
+    @GetMapping("/accounts/{accountId}/behavior-summary")
+    ApiResponse<AdminUserBehaviorSummary> accountBehaviorSummary(
+            HttpServletRequest request,
+            @PathVariable @Min(1) long accountId) {
+        CurrentUser administrator = administrator(request);
+        return ApiResponse.ok(service.accountBehaviorSummary(administrator.id(), accountId));
+    }
+
+    @GetMapping("/accounts/{accountId}/behavior-events")
+    ApiResponse<AdminUserBehaviorEventPage> accountBehaviorEvents(
+            HttpServletRequest request,
+            @PathVariable @Min(1) long accountId,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        CurrentUser administrator = administrator(request);
+        return ApiResponse.ok(service.accountBehaviorEvents(administrator.id(), accountId, page, size));
     }
 
     @GetMapping("/taxonomy/{type}")

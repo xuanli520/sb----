@@ -2,6 +2,7 @@ package cn.edu.training.novel;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import cn.edu.training.novel.service.AdminOperationsService;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Duration;
@@ -46,6 +47,7 @@ class MySqlPersistenceIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired NovelStore store;
     @Autowired AuthService authService;
+    @Autowired AdminOperationsService adminOperationsService;
 
     @DynamicPropertySource
     static void mysqlProperties(DynamicPropertyRegistry registry) {
@@ -176,6 +178,48 @@ class MySqlPersistenceIT {
                 "SELECT balance FROM novel_token_balance WHERE user_id = ?",
                 Long.class,
                 readerId)).isEqualTo(70L);
+    }
+
+    @Test
+    void pagesARegisteredAccountsRedactedBehaviorTimelineWithMysql() {
+        AuthService.AuthenticatedSession account = authService.register(
+                "mysql.behavior.reader@example.test",
+                "MySQL Behavior Reader",
+                "correct-horse-battery-staple");
+        long accountId = account.user().id();
+        jdbc.update("INSERT INTO novel_reader_progress(user_id, book_id, chapter_id, character_offset, updated_at) "
+                + "VALUES (?, 1, 1001, 8, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_bookshelf(user_id, book_id, added_at) VALUES (?, 1, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_daily_checkin(user_id, checkin_date, awarded_points, created_at) "
+                + "VALUES (?, CURRENT_DATE, 10, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_book_entitlement(user_id, book_id, source_type, source_reference, purchase_amount, acquired_at) "
+                + "VALUES (?, 1, 'PURCHASE', '1', 30, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_redemption_code(code, batch_no, benefit_type, token_amount, membership_days, status, "
+                + "redeemed_by_user_id, redeemed_at, created_at, updated_at) "
+                + "VALUES ('MYSQL-BEHAVIOR-REDACTED', 'MYSQL-IT', 'TOKEN', 100, 0, 'REDEEMED', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                accountId);
+        jdbc.update("INSERT INTO novel_reward_record(rewarder_user_id, author_id, book_id, amount, created_at) "
+                + "VALUES (?, 2, 1, 20, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_comment(book_id, chapter_id, user_id, author_name, content, status, created_at, updated_at) "
+                + "VALUES (1, 1001, ?, 'MySQL Behavior Reader', 'mysql-private-comment', 'VISIBLE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                accountId);
+        jdbc.update("INSERT INTO novel_reader_activity_event(user_id, book_id, chapter_id, event_type, activity_date, occurred_at) "
+                + "VALUES (?, 1, 1001, 'READING_PROGRESS', CURRENT_DATE, CURRENT_TIMESTAMP)", accountId);
+
+        var summary = adminOperationsService.accountBehaviorSummary(1L, accountId);
+        var firstPage = adminOperationsService.accountBehaviorEvents(1L, accountId, 0, 3);
+        var secondPage = adminOperationsService.accountBehaviorEvents(1L, accountId, 1, 3);
+
+        assertThat(summary.readingProgressCount()).isEqualTo(1L);
+        assertThat(summary.bookPurchaseCount()).isEqualTo(1L);
+        assertThat(summary.redeemedCodeCount()).isEqualTo(1L);
+        assertThat(summary.rewardCount()).isEqualTo(1L);
+        assertThat(summary.commentCount()).isEqualTo(1L);
+        assertThat(summary.readerActivityCount()).isEqualTo(1L);
+        assertThat(firstPage.total()).isEqualTo(8L);
+        assertThat(firstPage.items()).hasSize(3);
+        assertThat(secondPage.items()).hasSize(3);
+        assertThat(firstPage.items().toString()).doesNotContain("MYSQL-BEHAVIOR-REDACTED", "mysql-private-comment");
     }
 
     private Map<String, Object> rewardAfterStart(

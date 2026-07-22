@@ -4,6 +4,8 @@ import cn.edu.training.novel.domain.AccountStatusAudit;
 import cn.edu.training.novel.domain.AccountStatusChange;
 import cn.edu.training.novel.domain.AdminAccount;
 import cn.edu.training.novel.domain.AdminAccountPage;
+import cn.edu.training.novel.domain.AdminUserBehaviorEventPage;
+import cn.edu.training.novel.domain.AdminUserBehaviorSummary;
 import cn.edu.training.novel.domain.OperatingTaxonomyAudit;
 import cn.edu.training.novel.domain.OperatingTaxonomyItem;
 import cn.edu.training.novel.domain.Role;
@@ -39,6 +41,23 @@ public class AdminOperationsService {
     public List<AccountStatusAudit> accountStatusAudits(long accountId, int limit) {
         requireExistingAccount(accountId);
         return repository.findAccountStatusAudits(accountId, limit);
+    }
+
+    /** Every sensitive behavior inspection identifies both the operator and target in audit. */
+    public AdminUserBehaviorSummary accountBehaviorSummary(long operatorUserId, long accountId) {
+        AdminAccount account = existingAccount(accountId);
+        AdminUserBehaviorSummary summary = repository.accountBehaviorSummary(account);
+        auditTrail.record("account-behavior-summary operator=" + operatorUserId + " account=" + accountId);
+        return summary;
+    }
+
+    /** The timeline excludes reader text, secrets, balances, and session identifiers by design. */
+    public AdminUserBehaviorEventPage accountBehaviorEvents(long operatorUserId, long accountId, int page, int size) {
+        existingAccount(accountId);
+        AdminUserBehaviorEventPage events = repository.findAccountBehaviorEvents(accountId, page, size);
+        auditTrail.record("account-behavior-events operator=" + operatorUserId + " account=" + accountId
+                + " page=" + page + " size=" + size);
+        return events;
     }
 
     @Transactional
@@ -144,9 +163,12 @@ public class AdminOperationsService {
     }
 
     private void requireExistingAccount(long accountId) {
-        if (repository.findAccount(accountId).isEmpty()) {
-            throw new java.util.NoSuchElementException("account not found");
-        }
+        existingAccount(accountId);
+    }
+
+    private AdminAccount existingAccount(long accountId) {
+        return repository.findAccount(accountId)
+                .orElseThrow(() -> new java.util.NoSuchElementException("account not found"));
     }
 
     private static Boolean parseEnabled(String status) {

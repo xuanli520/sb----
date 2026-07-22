@@ -44,16 +44,29 @@ import { InlineNotice, NovelShell, formatWordCount } from '@/components/novel/No
 import {
   AccountEntitlements,
   Book,
+  InteractionStats,
   NovelComment,
   NovelCommentPage,
   ParagraphAnnotation,
   ParagraphAnnotationPage,
+  PublicParagraphAnnotation,
+  PublicParagraphAnnotationPage,
   novelApi,
 } from '@/features/novel/api';
 
-type Chapter = { id: number; title: string; content: string; published: boolean; orderNo: number };
+type ChapterAccess = 'PREVIEW' | 'BOOK_ENTITLEMENT' | 'MEMBERSHIP' | 'AUTHOR' | 'ADMIN' | 'ENTITLEMENT_REQUIRED';
+type Chapter = {
+  id: number;
+  title: string;
+  content: string | null;
+  published: boolean;
+  orderNo: number;
+  readable?: boolean;
+  access?: ChapterAccess;
+};
 type BookmarkItem = { id: number; chapterId: number; offset: number; note: string; createdAt: string };
-type Detail = { book: Book; chapters: Chapter[] };
+type ReaderAccess = { fullBookAccess: boolean; source: Exclude<ChapterAccess, 'ENTITLEMENT_REQUIRED'> };
+type Detail = { book: Book; chapters: Chapter[]; comments?: NovelComment[]; access?: ReaderAccess };
 type ReaderFont = 'serif' | 'sans';
 type Preference = { theme: 'paper' | 'sepia' | 'night'; font: ReaderFont; fontSize: number; lineHeight: number; brightness: number; pageMode: 'slide' | 'cover' | 'simulation' };
 type ReadingProgress = { bookId: number; chapterId: number; offset: number; updatedAt: string };
@@ -73,9 +86,19 @@ type PageTurnDirection = 'forward' | 'backward';
 type ReaderTheme = { page: string; text: string; muted: string; border: string };
 type ChapterTransition = {
   id: number;
-  chapter: Chapter;
+  chapter: ReadableChapter;
   direction: PageTurnDirection;
   mode: Preference['pageMode'];
+};
+type ReadableChapter = Chapter & { content: string };
+type HighlightAnnotation = {
+  id: number;
+  paragraphIndex: number;
+  selectionStart: number;
+  selectionEnd: number;
+  selectedText: string;
+  status: ParagraphAnnotation['status'];
+  source: 'personal' | 'public';
 };
 
 const chapterTransitionDuration = 460;
@@ -137,6 +160,16 @@ function formatTokenAmount(value: number) {
   return value.toLocaleString('zh-CN');
 }
 
+function fullBookAccessLabel(source: ReaderAccess['source'] | undefined) {
+  return {
+    BOOK_ENTITLEMENT: '已获得整本阅读权益。',
+    MEMBERSHIP: '会员权益已解锁全书。',
+    AUTHOR: '作者身份可阅读本作品全书。',
+    ADMIN: '站长身份可阅读本作品全书。',
+    PREVIEW: '当前正在阅读试读章节。',
+  }[source ?? 'PREVIEW'];
+}
+
 function purchaseFailureMessage(reason: unknown) {
   const message = reason instanceof Error ? reason.message : '获取整本阅读权益失败，请稍后重试。';
   return /insufficient tokens/i.test(message)
@@ -160,19 +193,50 @@ function chapterParagraphs(content: string) {
   return content.replace(/\r\n?/g, '\n').split('\n').filter((paragraph) => paragraph.length > 0);
 }
 
-function annotationHighlightClass(status: ParagraphAnnotation['status']) {
+function isReadableChapter(chapter: Chapter | undefined): chapter is ReadableChapter {
+  return Boolean(chapter && chapter.readable !== false && typeof chapter.content === 'string');
+}
+
+function isDetail(value: unknown): value is Detail {
+  return typeof value === 'object'
+    && value !== null
+    && Array.isArray((value as Detail).chapters)
+    && typeof (value as Detail).book === 'object'
+    && (value as Detail).book !== null;
+}
+
+function isCommentPage(value: unknown): value is NovelCommentPage {
+  return typeof value === 'object' && value !== null && Array.isArray((value as NovelCommentPage).items);
+}
+
+function isPublicAnnotationPage(value: unknown): value is PublicParagraphAnnotationPage {
+  return typeof value === 'object' && value !== null && Array.isArray((value as PublicParagraphAnnotationPage).items);
+}
+
+function isInteractionStats(value: unknown): value is InteractionStats {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as InteractionStats).visibleCommentCount === 'number'
+    && typeof (value as InteractionStats).ratingCount === 'number'
+    && typeof (value as InteractionStats).averageRating === 'number'
+    && typeof (value as InteractionStats).recommendationVoteCount === 'number'
+    && typeof (value as InteractionStats).monthlyVoteCount === 'number';
+}
+
+function annotationHighlightClass(annotation: HighlightAnnotation) {
+  if (annotation.source === 'public') return 'bg-emerald-100/90 text-inherit underline decoration-emerald-700/50 decoration-1 underline-offset-4';
   return {
     PRIVATE: 'bg-amber-200/80 text-inherit',
     PENDING_REVIEW: 'bg-sky-200/80 text-inherit',
     VISIBLE: 'bg-emerald-200/80 text-inherit',
     REJECTED: 'bg-stone-200 text-inherit decoration-stone-500 line-through',
-  }[status];
+  }[annotation.status];
 }
 
 function highlightedParagraph(
   paragraph: string,
   paragraphIndex: number,
-  annotations: ParagraphAnnotation[],
+  annotations: HighlightAnnotation[],
 ) {
   const anchors = annotations.filter((annotation) => annotation.paragraphIndex === paragraphIndex
     && annotation.selectionStart >= 0
@@ -197,7 +261,8 @@ function highlightedParagraph(
       <mark
         key={`${start}-${end}-${latest.id}`}
         data-annotation-status={latest.status}
-        className={annotationHighlightClass(latest.status)}
+        data-annotation-source={latest.source}
+        className={annotationHighlightClass(latest)}
       >
         {text}
       </mark>
@@ -249,11 +314,11 @@ function ChapterCopy({
   onParagraphSelection,
 }: {
   bookTitle: string;
-  chapter: Chapter;
+  chapter: ReadableChapter;
   theme: ReaderTheme;
   headingId?: string;
   compact?: boolean;
-  annotations?: ParagraphAnnotation[];
+  annotations?: HighlightAnnotation[];
   onParagraphSelection?: (paragraphIndex: number, paragraph: string, element: HTMLParagraphElement) => void;
 }) {
   const headingClassName = compact ? 'mt-3 text-2xl font-semibold leading-tight' : 'mt-3 text-3xl font-semibold leading-tight';
@@ -300,10 +365,12 @@ function ChapterDirectoryList({
             variant="ghost"
             onClick={() => onSelect(item)}
             aria-current={item.id === activeChapterId ? 'page' : undefined}
-            className={`h-auto w-full justify-start rounded-none px-2 py-2.5 text-left transition-colors ${item.id === activeChapterId ? 'bg-emerald-50 font-semibold text-emerald-900 hover:bg-emerald-50 hover:text-emerald-900' : 'text-stone-600 hover:bg-stone-50 hover:text-stone-950'}`}
+            aria-label={isReadableChapter(item) ? `第 ${item.orderNo} 章 · ${item.title}` : `第 ${item.orderNo} 章 · ${item.title}，需要阅读权益`}
+            className={`h-auto w-full justify-start rounded-none px-2 py-2.5 text-left transition-colors ${item.id === activeChapterId ? 'bg-emerald-50 font-semibold text-emerald-900 hover:bg-emerald-50 hover:text-emerald-900' : isReadableChapter(item) ? 'text-stone-600 hover:bg-stone-50 hover:text-stone-950' : 'text-stone-500 hover:bg-stone-50 hover:text-stone-800'}`}
           >
             <span className="w-5 shrink-0 text-xs text-stone-400">{item.orderNo}</span>
-            <span className="truncate">{item.title}</span>
+            <span className="min-w-0 flex-1 truncate">{item.title}</span>
+            {!isReadableChapter(item) ? <Coins className="ml-2 shrink-0 text-stone-400" size={14} aria-hidden="true" /> : null}
           </Button>
         </li>
       ))}
@@ -408,6 +475,10 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [saved, setSaved] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [paragraphAnnotations, setParagraphAnnotations] = useState<ParagraphAnnotation[]>([]);
+  const [publicParagraphAnnotations, setPublicParagraphAnnotations] = useState<PublicParagraphAnnotation[]>([]);
+  const [publicAnnotationsLoading, setPublicAnnotationsLoading] = useState(false);
+  const [publicAnnotationsError, setPublicAnnotationsError] = useState('');
+  const [publicAnnotationsReloadVersion, setPublicAnnotationsReloadVersion] = useState(0);
   const [paragraphAnnotationDraft, setParagraphAnnotationDraft] = useState<ParagraphAnnotationDraft>();
   const [paragraphAnnotationNote, setParagraphAnnotationNote] = useState('');
   const [paragraphAnnotationShareIntent, setParagraphAnnotationShareIntent] = useState(false);
@@ -416,6 +487,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentsError, setCommentsError] = useState('');
   const [commentsReloadVersion, setCommentsReloadVersion] = useState(0);
+  const [interactionStats, setInteractionStats] = useState<InteractionStats>();
+  const [interactionStatsReloadVersion, setInteractionStatsReloadVersion] = useState(0);
   const [rating, setRating] = useState(0);
   const [rewardAmount, setRewardAmount] = useState('');
   const [rewardState, setRewardState] = useState<RewardState>('idle');
@@ -436,6 +509,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const transitionTimer = useRef<number>();
   const transitionSequence = useRef(0);
   const commentRequestSequence = useRef(0);
+  const publicAnnotationRequestSequence = useRef(0);
+  const interactionStatsRequestSequence = useRef(0);
   const activeChapterRef = useRef<number>();
   const rewardAttempt = useRef<RewardAttempt>();
   const rewardRequestInFlight = useRef(false);
@@ -471,19 +546,29 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setLoadError('');
       setTokenBalance(undefined);
       setHasBookEntitlement(undefined);
+      setInteractionStats(undefined);
+      setPublicParagraphAnnotations([]);
+      setPublicAnnotationsError('');
       setPurchaseDialogOpen(false);
       setPurchaseError('');
       try {
         const { id } = await params;
-        const bookDetail = await novelApi<Detail>(`public/books/${id}`);
+        const publicDetail = await novelApi<Detail>(`public/books/${id}`);
+        let bookDetail = publicDetail;
+        try {
+          const accountDetail = await novelApi<Detail>(`account/books/${id}/reading`);
+          if (isDetail(accountDetail)) bookDetail = accountDetail;
+        } catch {
+          // Anonymous readers intentionally keep the public preview projection.
+        }
         if (cancelled) return;
 
         setDetail(bookDetail);
 
-        const firstChapter = bookDetail.chapters[0];
+        const firstChapter = bookDetail.chapters.find(isReadableChapter);
         if (!firstChapter) return;
 
-        const [preferencesResult, shelfResult, bookmarksResult, progressResult, annotationsResult, walletResult, entitlementsResult] = await Promise.allSettled([
+        const [preferencesResult, shelfResult, bookmarksResult, progressResult, annotationsResult, walletResult, entitlementsResult, statsResult] = await Promise.allSettled([
           novelApi<Preference>('account/preferences/reading'),
           novelApi<Book[]>('account/bookshelf'),
           novelApi<BookmarkItem[]>(`account/books/${bookDetail.book.id}/bookmarks`),
@@ -491,6 +576,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           novelApi<ParagraphAnnotationPage>(`account/annotations?bookId=${bookDetail.book.id}&size=100`),
           novelApi<{ tokens: number }>('account/wallet'),
           novelApi<AccountEntitlements>('account/entitlements'),
+          novelApi<InteractionStats>(`public/books/${bookDetail.book.id}/interactions`),
         ]);
         if (cancelled) return;
 
@@ -504,12 +590,15 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         if (entitlementsResult.status === 'fulfilled') {
           setHasBookEntitlement(entitlementsResult.value.books.some((item) => item.bookId === bookDetail.book.id));
         }
+        if (statsResult.status === 'fulfilled' && isInteractionStats(statsResult.value)) {
+          setInteractionStats(statsResult.value);
+        }
 
         const savedProgress = progressResult.status === 'fulfilled' && Array.isArray(progressResult.value)
           ? progressResult.value.find((item) => item.bookId === bookDetail.book.id)
           : undefined;
         const restoredChapter = savedProgress
-          ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId)
+          ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId && isReadableChapter(item))
           : undefined;
         const initialChapter = restoredChapter ?? firstChapter;
         activeChapterRef.current = initialChapter.id;
@@ -539,8 +628,15 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     [activeChapterId, detail],
   );
   const activeChapterIndex = detail && chapter ? detail.chapters.findIndex((item) => item.id === chapter.id) : -1;
-  const activeParagraphAnnotations = chapter
-    ? paragraphAnnotations.filter((annotation) => annotation.chapterId === chapter.id)
+  const activeParagraphAnnotations: HighlightAnnotation[] = chapter
+    ? [
+      ...paragraphAnnotations
+        .filter((annotation) => annotation.chapterId === chapter.id)
+        .map((annotation) => ({ ...annotation, source: 'personal' as const })),
+      ...publicParagraphAnnotations
+        .filter((annotation) => annotation.chapterId === chapter.id && !paragraphAnnotations.some((personal) => personal.id === annotation.id))
+        .map((annotation) => ({ ...annotation, status: 'VISIBLE' as const, source: 'public' as const })),
+    ]
     : [];
   const theme = readerTheme[preference.theme];
   const readerPageStyle = {
@@ -558,13 +654,15 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     ? displayedPurchasePrice
     : undefined;
   const hasSufficientTokens = purchasePrice !== undefined && tokenBalance !== undefined && tokenBalance >= purchasePrice;
+  const hasFullBookAccess = detail?.access?.fullBookAccess === true || hasBookEntitlement === true;
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
   useEffect(() => {
     const bookId = detail?.book.id;
     const chapterId = activeChapterId;
-    if (!bookId || !chapterId) {
+    const activeChapter = detail?.chapters.find((item) => item.id === chapterId);
+    if (!bookId || !chapterId || !isReadableChapter(activeChapter)) {
       commentRequestSequence.current += 1;
       setChapterComments([]);
       setCommentsLoading(false);
@@ -578,9 +676,13 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     setCommentsLoading(true);
     setCommentsError('');
 
-    void novelApi<NovelCommentPage>(`public/books/${bookId}/comments?chapterId=${chapterId}`)
+    const commentPath = detail?.access?.fullBookAccess
+      ? `account/books/${bookId}/comments?chapterId=${chapterId}`
+      : `public/books/${bookId}/comments?chapterId=${chapterId}`;
+    void novelApi<NovelCommentPage>(commentPath, 'reader')
       .then((page) => {
         if (cancelled || requestId !== commentRequestSequence.current) return;
+        if (!isCommentPage(page)) throw new Error('本章评论返回格式无效。');
         setChapterComments(page.items);
       })
       .catch((reason) => {
@@ -593,7 +695,64 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       });
 
     return () => { cancelled = true; };
-  }, [activeChapterId, commentsReloadVersion, detail?.book.id]);
+  }, [activeChapterId, commentsReloadVersion, detail?.access?.fullBookAccess, detail?.book.id, detail?.chapters]);
+
+  useEffect(() => {
+    const bookId = detail?.book.id;
+    const chapterId = activeChapterId;
+    const activeChapter = detail?.chapters.find((item) => item.id === chapterId);
+    if (!bookId || !chapterId || !isReadableChapter(activeChapter)) {
+      publicAnnotationRequestSequence.current += 1;
+      setPublicParagraphAnnotations([]);
+      setPublicAnnotationsLoading(false);
+      setPublicAnnotationsError('');
+      return;
+    }
+
+    const requestId = ++publicAnnotationRequestSequence.current;
+    let cancelled = false;
+    setPublicParagraphAnnotations([]);
+    setPublicAnnotationsLoading(true);
+    setPublicAnnotationsError('');
+    const annotationPath = detail?.access?.fullBookAccess
+      ? `account/books/${bookId}/chapters/${chapterId}/annotations`
+      : `public/books/${bookId}/chapters/${chapterId}/annotations`;
+    void novelApi<PublicParagraphAnnotationPage>(annotationPath, 'reader')
+      .then((page) => {
+        if (cancelled || requestId !== publicAnnotationRequestSequence.current) return;
+        if (!isPublicAnnotationPage(page)) throw new Error('公开段评返回格式无效。');
+        setPublicParagraphAnnotations(page.items);
+      })
+      .catch((reason) => {
+        if (cancelled || requestId !== publicAnnotationRequestSequence.current) return;
+        setPublicAnnotationsError(reason instanceof Error ? reason.message : '公开段评暂时无法加载。');
+      })
+      .finally(() => {
+        if (cancelled || requestId !== publicAnnotationRequestSequence.current) return;
+        setPublicAnnotationsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [activeChapterId, detail?.access?.fullBookAccess, detail?.book.id, detail?.chapters, publicAnnotationsReloadVersion]);
+
+  useEffect(() => {
+    const bookId = detail?.book.id;
+    if (!bookId) {
+      interactionStatsRequestSequence.current += 1;
+      setInteractionStats(undefined);
+      return;
+    }
+    const requestId = ++interactionStatsRequestSequence.current;
+    let cancelled = false;
+    void novelApi<InteractionStats>(`public/books/${bookId}/interactions`)
+      .then((stats) => {
+        if (!cancelled && requestId === interactionStatsRequestSequence.current && isInteractionStats(stats)) setInteractionStats(stats);
+      })
+      .catch(() => {
+        if (!cancelled && requestId === interactionStatsRequestSequence.current) setInteractionStats(undefined);
+      });
+    return () => { cancelled = true; };
+  }, [detail?.book.id, interactionStatsReloadVersion]);
 
   const savePreference = async (next: Preference) => {
     setPreference(next);
@@ -607,6 +766,17 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const selectChapter = async (nextChapter: Chapter) => {
     if (!detail || nextChapter.id === chapter?.id) return;
 
+    if (!isReadableChapter(nextChapter)) {
+      setChapterAnnouncement(`第 ${nextChapter.orderNo} 章《${nextChapter.title}》需要整本阅读权益。`);
+      if (tokenBalance !== undefined && purchasePrice !== undefined) {
+        setPurchaseError('');
+        setPurchaseDialogOpen(true);
+      } else {
+        announce('此章节需要整本阅读权益。登录后可兑换代币或购买整本。', 'error');
+      }
+      return;
+    }
+
     const currentIndex = detail.chapters.findIndex((item) => item.id === chapter?.id);
     const nextIndex = detail.chapters.findIndex((item) => item.id === nextChapter.id);
     const direction: PageTurnDirection = nextIndex > currentIndex ? 'forward' : 'backward';
@@ -614,7 +784,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     transitionSequence.current = transitionId;
 
     if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current);
-    if (!reducedMotion && chapter) {
+    if (!reducedMotion && isReadableChapter(chapter)) {
       setChapterTransition({ id: transitionId, chapter, direction, mode: preference.pageMode });
       transitionTimer.current = window.setTimeout(() => {
         setChapterTransition((current) => current?.id === transitionId ? undefined : current);
@@ -766,6 +936,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         setCommentsError('');
         setChapterComments((items) => items.some((item) => item.id === result.id) ? items : [...items, result]);
       }
+      setInteractionStatsReloadVersion((version) => version + 1);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '发表评论失败，请先登录读者账户。', 'error');
     } finally {
@@ -779,6 +950,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     try {
       await novelApi(`account/books/${detail.book.id}/rating`, 'reader', { method: 'POST', body: JSON.stringify({ rating: value }) });
       setRating(value);
+      setInteractionStatsReloadVersion((version) => version + 1);
       announce(`已为《${detail.book.title}》评分 ${value} 星。`);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '评分失败，请先登录读者账户。', 'error');
@@ -793,6 +965,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     try {
       const result = await novelApi<{ count: number }>(`account/books/${detail.book.id}/votes/${type}`, 'reader', { method: 'POST' });
       const label = type === 'monthly' ? '月票' : '推荐票';
+      setInteractionStatsReloadVersion((version) => version + 1);
       announce(`${label}已送出，作品当前获得 ${result.count} 张${label}。`);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '投票失败，请先登录读者账户。', 'error');
@@ -844,6 +1017,22 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     setPurchaseError('');
     try {
       const result = await novelApi<PurchaseResult>(`account/books/${detail.book.id}/purchase`, 'reader', { method: 'POST' });
+      try {
+        const refreshedDetail = await novelApi<Detail>(`account/books/${detail.book.id}/reading`, 'reader');
+        if (isDetail(refreshedDetail)) {
+          setDetail(refreshedDetail);
+          const restoredChapter = refreshedDetail.chapters.find((item) => item.id === activeChapterRef.current && isReadableChapter(item));
+          const firstReadableChapter = refreshedDetail.chapters.find(isReadableChapter);
+          const nextChapter = restoredChapter ?? firstReadableChapter;
+          if (nextChapter) {
+            activeChapterRef.current = nextChapter.id;
+            setActiveChapterId(nextChapter.id);
+          }
+        }
+      } catch {
+        // The purchase is already committed. Keep the entitlement state and allow the next route
+        // load to recover the protected reading projection instead of reporting a false failure.
+      }
       setTokenBalance(result.balance);
       setHasBookEntitlement(true);
       setPurchaseDialogOpen(false);
@@ -859,7 +1048,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     return <NovelShell workspace="reader"><div className="grid min-h-[60vh] place-items-center text-sm text-stone-600">正在打开章节...</div></NovelShell>;
   }
 
-  if (!detail || !chapter) {
+  if (!detail || !isReadableChapter(chapter)) {
     return (
       <NovelShell workspace="reader">
         <div className="mx-auto max-w-lg py-20">
@@ -908,9 +1097,9 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <Coins className="mt-0.5 shrink-0 text-emerald-700" size={17} aria-hidden="true" />
               <div className="min-w-0">
                 <h2 id="reader-entitlement-title" className="text-sm font-semibold text-stone-950">本书权益</h2>
-                {hasBookEntitlement ? (
+                {hasFullBookAccess ? (
                   <>
-                    <p className="mt-2 text-sm leading-6 text-emerald-800">已获得整本阅读权益。</p>
+                    <p className="mt-2 text-sm leading-6 text-emerald-800">{detail?.access?.fullBookAccess ? fullBookAccessLabel(detail.access.source) : '已获得整本阅读权益。'}</p>
                     <Button asChild variant="link" size="sm" className="mt-1 h-auto rounded-none px-0 text-emerald-800 hover:text-emerald-950">
                       <Link href="/account">查看账户权益</Link>
                     </Button>
@@ -1088,6 +1277,32 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
                 onParagraphSelection={captureParagraphSelection}
               />
 
+              <section className="mt-8 border-t pt-5" style={{ borderColor: theme.border }} aria-labelledby="public-annotations-heading">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 id="public-annotations-heading" className="text-sm font-semibold">公开段评</h2>
+                  {publicParagraphAnnotations.length > 0 ? <span className="text-xs" style={{ color: theme.muted }}>{publicParagraphAnnotations.length} 条</span> : null}
+                </div>
+                {publicAnnotationsLoading ? <p className="mt-3 text-sm" style={{ color: theme.muted }}>正在加载公开段评...</p> : null}
+                {!publicAnnotationsLoading && publicAnnotationsError ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-3 text-sm text-rose-800">
+                    <p>公开段评暂时无法加载：{publicAnnotationsError}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setPublicAnnotationsReloadVersion((version) => version + 1)} className="h-auto rounded-none border-rose-300 bg-white px-3 py-1.5 text-rose-800 hover:border-rose-500 hover:text-rose-950">重新加载公开段评</Button>
+                  </div>
+                ) : null}
+                {!publicAnnotationsLoading && !publicAnnotationsError && publicParagraphAnnotations.length === 0 ? <p className="mt-3 text-sm" style={{ color: theme.muted }}>这一章还没有审核公开的段评。</p> : null}
+                {!publicAnnotationsLoading && !publicAnnotationsError && publicParagraphAnnotations.length > 0 ? (
+                  <ol className="mt-3 space-y-3">
+                    {publicParagraphAnnotations.map((annotation) => (
+                      <li key={annotation.id} className="border-l-2 border-emerald-600 pl-3 text-sm leading-6">
+                        <p className="font-medium">{annotation.authorName}</p>
+                        <blockquote className="mt-1 border-l border-emerald-300 pl-2" style={{ color: theme.muted }}>{annotation.selectedText}</blockquote>
+                        {annotation.note ? <p className="mt-1">{annotation.note}</p> : null}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+              </section>
+
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                 <Button type="button" variant="ghost" size="sm" onClick={() => moveChapter(-1)} disabled={activeChapterIndex <= 0} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent"><ChevronLeft size={17} aria-hidden="true" />上一章</Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => moveChapter(1)} disabled={activeChapterIndex >= detail.chapters.length - 1} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent">下一章<ChevronRight size={17} aria-hidden="true" /></Button>
@@ -1116,6 +1331,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <div>
                 <p className="text-xs font-semibold text-emerald-700">本章互动</p>
                 <h2 id="chapter-interaction-heading" className="mt-1 text-xl font-semibold text-stone-950">留下你的阅读感受</h2>
+                {interactionStats ? <p className="mt-1 text-xs text-stone-500">{interactionStats.ratingCount > 0 ? `${interactionStats.averageRating.toFixed(1)} 分 · ${interactionStats.ratingCount} 人评分` : '暂无评分'} · 推荐票 {interactionStats.recommendationVoteCount} · 月票 {interactionStats.monthlyVoteCount}</p> : null}
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex items-center" aria-label="为作品评分">

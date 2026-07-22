@@ -28,11 +28,11 @@ describe('novel authentication pages', () => {
 
     fireEvent.submit(screen.getByRole('button', { name: '登录' }).closest('form')!);
 
-    expect(screen.getByLabelText('用户名或邮箱').getAttribute('data-slot')).toBe('input');
+    expect(screen.getByLabelText('邮箱').getAttribute('data-slot')).toBe('input');
     expect(screen.getByRole('button', { name: '登录' }).getAttribute('data-slot')).toBe('button');
     const alert = screen.getByRole('alert');
     expect(alert.getAttribute('data-slot')).toBe('alert');
-    expect(alert.textContent).toContain('请输入 3 至 120 位的用户名、邮箱或账号。');
+    expect(alert.textContent).toContain('请输入有效的邮箱地址。');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -43,7 +43,7 @@ describe('novel authentication pages', () => {
     } as Response);
     render(<LoginPage />);
 
-    fireEvent.change(screen.getByLabelText('用户名或邮箱'), { target: { value: 'reader@example.com' } });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'reader@example.com' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'correct-horse-battery-staple' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
@@ -60,7 +60,7 @@ describe('novel authentication pages', () => {
     render(<RegisterPage />);
 
     fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '阅界读者' } });
-    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'reader@example.com' } });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'reader@example.com' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'correct-horse-battery-staple' } });
     fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'different-correct-horse' } });
     fireEvent.click(screen.getByRole('button', { name: '创建账户' }));
@@ -69,17 +69,25 @@ describe('novel authentication pages', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('registers through the session BFF then returns to the bookstore', async () => {
-    const fetchMock = vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => ({ code: 200 }),
-    } as Response);
+  it('requests a real email verification before registering through the session BFF', async () => {
+    const fetchMock = vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 200, data: { expiresAt: '2026-07-22T08:10:00Z' } }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 200 }) } as Response);
     render(<RegisterPage />);
 
     fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '阅界读者' } });
-    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'reader@example.com' } });
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'reader@example.com' } });
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'correct-horse-battery-staple' } });
     fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'correct-horse-battery-staple' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/email-verification', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'reader@example.com' }),
+    }));
+    expect(await screen.findByText('验证码已发送，请查收邮箱。')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('邮箱验证码'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: '创建账户' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/session', {
@@ -90,6 +98,7 @@ describe('novel authentication pages', () => {
         username: 'reader@example.com',
         displayName: '阅界读者',
         password: 'correct-horse-battery-staple',
+        verificationCode: '123456',
       }),
     }));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/'));

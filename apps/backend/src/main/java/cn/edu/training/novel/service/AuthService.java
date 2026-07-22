@@ -42,15 +42,18 @@ public class AuthService {
     private final BCryptPasswordEncoder passwordEncoder;
     private final String absentAccountHash;
     private final Duration sessionTtl;
+    private final EmailVerificationService emailVerificationService;
 
     public AuthService(
             JdbcTemplate jdbc,
             @Value("${novel.auth.bcrypt-strength:12}") int bcryptStrength,
-            @Value("${novel.auth.session-ttl:PT8H}") Duration sessionTtl) {
+            @Value("${novel.auth.session-ttl:PT8H}") Duration sessionTtl,
+            EmailVerificationService emailVerificationService) {
         this.jdbc = jdbc;
         this.passwordEncoder = new BCryptPasswordEncoder(bcryptStrength);
         this.absentAccountHash = passwordEncoder.encode("not-a-real-password");
         this.sessionTtl = sessionTtl;
+        this.emailVerificationService = emailVerificationService;
     }
 
     @Transactional
@@ -66,6 +69,37 @@ public class AuthService {
     public AuthenticatedSession register(String username, String displayName, String password, String channel) {
         String loginName = normalizeLoginName(username);
         String normalizedChannel = normalizeAcquisitionChannel(channel);
+        return registerNormalized(loginName, displayName, password, normalizedChannel);
+    }
+
+    /**
+     * Internal BFF registration path. Email-shaped login names must prove current control of the
+     * mailbox first; a non-email legacy username remains available for trusted internal fixtures
+     * and migration data, but is not a browser registration option.
+     */
+    @Transactional
+    public AuthenticatedSession registerFromBff(
+            String username,
+            String displayName,
+            String password,
+            String channel,
+            String verificationCode) {
+        String loginName = normalizeLoginName(username);
+        String normalizedChannel = normalizeAcquisitionChannel(channel);
+        if (EmailVerificationService.isEmailAddress(loginName)) {
+            if (findAccountByLoginName(loginName).isPresent()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
+            }
+            emailVerificationService.consumeRegistrationCode(loginName, verificationCode);
+        }
+        return registerNormalized(loginName, displayName, password, normalizedChannel);
+    }
+
+    private AuthenticatedSession registerNormalized(
+            String loginName,
+            String displayName,
+            String password,
+            String normalizedChannel) {
         if (findAccountByLoginName(loginName).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
         }

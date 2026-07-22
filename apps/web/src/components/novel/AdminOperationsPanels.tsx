@@ -1,6 +1,6 @@
 'use client';
 
-import { History, Plus, Search, ShieldOff, Tags, UserCheck, UsersRound } from 'lucide-react';
+import { Activity, ChevronLeft, ChevronRight, History, Plus, Search, ShieldOff, Tags, UserCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -39,6 +39,32 @@ type AccountStatusAudit = {
   createdAt: string;
 };
 type AccountStatusChange = { account: Account; changed: boolean; audit: AccountStatusAudit | null };
+type AccountBehaviorSummary = {
+  account: Account;
+  readingProgressCount: number;
+  bookshelfCount: number;
+  checkinCount: number;
+  bookmarkCount: number;
+  bookPurchaseCount: number;
+  redeemedCodeCount: number;
+  rewardCount: number;
+  commentCount: number;
+  annotationCount: number;
+  ratingCount: number;
+  voteCount: number;
+  readerActivityCount: number;
+  lastReaderActivityAt: string | null;
+};
+type AccountBehaviorEvent = {
+  eventType: string;
+  occurredAt: string;
+  bookId: number | null;
+  bookTitle: string | null;
+  chapterId: number | null;
+  chapterTitle: string | null;
+  status: string | null;
+};
+type AccountBehaviorEventPage = { items: AccountBehaviorEvent[]; total: number; page: number; size: number };
 type TaxonomyItem = {
   id: number;
   type: 'CATEGORY' | 'TAG';
@@ -72,6 +98,27 @@ function AccountState({ enabled }: { enabled: boolean }) {
       {enabled ? '正常' : '已暂停'}
     </Badge>
   );
+}
+
+const behaviorEventLabels: Record<string, string> = {
+  READING_PROGRESS: '阅读进度更新',
+  BOOKSHELF_ADDED: '加入书架',
+  CHECKIN: '每日签到',
+  BOOKMARK_CREATED: '创建书签',
+  BOOK_PURCHASE: '购买作品',
+  REDEMPTION: '兑换权益',
+  REWARD_SENT: '打赏作品',
+  COMMENT_SUBMITTED: '提交评论',
+  ANNOTATION_SUBMITTED: '提交段评/划线',
+  RATING_RECORDED: '提交评分',
+  VOTE_CAST: '投票',
+  READING_ACTIVITY: '阅读活动',
+};
+
+function behaviorResource(event: AccountBehaviorEvent) {
+  const book = event.bookTitle ?? (event.bookId ? `作品 #${event.bookId}` : '平台行为');
+  const chapter = event.chapterTitle ?? (event.chapterId ? `章节 #${event.chapterId}` : '');
+  return chapter ? `${book} · ${chapter}` : book;
 }
 
 function TaxonomyCard({
@@ -178,6 +225,9 @@ export function AdminOperationsPanels() {
   const [statusReasons, setStatusReasons] = useState<Record<number, string>>({});
   const [auditAccount, setAuditAccount] = useState<Account>();
   const [accountAudits, setAccountAudits] = useState<AccountStatusAudit[]>([]);
+  const [behaviorAccount, setBehaviorAccount] = useState<Account>();
+  const [behaviorSummary, setBehaviorSummary] = useState<AccountBehaviorSummary>();
+  const [behaviorEvents, setBehaviorEvents] = useState<AccountBehaviorEventPage>();
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
@@ -245,6 +295,41 @@ export function AdminOperationsPanels() {
     }
   };
 
+  const openAccountBehavior = async (account: Account) => {
+    const action = `account-behavior-${account.id}`;
+    setPendingAction(action);
+    try {
+      const [summary, events] = await Promise.all([
+        novelApi<AccountBehaviorSummary>(`admin/accounts/${account.id}/behavior-summary`, 'admin'),
+        novelApi<AccountBehaviorEventPage>(`admin/accounts/${account.id}/behavior-events?page=0&size=20`, 'admin'),
+      ]);
+      setBehaviorSummary(summary);
+      setBehaviorEvents(events);
+      setBehaviorAccount(account);
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '用户行为记录暂时无法加载。' });
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const loadBehaviorPage = async (page: number) => {
+    if (!behaviorAccount || !behaviorEvents || page < 0) return;
+    const action = `account-behavior-page-${behaviorAccount.id}-${page}`;
+    setPendingAction(action);
+    try {
+      const events = await novelApi<AccountBehaviorEventPage>(
+        `admin/accounts/${behaviorAccount.id}/behavior-events?page=${page}&size=${behaviorEvents.size}`,
+        'admin',
+      );
+      setBehaviorEvents(events);
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '用户行为记录暂时无法加载。' });
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
   const createTaxonomy = async (type: 'CATEGORY' | 'TAG', name: string, sortOrder: number) => {
     if (!name.trim()) return;
     setPendingAction(`taxonomy-create-${type}`);
@@ -292,6 +377,22 @@ export function AdminOperationsPanels() {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '账号检索失败。' });
     });
   };
+
+  const behaviorMetrics = behaviorSummary ? [
+    ['阅读进度', behaviorSummary.readingProgressCount],
+    ['书架', behaviorSummary.bookshelfCount],
+    ['签到', behaviorSummary.checkinCount],
+    ['书签', behaviorSummary.bookmarkCount],
+    ['单本购买', behaviorSummary.bookPurchaseCount],
+    ['兑换', behaviorSummary.redeemedCodeCount],
+    ['打赏', behaviorSummary.rewardCount],
+    ['评论', behaviorSummary.commentCount],
+    ['段评/划线', behaviorSummary.annotationCount],
+    ['评分', behaviorSummary.ratingCount],
+    ['投票', behaviorSummary.voteCount],
+    ['阅读活动', behaviorSummary.readerActivityCount],
+  ] as const : [];
+  const behaviorPageCount = behaviorEvents ? Math.max(1, Math.ceil(behaviorEvents.total / behaviorEvents.size)) : 1;
 
   return (
     <section className="mt-7" aria-labelledby="account-governance-heading">
@@ -355,7 +456,7 @@ export function AdminOperationsPanels() {
               <TableHeader className="border-stone-100 bg-stone-50 text-stone-600"><TableRow className="border-0 hover:bg-transparent"><TableHead className="px-4 py-3 font-medium">账号</TableHead><TableHead className="px-4 py-3 font-medium">角色</TableHead><TableHead className="px-4 py-3 font-medium">状态</TableHead><TableHead className="px-4 py-3 font-medium">注册时间</TableHead><TableHead className="min-w-[250px] px-4 py-3 font-medium">状态说明与操作</TableHead></TableRow></TableHeader>
               <TableBody>{accounts.items.map((account) => {
                 const action = `account-${account.id}`;
-                return <TableRow key={account.id} className="border-stone-100 hover:bg-stone-50"><TableCell className="px-4 py-4"><p className="font-medium text-stone-950">{account.displayName}</p><p className="mt-1 text-xs text-stone-500">{account.loginName}</p></TableCell><TableCell className="px-4 py-4"><div className="flex flex-wrap gap-1">{account.roles.map((role) => <Badge key={role} variant="outline" className="rounded-none border-stone-200 bg-stone-50 text-xs text-stone-700">{role}</Badge>)}</div></TableCell><TableCell className="px-4 py-4"><AccountState enabled={account.enabled} /></TableCell><TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-600">{displayTime(account.createdAt)}</TableCell><TableCell className="px-4 py-4"><div className="flex gap-2"><Input aria-label={`账号状态说明 ${account.id}`} value={statusReasons[account.id] ?? ''} onChange={(event) => setStatusReasons((current) => ({ ...current, [account.id]: event.target.value }))} disabled={pendingAction === action} className="h-9 min-w-0 rounded-none border-stone-300 bg-white px-2 text-xs" placeholder={account.enabled ? '暂停原因（必填）' : '恢复说明（必填）'} /><Button type="button" variant="outline" size="sm" onClick={() => void changeAccountStatus(account, !account.enabled)} disabled={pendingAction === action} className={account.enabled ? 'h-9 shrink-0 rounded-none border-rose-200 bg-white px-2.5 text-rose-700 hover:border-rose-500 hover:text-rose-800' : 'h-9 shrink-0 rounded-none border-emerald-200 bg-white px-2.5 text-emerald-800 hover:border-emerald-700'}>{account.enabled ? <ShieldOff size={15} aria-hidden="true" /> : <UserCheck size={15} aria-hidden="true" />}{account.enabled ? '暂停' : '恢复'}</Button><Button type="button" variant="outline" size="icon" aria-label={`查看账号审计 ${account.id}`} title="查看账号审计" onClick={() => void openAccountAudit(account)} disabled={pendingAction === `account-audit-${account.id}`} className="h-9 w-9 shrink-0 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><History size={15} aria-hidden="true" /></Button></div></TableCell></TableRow>;
+                return <TableRow key={account.id} className="border-stone-100 hover:bg-stone-50"><TableCell className="px-4 py-4"><p className="font-medium text-stone-950">{account.displayName}</p><p className="mt-1 text-xs text-stone-500">{account.loginName}</p></TableCell><TableCell className="px-4 py-4"><div className="flex flex-wrap gap-1">{account.roles.map((role) => <Badge key={role} variant="outline" className="rounded-none border-stone-200 bg-stone-50 text-xs text-stone-700">{role}</Badge>)}</div></TableCell><TableCell className="px-4 py-4"><AccountState enabled={account.enabled} /></TableCell><TableCell className="whitespace-nowrap px-4 py-4 text-xs text-stone-600">{displayTime(account.createdAt)}</TableCell><TableCell className="px-4 py-4"><div className="flex gap-2"><Input aria-label={`账号状态说明 ${account.id}`} value={statusReasons[account.id] ?? ''} onChange={(event) => setStatusReasons((current) => ({ ...current, [account.id]: event.target.value }))} disabled={pendingAction === action} className="h-9 min-w-0 rounded-none border-stone-300 bg-white px-2 text-xs" placeholder={account.enabled ? '暂停原因（必填）' : '恢复说明（必填）'} /><Button type="button" variant="outline" size="sm" onClick={() => void changeAccountStatus(account, !account.enabled)} disabled={pendingAction === action} className={account.enabled ? 'h-9 shrink-0 rounded-none border-rose-200 bg-white px-2.5 text-rose-700 hover:border-rose-500 hover:text-rose-800' : 'h-9 shrink-0 rounded-none border-emerald-200 bg-white px-2.5 text-emerald-800 hover:border-emerald-700'}>{account.enabled ? <ShieldOff size={15} aria-hidden="true" /> : <UserCheck size={15} aria-hidden="true" />}{account.enabled ? '暂停' : '恢复'}</Button><Button type="button" variant="outline" size="icon" aria-label={`查看账号审计 ${account.id}`} title="查看账号审计" onClick={() => void openAccountAudit(account)} disabled={pendingAction === `account-audit-${account.id}`} className="h-9 w-9 shrink-0 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><History size={15} aria-hidden="true" /></Button><Button type="button" variant="outline" size="icon" aria-label={`查看用户行为 ${account.id}`} title="查看用户行为" onClick={() => void openAccountBehavior(account)} disabled={pendingAction === `account-behavior-${account.id}`} className="h-9 w-9 shrink-0 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><Activity size={15} aria-hidden="true" /></Button></div></TableCell></TableRow>;
               })}</TableBody>
             </Table>
           </div>
@@ -374,6 +475,39 @@ export function AdminOperationsPanels() {
           <div className="max-h-80 overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">
             {accountAudits.length === 0 ? <p className="py-6 text-center text-sm text-stone-500">暂未记录状态变更。</p> : accountAudits.map((audit) => <article key={audit.id} className="py-4"><div className="flex items-center gap-2"><AccountState enabled={audit.enabled} /><span className="text-xs text-stone-500">操作人 #{audit.operatorUserId} · {displayTime(audit.createdAt)}</span></div><p className="mt-2 text-sm leading-6 text-stone-700">{audit.reason}</p></article>)}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(behaviorAccount)} onOpenChange={(open) => {
+        if (!open) {
+          setBehaviorAccount(undefined);
+          setBehaviorSummary(undefined);
+          setBehaviorEvents(undefined);
+        }
+      }}>
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-200 bg-white p-5 sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-stone-950">用户行为</DialogTitle>
+            <DialogDescription className="text-stone-600">{behaviorAccount ? `${behaviorAccount.displayName} 的行为摘要与最近记录` : ''}</DialogDescription>
+          </DialogHeader>
+          {behaviorSummary ? <>
+            <div className="grid grid-cols-3 border-l border-t border-stone-100 sm:grid-cols-4" aria-label="用户行为摘要">
+              {behaviorMetrics.map(([label, value]) => <div key={label} className="border-b border-r border-stone-100 px-3 py-3"><p className="text-xs text-stone-500">{label}</p><p className="mt-1 text-base font-semibold text-stone-900">{value.toLocaleString('zh-CN')}</p></div>)}
+            </div>
+            <p className="mt-3 text-xs text-stone-500">最近阅读活动：{behaviorSummary.lastReaderActivityAt ? displayTime(behaviorSummary.lastReaderActivityAt) : '暂无'}。私密正文与凭据不在此处显示。</p>
+          </> : <Skeleton className="h-28 rounded-none bg-stone-100" />}
+          <section className="mt-5 border-y border-stone-100" aria-labelledby="account-behavior-timeline-heading">
+            <div className="flex items-center justify-between gap-3 px-1 py-3">
+              <h3 id="account-behavior-timeline-heading" className="text-sm font-semibold text-stone-950">行为时间线</h3>
+              {behaviorEvents ? <span className="text-xs text-stone-500">共 {behaviorEvents.total.toLocaleString('zh-CN')} 条</span> : null}
+            </div>
+            <div className="divide-y divide-stone-100">
+              {!behaviorEvents ? <div className="py-6"><Skeleton className="h-12 rounded-none bg-stone-100" /></div> : null}
+              {behaviorEvents?.items.length === 0 ? <p className="py-7 text-center text-sm text-stone-500">暂无可查询的行为记录。</p> : null}
+              {behaviorEvents?.items.map((event, index) => <article key={`${event.eventType}-${event.occurredAt}-${index}`} className="grid gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-4"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium text-stone-900">{behaviorEventLabels[event.eventType] ?? event.eventType}</span>{event.status ? <Badge variant="outline" className="rounded-none border-stone-200 bg-stone-50 text-xs text-stone-700">{event.status}</Badge> : null}</div><p className="mt-1 truncate text-xs text-stone-600" title={behaviorResource(event)}>{behaviorResource(event)}</p></div><time className="whitespace-nowrap text-xs text-stone-500">{displayTime(event.occurredAt)}</time></article>)}
+            </div>
+            {behaviorEvents && behaviorPageCount > 1 ? <div className="flex items-center justify-end gap-2 border-t border-stone-100 py-3"><span className="mr-auto text-xs text-stone-500">第 {behaviorEvents.page + 1} / {behaviorPageCount} 页</span><Button type="button" variant="outline" size="icon" title="上一页用户行为" aria-label="上一页用户行为" onClick={() => void loadBehaviorPage(behaviorEvents.page - 1)} disabled={behaviorEvents.page === 0 || pendingAction === `account-behavior-page-${behaviorAccount?.id}-${behaviorEvents.page - 1}`} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ChevronLeft size={16} aria-hidden="true" /></Button><Button type="button" variant="outline" size="icon" title="下一页用户行为" aria-label="下一页用户行为" onClick={() => void loadBehaviorPage(behaviorEvents.page + 1)} disabled={behaviorEvents.page + 1 >= behaviorPageCount || pendingAction === `account-behavior-page-${behaviorAccount?.id}-${behaviorEvents.page + 1}`} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ChevronRight size={16} aria-hidden="true" /></Button></div> : null}
+          </section>
         </DialogContent>
       </Dialog>
     </section>

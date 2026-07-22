@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BookOpenText, Eye, EyeOff, LoaderCircle } from 'lucide-react';
+import { BookOpenText, Eye, EyeOff, LoaderCircle, Send } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import { Alert, AlertDescription } from '@/app/components/ui/alert';
 import { Button } from '@/app/components/ui/button';
@@ -14,7 +14,8 @@ type SessionResponse = {
   msg?: string;
 };
 
-const loginNamePattern = /^[A-Za-z0-9._@+-]{3,120}$/;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const verificationCodePattern = /^\d{6,8}$/;
 const acquisitionChannels = new Set(['DIRECT', 'ORGANIC', 'SEARCH', 'WECHAT', 'QQ', 'DOUYIN', 'XIAOHONGSHU', 'INVITE']);
 
 function registrationChannel(): string | undefined {
@@ -27,7 +28,7 @@ function registrationChannel(): string | undefined {
 function authErrorMessage(message: string | undefined, fallback: string): string {
   switch (message) {
     case 'login name is already registered':
-      return '该用户名已经注册，请直接登录或换一个用户名。';
+      return '该邮箱已经注册，请直接登录或换一个邮箱。';
     case 'authentication service is unavailable':
       return '认证服务暂时不可用，请稍后重试。';
     case 'invalid request origin':
@@ -41,12 +42,42 @@ export default function RegisterPage() {
   const router = useRouter();
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [sendingVerification, setSendingVerification] = useState(false);
   const [error, setError] = useState('');
+  const [verificationMessage, setVerificationMessage] = useState('');
+
+  const requestVerificationCode = async () => {
+    const email = username.trim().toLowerCase();
+    if (email.length > 120 || !emailPattern.test(email)) {
+      setError('请先输入有效的邮箱地址。');
+      return;
+    }
+    setSendingVerification(true);
+    setError('');
+    setVerificationMessage('');
+    try {
+      const response = await fetch('/api/novel/email-verification', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const payload = await response.json().catch(() => ({})) as SessionResponse;
+      if (!response.ok || payload.code !== undefined && payload.code !== 200) {
+        throw new Error(authErrorMessage(payload.msg, '验证码发送失败，请稍后重试。'));
+      }
+      setVerificationMessage('验证码已发送，请查收邮箱。');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '验证码发送失败，请稍后重试。');
+    } finally {
+      setSendingVerification(false);
+    }
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -57,8 +88,8 @@ export default function RegisterPage() {
       setError('请输入 1 至 128 位的显示名称。');
       return;
     }
-    if (!loginNamePattern.test(normalizedUsername)) {
-      setError('用户名仅支持 3 至 120 位的字母、数字和 . _ @ + - 。');
+    if (normalizedUsername.length > 120 || !emailPattern.test(normalizedUsername)) {
+      setError('请输入有效的邮箱地址。');
       return;
     }
     if (password.length < 12 || password.length > 128) {
@@ -67,6 +98,10 @@ export default function RegisterPage() {
     }
     if (password !== passwordConfirmation) {
       setError('两次输入的密码不一致。');
+      return;
+    }
+    if (!verificationCodePattern.test(verificationCode.trim())) {
+      setError('请输入邮件中的 6 至 8 位验证码。');
       return;
     }
 
@@ -82,6 +117,7 @@ export default function RegisterPage() {
           username: normalizedUsername,
           displayName: normalizedDisplayName,
           password,
+          verificationCode: verificationCode.trim(),
           ...(channel ? { channel } : {}),
         }),
       });
@@ -129,18 +165,51 @@ export default function RegisterPage() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="register-username" className="text-stone-800">用户名</Label>
+                  <Label htmlFor="register-username" className="text-stone-800">邮箱</Label>
                   <Input
                     id="register-username"
                     name="username"
-                    type="text"
-                    autoComplete="username"
+                    type="email"
+                    autoComplete="email"
                     value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    disabled={submitting}
+                    onChange={(event) => {
+                      setUsername(event.target.value);
+                      setVerificationCode('');
+                      setVerificationMessage('');
+                    }}
+                    disabled={submitting || sendingVerification}
                     className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 placeholder:text-stone-400 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
                     placeholder="name@example.com"
                   />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="register-verification-code" className="text-stone-800">邮箱验证码</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void requestVerificationCode()}
+                      disabled={submitting || sendingVerification}
+                      className="h-auto rounded-none px-0 py-0 text-emerald-800 hover:bg-transparent hover:text-emerald-950 disabled:cursor-wait"
+                    >
+                      {sendingVerification ? <LoaderCircle className="animate-spin" size={15} aria-hidden="true" /> : <Send size={15} aria-hidden="true" />}
+                      {sendingVerification ? '发送中...' : '发送验证码'}
+                    </Button>
+                  </div>
+                  <Input
+                    id="register-verification-code"
+                    name="verificationCode"
+                    type="text"
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={8}
+                    value={verificationCode}
+                    onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, ''))}
+                    disabled={submitting || sendingVerification}
+                    className="mt-2 h-11 rounded-none border-stone-300 bg-white px-3 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20 disabled:cursor-wait disabled:bg-stone-100"
+                  />
+                  {verificationMessage ? <p className="mt-2 text-sm text-emerald-800" role="status">{verificationMessage}</p> : null}
                 </div>
                 <div>
                   <div className="flex items-center justify-between gap-3">

@@ -2,13 +2,19 @@ package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.Comment;
 import cn.edu.training.novel.domain.CommentPage;
+import cn.edu.training.novel.domain.AuthorModerationAdvice;
 import cn.edu.training.novel.domain.InteractionStats;
 import cn.edu.training.novel.domain.ParagraphAnnotation;
 import cn.edu.training.novel.domain.ParagraphAnnotationPage;
+import java.sql.Date;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -34,6 +40,7 @@ public class InteractionRepository {
     public static final String VISIBLE = "VISIBLE";
     public static final String REJECTED = "REJECTED";
     private static final int MAX_PAGE_SIZE = 100;
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final RowMapper<Comment> COMMENT_MAPPER = (resultSet, rowNumber) -> new Comment(
             resultSet.getLong("id"),
             resultSet.getLong("book_id"),
@@ -42,7 +49,18 @@ public class InteractionRepository {
             resultSet.getString("author_name"),
             resultSet.getString("content"),
             resultSet.getString("status"),
-            instant(resultSet.getTimestamp("created_at")));
+            instant(resultSet.getTimestamp("created_at")),
+            null);
+    private static final RowMapper<Comment> COMMENT_WITH_AUTHOR_ADVICE_MAPPER = (resultSet, rowNumber) -> new Comment(
+            resultSet.getLong("id"),
+            resultSet.getLong("book_id"),
+            nullableLong(resultSet.getObject("chapter_id")),
+            resultSet.getLong("user_id"),
+            resultSet.getString("author_name"),
+            resultSet.getString("content"),
+            resultSet.getString("status"),
+            instant(resultSet.getTimestamp("created_at")),
+            authorModerationAdvice(resultSet));
     private static final RowMapper<ParagraphAnnotation> PARAGRAPH_ANNOTATION_MAPPER = (resultSet, rowNumber) -> new ParagraphAnnotation(
             resultSet.getLong("id"),
             resultSet.getLong("book_id"),
@@ -56,7 +74,23 @@ public class InteractionRepository {
             resultSet.getString("note"),
             resultSet.getBoolean("share_intent"),
             resultSet.getString("status"),
-            instant(resultSet.getTimestamp("created_at")));
+            instant(resultSet.getTimestamp("created_at")),
+            null);
+    private static final RowMapper<ParagraphAnnotation> PARAGRAPH_ANNOTATION_WITH_AUTHOR_ADVICE_MAPPER = (resultSet, rowNumber) -> new ParagraphAnnotation(
+            resultSet.getLong("id"),
+            resultSet.getLong("book_id"),
+            resultSet.getLong("chapter_id"),
+            resultSet.getLong("user_id"),
+            resultSet.getString("author_name"),
+            resultSet.getInt("paragraph_index"),
+            resultSet.getInt("selection_start"),
+            resultSet.getInt("selection_end"),
+            resultSet.getString("selected_text"),
+            resultSet.getString("note"),
+            resultSet.getBoolean("share_intent"),
+            resultSet.getString("status"),
+            instant(resultSet.getTimestamp("created_at")),
+            authorModerationAdvice(resultSet));
 
     private final JdbcTemplate jdbc;
 
@@ -197,6 +231,43 @@ public class InteractionRepository {
                 .orElseThrow(() -> new IllegalStateException("paragraph annotation review was not saved"));
     }
 
+    /**
+     * Records a book owner's recommendation without changing the pending interaction state. The
+     * source row lock serializes this advice with the administrator's final review.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public AuthorModerationAdvice adviseOnComment(
+            long authorUserId,
+            long bookId,
+            long commentId,
+            boolean recommendVisible,
+            String reason) {
+        Comment comment = lockComment(commentId);
+        requirePendingOwnedInteraction(comment.bookId(), bookId, comment.status(), "comment");
+        return upsertCommentAdvice(authorUserId, bookId, commentId, recommendation(recommendVisible), reason);
+    }
+
+    /** See {@link #adviseOnComment(long, long, long, boolean, String)}. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public AuthorModerationAdvice adviseOnParagraphAnnotation(
+            long authorUserId,
+            long bookId,
+            long annotationId,
+            boolean recommendVisible,
+            String reason) {
+        ParagraphAnnotation annotation = lockParagraphAnnotation(annotationId);
+        if (!annotation.shareIntent()) {
+            throw new java.util.NoSuchElementException("paragraph annotation is not a shared review item");
+        }
+        requirePendingOwnedInteraction(annotation.bookId(), bookId, annotation.status(), "paragraph annotation");
+        return upsertParagraphAnnotationAdvice(
+                authorUserId,
+                bookId,
+                annotationId,
+                recommendation(recommendVisible),
+                reason);
+    }
+
     /** Upserts one reader's rating and updates the precomputed count/total under the book lock. */
     @Transactional(propagation = Propagation.MANDATORY)
     public double rate(long userId, long bookId, int rating) {
@@ -233,10 +304,22 @@ public class InteractionRepository {
         return average(nextTotal, nextCount);
     }
 
-    /** The primary key is the durable idempotency boundary for one user/type/book vote. */
+    /**
+     * The existing book-vote primary key remains the durable per-book idempotency boundary. The
+     * user/window row serializes quota consumption, so concurrent reader requests cannot both fit
+     * into the final configured slot.
+     */
     @Transactional(propagation = Propagation.MANDATORY)
-    public long recordVote(long userId, long bookId, String voteType) {
+    public VoteReceipt recordVote(long userId, long bookId, String voteType, int quotaLimit) {
         String type = requireVoteType(voteType);
+        if (quotaLimit < 0) {
+            throw new IllegalArgumentException("vote quota cannot be negative");
+        }
+        LocalDate windowStart = voteWindowStart(type, LocalDate.now(BUSINESS_ZONE));
+        int usedBefore = lockVoteQuota(userId, type, windowStart);
+        if (usedBefore >= quotaLimit) {
+            throw new IllegalStateException(voteQuotaExceededMessage(type));
+        }
         MutableStats stats = lockStats(bookId);
         try {
             jdbc.update(
@@ -247,18 +330,31 @@ public class InteractionRepository {
         } catch (DuplicateKeyException exception) {
             throw new IllegalStateException("already voted for this book");
         }
+        int quotaChanged = jdbc.update(
+                "UPDATE novel_vote_quota_usage SET used_count = used_count + 1, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE user_id = ? AND vote_type = ? AND window_start = ? AND used_count = ?",
+                userId,
+                type,
+                Date.valueOf(windowStart),
+                usedBefore);
+        if (quotaChanged != 1) {
+            throw new IllegalStateException("vote quota was not recorded");
+        }
+        long nextCount;
         if ("recommendation".equals(type)) {
             jdbc.update(
                     "UPDATE novel_book_interaction_stat SET recommendation_vote_count = recommendation_vote_count + 1, "
                             + "updated_at = CURRENT_TIMESTAMP WHERE book_id = ?",
                     bookId);
-            return stats.recommendationVoteCount() + 1;
+            nextCount = stats.recommendationVoteCount() + 1;
+        } else {
+            jdbc.update(
+                    "UPDATE novel_book_interaction_stat SET monthly_vote_count = monthly_vote_count + 1, "
+                            + "updated_at = CURRENT_TIMESTAMP WHERE book_id = ?",
+                    bookId);
+            nextCount = stats.monthlyVoteCount() + 1;
         }
-        jdbc.update(
-                "UPDATE novel_book_interaction_stat SET monthly_vote_count = monthly_vote_count + 1, "
-                        + "updated_at = CURRENT_TIMESTAMP WHERE book_id = ?",
-                bookId);
-        return stats.monthlyVoteCount() + 1;
+        return new VoteReceipt(type, nextCount, quotaLimit - usedBefore - 1, quotaLimit);
     }
 
     public List<Comment> findVisibleComments(long bookId) {
@@ -271,20 +367,43 @@ public class InteractionRepository {
     }
 
     public CommentPage findPublicComments(long bookId, Long chapterId, int page, int size) {
-        return findComments(bookId, chapterId, VISIBLE, null, page, size);
+        return findComments(bookId, chapterId, VISIBLE, null, false, page, size);
+    }
+
+    /**
+     * The no-chapter public view is intentionally limited to book-level discussion.  Chapter
+     * comments must go through a chapter-specific access decision in NovelStore.
+     */
+    public CommentPage findPublicBookLevelComments(long bookId, int page, int size) {
+        PageRequest request = pageRequest(page, size);
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_comment WHERE book_id = ? AND chapter_id IS NULL AND status = ?",
+                Long.class,
+                bookId,
+                VISIBLE);
+        List<Comment> items = jdbc.query(
+                "SELECT id, book_id, chapter_id, user_id, author_name, content, status, created_at FROM novel_comment "
+                        + "WHERE book_id = ? AND chapter_id IS NULL AND status = ? "
+                        + "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                COMMENT_MAPPER,
+                bookId,
+                VISIBLE,
+                request.size(),
+                request.offset());
+        return new CommentPage(items, total == null ? 0 : total, request.page(), request.size());
     }
 
     public CommentPage findCommentsForBook(long bookId, String status, int page, int size) {
-        return findComments(bookId, null, optionalCommentStatus(status), null, page, size);
+        return findComments(bookId, null, optionalCommentStatus(status), null, true, page, size);
     }
 
     public CommentPage findCommentsForUser(long userId, String status, int page, int size) {
-        return findComments(null, null, optionalCommentStatus(status), userId, page, size);
+        return findComments(null, null, optionalCommentStatus(status), userId, false, page, size);
     }
 
     public CommentPage findCommentsByStatus(String status, int page, int size) {
         String requiredStatus = optionalCommentStatus(status);
-        return findComments(null, null, requiredStatus, null, page, size);
+        return findComments(null, null, requiredStatus, null, true, page, size);
     }
 
     /** Public reads join the current catalog state, closing the publication-state race at query time. */
@@ -296,6 +415,7 @@ public class InteractionRepository {
                 null,
                 true,
                 true,
+                false,
                 page,
                 size);
     }
@@ -310,6 +430,7 @@ public class InteractionRepository {
                 userId,
                 null,
                 true,
+                false,
                 page,
                 size);
     }
@@ -324,6 +445,7 @@ public class InteractionRepository {
                 null,
                 true,
                 false,
+                true,
                 page,
                 size);
     }
@@ -336,6 +458,7 @@ public class InteractionRepository {
                 null,
                 true,
                 false,
+                true,
                 page,
                 size);
     }
@@ -375,36 +498,45 @@ public class InteractionRepository {
             Long chapterId,
             String status,
             Long userId,
+            boolean includeAuthorAdvice,
             int page,
             int size) {
         PageRequest request = pageRequest(page, size);
+        StringBuilder from = new StringBuilder(" FROM novel_comment c");
+        if (includeAuthorAdvice) {
+            from.append(" LEFT JOIN novel_author_comment_moderation_advice aa ON aa.comment_id = c.id");
+        }
         StringBuilder where = new StringBuilder(" WHERE 1 = 1");
         List<Object> parameters = new ArrayList<>();
         if (bookId != null) {
-            where.append(" AND book_id = ?");
+            where.append(" AND c.book_id = ?");
             parameters.add(bookId);
         }
         if (chapterId != null) {
-            where.append(" AND chapter_id = ?");
+            where.append(" AND c.chapter_id = ?");
             parameters.add(chapterId);
         }
         if (status != null) {
-            where.append(" AND status = ?");
+            where.append(" AND c.status = ?");
             parameters.add(status);
         }
         if (userId != null) {
-            where.append(" AND user_id = ?");
+            where.append(" AND c.user_id = ?");
             parameters.add(userId);
         }
 
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM novel_comment" + where, Long.class, parameters.toArray());
+        Long total = jdbc.queryForObject("SELECT COUNT(*)" + from + where, Long.class, parameters.toArray());
         List<Object> pageParameters = new ArrayList<>(parameters);
         pageParameters.add(request.size());
         pageParameters.add(request.offset());
+        String adviceColumns = includeAuthorAdvice
+                ? ", aa.recommendation AS author_advice_recommendation, aa.reason AS author_advice_reason, "
+                        + "aa.updated_at AS author_advice_updated_at"
+                : "";
         List<Comment> items = jdbc.query(
-                "SELECT id, book_id, chapter_id, user_id, author_name, content, status, created_at FROM novel_comment"
-                        + where + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                COMMENT_MAPPER,
+                "SELECT c.id, c.book_id, c.chapter_id, c.user_id, c.author_name, c.content, c.status, c.created_at"
+                        + adviceColumns + from + where + " ORDER BY c.created_at DESC, c.id DESC LIMIT ? OFFSET ?",
+                includeAuthorAdvice ? COMMENT_WITH_AUTHOR_ADVICE_MAPPER : COMMENT_MAPPER,
                 pageParameters.toArray());
         return new CommentPage(items, total == null ? 0 : total, request.page(), request.size());
     }
@@ -416,10 +548,14 @@ public class InteractionRepository {
             Long userId,
             Boolean shareIntent,
             boolean requirePublishedTarget,
+            boolean includeAuthorAdvice,
             int page,
             int size) {
         PageRequest request = pageRequest(page, size);
         StringBuilder from = new StringBuilder(" FROM novel_paragraph_annotation a");
+        if (includeAuthorAdvice) {
+            from.append(" LEFT JOIN novel_author_annotation_moderation_advice aa ON aa.annotation_id = a.id");
+        }
         StringBuilder where = new StringBuilder(" WHERE 1 = 1");
         List<Object> parameters = new ArrayList<>();
         if (requirePublishedTarget) {
@@ -458,13 +594,103 @@ public class InteractionRepository {
         List<Object> pageParameters = new ArrayList<>(parameters);
         pageParameters.add(request.size());
         pageParameters.add(request.offset());
+        String adviceColumns = includeAuthorAdvice
+                ? ", aa.recommendation AS author_advice_recommendation, aa.reason AS author_advice_reason, "
+                        + "aa.updated_at AS author_advice_updated_at"
+                : "";
         List<ParagraphAnnotation> items = jdbc.query(
                 "SELECT a.id, a.book_id, a.chapter_id, a.user_id, a.author_name, a.paragraph_index, a.selection_start, "
                         + "a.selection_end, a.selected_text, a.note, a.share_intent, a.status, a.created_at"
+                        + adviceColumns
                         + from + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?",
-                PARAGRAPH_ANNOTATION_MAPPER,
+                includeAuthorAdvice ? PARAGRAPH_ANNOTATION_WITH_AUTHOR_ADVICE_MAPPER : PARAGRAPH_ANNOTATION_MAPPER,
                 pageParameters.toArray());
         return new ParagraphAnnotationPage(items, total == null ? 0 : total, request.page(), request.size());
+    }
+
+    private AuthorModerationAdvice upsertCommentAdvice(
+            long authorUserId,
+            long bookId,
+            long commentId,
+            String recommendation,
+            String reason) {
+        int updated = jdbc.update(
+                "UPDATE novel_author_comment_moderation_advice SET author_user_id = ?, recommendation = ?, reason = ?, "
+                        + "updated_at = CURRENT_TIMESTAMP WHERE comment_id = ?",
+                authorUserId,
+                recommendation,
+                reason,
+                commentId);
+        if (updated == 0) {
+            jdbc.update(
+                    "INSERT INTO novel_author_comment_moderation_advice(comment_id, book_id, author_user_id, recommendation, reason, "
+                            + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    commentId,
+                    bookId,
+                    authorUserId,
+                    recommendation,
+                    reason);
+        }
+        return findCommentAdvice(commentId)
+                .orElseThrow(() -> new IllegalStateException("author comment moderation advice was not saved"));
+    }
+
+    private AuthorModerationAdvice upsertParagraphAnnotationAdvice(
+            long authorUserId,
+            long bookId,
+            long annotationId,
+            String recommendation,
+            String reason) {
+        int updated = jdbc.update(
+                "UPDATE novel_author_annotation_moderation_advice SET author_user_id = ?, recommendation = ?, reason = ?, "
+                        + "updated_at = CURRENT_TIMESTAMP WHERE annotation_id = ?",
+                authorUserId,
+                recommendation,
+                reason,
+                annotationId);
+        if (updated == 0) {
+            jdbc.update(
+                    "INSERT INTO novel_author_annotation_moderation_advice(annotation_id, book_id, author_user_id, recommendation, reason, "
+                            + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    annotationId,
+                    bookId,
+                    authorUserId,
+                    recommendation,
+                    reason);
+        }
+        return findParagraphAnnotationAdvice(annotationId)
+                .orElseThrow(() -> new IllegalStateException("author paragraph annotation moderation advice was not saved"));
+    }
+
+    private Optional<AuthorModerationAdvice> findCommentAdvice(long commentId) {
+        return jdbc.query(
+                        "SELECT recommendation, reason, updated_at FROM novel_author_comment_moderation_advice WHERE comment_id = ?",
+                        AUTHOR_ADVICE_MAPPER,
+                        commentId)
+                .stream()
+                .findFirst();
+    }
+
+    private Optional<AuthorModerationAdvice> findParagraphAnnotationAdvice(long annotationId) {
+        return jdbc.query(
+                        "SELECT recommendation, reason, updated_at FROM novel_author_annotation_moderation_advice WHERE annotation_id = ?",
+                        AUTHOR_ADVICE_MAPPER,
+                        annotationId)
+                .stream()
+                .findFirst();
+    }
+
+    private static void requirePendingOwnedInteraction(long actualBookId, long requestedBookId, String status, String resourceName) {
+        if (actualBookId != requestedBookId) {
+            throw new java.util.NoSuchElementException(resourceName + " does not belong to this book");
+        }
+        if (!PENDING_REVIEW.equals(status)) {
+            throw new IllegalStateException(resourceName + " is not awaiting station review");
+        }
+    }
+
+    private static String recommendation(boolean recommendVisible) {
+        return recommendVisible ? "RECOMMEND_VISIBLE" : "RECOMMEND_REJECTED";
     }
 
     private Comment lockComment(long commentId) {
@@ -522,6 +748,36 @@ public class InteractionRepository {
         return rows.getFirst();
     }
 
+    private int lockVoteQuota(long userId, String voteType, LocalDate windowStart) {
+        jdbc.update(
+                "INSERT INTO novel_vote_quota_usage(user_id, vote_type, window_start, used_count, updated_at) "
+                        + "VALUES (?, ?, ?, 0, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE user_id = user_id",
+                userId,
+                voteType,
+                Date.valueOf(windowStart));
+        List<Integer> values = jdbc.query(
+                "SELECT used_count FROM novel_vote_quota_usage WHERE user_id = ? AND vote_type = ? "
+                        + "AND window_start = ? FOR UPDATE",
+                (resultSet, rowNumber) -> resultSet.getInt("used_count"),
+                userId,
+                voteType,
+                Date.valueOf(windowStart));
+        if (values.isEmpty()) {
+            throw new IllegalStateException("vote quota was not initialized");
+        }
+        return values.getFirst();
+    }
+
+    private static LocalDate voteWindowStart(String voteType, LocalDate today) {
+        return "monthly".equals(voteType) ? today.withDayOfMonth(1) : today;
+    }
+
+    private static String voteQuotaExceededMessage(String voteType) {
+        return "monthly".equals(voteType)
+                ? "monthly vote quota reached for this month"
+                : "recommendation vote quota reached for today";
+    }
+
     private void updateRatingStats(long bookId, long ratingCount, long ratingTotal) {
         if (ratingCount < 0 || ratingTotal < 0) {
             throw new IllegalStateException("rating statistics cannot be negative");
@@ -542,6 +798,10 @@ public class InteractionRepository {
             resultSet.getLong("rating_total"),
             resultSet.getLong("recommendation_vote_count"),
             resultSet.getLong("monthly_vote_count"));
+    private static final RowMapper<AuthorModerationAdvice> AUTHOR_ADVICE_MAPPER = (resultSet, rowNumber) -> new AuthorModerationAdvice(
+            resultSet.getString("recommendation"),
+            resultSet.getString("reason"),
+            instant(resultSet.getTimestamp("updated_at")));
 
     private static String optionalCommentStatus(String status) {
         if (status == null || status.isBlank()) {
@@ -610,6 +870,17 @@ public class InteractionRepository {
         return timestamp.toInstant();
     }
 
+    private static AuthorModerationAdvice authorModerationAdvice(ResultSet resultSet) throws SQLException {
+        String recommendation = resultSet.getString("author_advice_recommendation");
+        if (recommendation == null) {
+            return null;
+        }
+        return new AuthorModerationAdvice(
+                recommendation,
+                resultSet.getString("author_advice_reason"),
+                instant(resultSet.getTimestamp("author_advice_updated_at")));
+    }
+
     private static long generatedId(KeyHolder keyHolder, String resourceName) {
         if (keyHolder.getKeyList().isEmpty()) {
             throw new IllegalStateException("database did not return a generated " + resourceName + " id");
@@ -641,6 +912,8 @@ public class InteractionRepository {
                     monthlyVoteCount);
         }
     }
+
+    public record VoteReceipt(String type, long count, int remaining, int limit) {}
 
     private record PageRequest(int page, int size, int offset) {}
 }

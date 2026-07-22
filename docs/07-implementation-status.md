@@ -18,7 +18,7 @@
 | 阅读与互动 | 发现筛选、阅读偏好、进度、书架、书签、评论、段评、评分、票和打赏。 |
 | 兑换码权益 | 一次性核销、代币账本、会员和整本权益、管理与审计。 |
 | BFF 会话安全 | Redis 不透明会话、HttpOnly Cookie、Origin/CSRF、注销转发、认证限流与生产失败关闭。 |
-| 内容运营 | 本地敏感词、人工整书审核、评论/段评审核、推荐位、热搜、分类标签、兑换码与账户控制。 |
+| 内容运营 | 本地敏感词、人工整书审核、评论/段评审核、推荐位、热搜、分类标签、兑换码、账户控制与用户行为查询。 |
 | Qwen 基础边界 | Spring AI 2.0 OpenAI-compatible 客户端配置、严格 JSON 归一化、敏感信息清理、限流与未配置时失败关闭。 |
 | 部署恢复 | 私网 Compose、Nginx 单入口、健康检查、MySQL 备份/替换恢复和 smoke 脚本。 |
 
@@ -34,6 +34,7 @@
 | D-07/D-08 全书机器审核 | `BookModerationSnapshotService`、V21、管理员安全状态 API 与人工审核哈希门禁。 | 快照集成测试、H2 全量回归和 MySQL Testcontainers 迁移已通过；最终全量回归见下方命令。 |
 | 文件存储基线 | `CoverUploadService`、MinIO 最小权限初始化、Nginx GET-only `/media/`。 | 上传/伪造 MIME/禁用/补偿测试、前端/部署静态检查已通过；运行拓扑在镜像网络恢复后复验。 |
 | FR-08/FR-10 指标 | V22/V23、`AuthorAnalyticsService`、`PlatformRetentionReportService`、作者和运营页面、OpenAPI。 | 作者归属/兑换账本/日去重/D1-D7/渠道/权限/API 契约定向集成测试，以及前端组件/BFF 定向测试已通过。 |
+| FR-09 用户行为查询 | `AdminOperationsService` 的管理员摘要和分页时间线 API、运营账号行内抽屉、OpenAPI；只投影行为类型、时间和资源标识。 | H2 覆盖权限、404、12 类行为来源、分页、查询审计与评论/划线/书签/兑换码脱敏；MySQL Testcontainers 覆盖联合查询；运营台 Vitest 覆盖抽屉和翻页。 |
 
 ## 明确不作为本期阻塞项
 

@@ -4,7 +4,7 @@
 
 The document uses backend paths such as `/api/v1/public/books`. Browser callers use the same route suffix through the Next BFF instead: `/api/novel/public/books`. The BFF is the only browser-facing route for protected resources; it owns the opaque session cookie, CSRF check, and private upstream headers. The internal `/api/v1/auth/*` entries remain in the contract so BFF-to-backend session behavior is explicit, but they are not exposed through the browser catch-all proxy.
 
-The contract deliberately describes only implemented behavior. It does not expose or claim production availability for phone/email verification, WeChat/QQ OAuth, payment providers, or Qwen credentials. Platform tokens and redemption codes are not a fiat payment API.
+The contract deliberately describes only implemented behavior. Email registration verification is available only through a fully configured authenticated SMTP provider and fails closed when that deployment configuration is absent. It does not expose or claim production availability for phone verification, WeChat/QQ OAuth, payment providers, or Qwen credentials. Platform tokens and redemption codes are not a fiat payment API.
 
 Validate syntax and controller coverage after changing an API mapping or DTO contract:
 

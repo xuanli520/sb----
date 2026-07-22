@@ -108,14 +108,14 @@ describe('novel BFF session route', () => {
       .mockResolvedValueOnce(jsonResponse({ code: 401, msg: 'invalid credentials' }, 401))
       .mockResolvedValueOnce(jsonResponse({ code: 409, msg: 'username already exists' }, 409));
 
-    const login = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader', password: 'bad-password' }) }, {
+    const login = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader@example.test', password: 'bad-password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json',
     }));
     expect(login.status).toBe(401);
     await expect(login.json()).resolves.toEqual({ code: 401, msg: 'invalid credentials', data: null });
     expect(responseCookies(login)).toEqual([]);
 
-    const registration = await POST(request({ method: 'POST', body: JSON.stringify({ action: 'register', username: 'reader', password: 'password', displayName: 'Reader' }) }, {
+    const registration = await POST(request({ method: 'POST', body: JSON.stringify({ action: 'register', username: 'reader@example.test', password: 'password', displayName: 'Reader', verificationCode: '123456' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json',
     }));
     expect(registration.status).toBe(409);
@@ -125,7 +125,7 @@ describe('novel BFF session route', () => {
     expect(`${fetchMock.mock.calls[1][0]}`).toBe('http://backend.example.test/api/v1/auth/register');
   });
 
-  it('forwards a controlled registration channel only with the registration payload', async () => {
+  it('forwards a controlled registration channel and verified email code only with the registration payload', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({
       code: 200,
       data: { sessionId: 'backend-session', user: { id: 7 }, expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1_000).toISOString() },
@@ -133,13 +133,13 @@ describe('novel BFF session route', () => {
 
     const response = await POST(request({
       method: 'POST',
-      body: JSON.stringify({ action: 'register', username: 'reader', password: 'secure-password', displayName: 'Reader', channel: 'WECHAT' }),
+      body: JSON.stringify({ action: 'register', username: 'reader@example.test', password: 'secure-password', displayName: 'Reader', verificationCode: '123456', channel: 'WECHAT' }),
     }, { origin: 'http://localhost:3000', 'content-type': 'application/json' }));
 
     expect(response.status).toBe(200);
     expect(`${fetchMock.mock.calls[0][0]}`).toBe('http://backend.example.test/api/v1/auth/register');
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
-      username: 'reader', password: 'secure-password', displayName: 'Reader', channel: 'WECHAT',
+      username: 'reader@example.test', password: 'secure-password', displayName: 'Reader', verificationCode: '123456', channel: 'WECHAT',
     });
   });
 
@@ -149,10 +149,10 @@ describe('novel BFF session route', () => {
     };
     setNovelAuthRateLimiterForTests(deniedLimiter);
 
-    const knownName = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'known-reader', password: 'password' }) }, {
+    const knownName = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'known-reader@example.test', password: 'password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.99',
     }));
-    const unknownName = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'unknown-reader', password: 'password' }) }, {
+    const unknownName = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'unknown-reader@example.test', password: 'password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.45',
     }));
 
@@ -165,14 +165,14 @@ describe('novel BFF session route', () => {
     expect(responseCookies(knownName)).toEqual([]);
     expect(responseCookies(unknownName)).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(deniedLimiter.consume).toHaveBeenCalledWith('login', 'identifier:known-reader');
-    expect(deniedLimiter.consume).toHaveBeenCalledWith('login', 'identifier:unknown-reader');
+    expect(deniedLimiter.consume).toHaveBeenCalledWith('login', 'identifier:known-reader@example.test');
+    expect(deniedLimiter.consume).toHaveBeenCalledWith('login', 'identifier:unknown-reader@example.test');
   });
 
   it('fails closed before contacting the backend when the enabled rate limiter is unavailable', async () => {
     setNovelAuthRateLimiterForTests({ consume: vi.fn().mockRejectedValue(new Error('redis unavailable')) });
 
-    const response = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader', password: 'password' }) }, {
+    const response = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader@example.test', password: 'password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json',
     }));
 
@@ -194,7 +194,7 @@ describe('novel BFF session route', () => {
     const response = await POST(new NextRequest('https://novel.example.test/api/novel/session', {
       method: 'POST',
       headers: { origin: 'https://novel.example.test', 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'reader', password: 'password' }),
+      body: JSON.stringify({ username: 'reader@example.test', password: 'password' }),
     }));
 
     expect(response.status).toBe(200);
@@ -222,7 +222,7 @@ describe('novel BFF session route', () => {
     const expiresAt = new Date(Date.now() + 90_000).toISOString();
     fetchMock.mockResolvedValueOnce(jsonResponse({ code: 200, data: { sessionId: 'backend-session', user: { id: 7 }, expiresAt } }));
 
-    const response = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader', password: 'password' }) }, {
+    const response = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader@example.test', password: 'password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json',
     }));
 

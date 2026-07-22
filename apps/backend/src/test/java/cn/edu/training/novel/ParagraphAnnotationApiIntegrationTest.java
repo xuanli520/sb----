@@ -166,6 +166,51 @@ class ParagraphAnnotationApiIntegrationTest {
                 .andExpect(jsonPath("$.data.items[0].id").value(pendingId));
     }
 
+    @Test
+    void authorsCanAdviseOnRequestedSharesButOnlyStationReviewChangesPublicVisibility() throws Exception {
+        long pendingId = createAnnotation(0, 3, 5, "旧港", "建议公开的段评", true);
+        long privateId = createAnnotation(0, 0, 3, "雨落在", "私密划线", false);
+
+        mvc.perform(post("/api/v1/author/books/1/annotations/{annotationId}/moderation-advice", pendingId)
+                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendVisible\":true,\"reason\":\"作者建议站长复核后公开\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.recommendation").value("RECOMMEND_VISIBLE"));
+        mvc.perform(get("/api/v1/author/books/1/annotations")
+                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .param("status", "PENDING_REVIEW"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(pendingId))
+                .andExpect(jsonPath("$.data.items[0].status").value("PENDING_REVIEW"))
+                .andExpect(jsonPath("$.data.items[0].authorModerationAdvice.recommendation").value("RECOMMEND_VISIBLE"));
+        mvc.perform(get("/api/v1/public/books/1/chapters/1001/annotations"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.meta.total").value(0));
+
+        mvc.perform(post("/api/v1/author/books/1/annotations/{annotationId}/moderation-advice", privateId)
+                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendVisible\":true,\"reason\":\"不能管理私密划线\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/author/books/2/annotations/{annotationId}/moderation-advice", pendingId)
+                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendVisible\":true,\"reason\":\"越权尝试\"}"))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", pendingId)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approve\":true,\"reason\":\"站长审核通过\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("VISIBLE"));
+        mvc.perform(get("/api/v1/public/books/1/chapters/1001/annotations"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.meta.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(pendingId));
+    }
+
     private long createAnnotation(
             int paragraphIndex,
             int selectionStart,

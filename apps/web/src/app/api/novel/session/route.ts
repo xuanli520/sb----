@@ -16,6 +16,8 @@ import { hasTrustedSameOrigin } from '@/lib/novel/origin';
 export const runtime = 'nodejs';
 
 type BackendSession = { code: number; msg?: string; data?: { sessionId?: string; user?: unknown; expiresAt?: string } };
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const VERIFICATION_CODE_PATTERN = /^\d{6,8}$/;
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
@@ -24,8 +26,9 @@ export async function POST(request: NextRequest) {
   if (typeof body.role === 'string') return createDevelopmentLogin(body.role);
 
   const action = body.action === 'register' ? 'register' : 'login';
-  if (typeof body.username !== 'string' || typeof body.password !== 'string' || (action === 'register' && typeof body.displayName !== 'string')) {
-    return NextResponse.json({ code: 400, msg: 'username, password, and displayName for registration are required', data: null }, { status: 400 });
+  if (typeof body.username !== 'string' || typeof body.password !== 'string' || !isEmail(body.username)
+      || (action === 'register' && (typeof body.displayName !== 'string' || typeof body.verificationCode !== 'string' || !VERIFICATION_CODE_PATTERN.test(body.verificationCode.trim())))) {
+    return NextResponse.json({ code: 400, msg: action === 'register' ? 'email, password, displayName, and verificationCode are required' : 'email and password are required', data: null }, { status: 400 });
   }
   try {
     const rateLimit = await consumeNovelAuthRateLimit(action, body.username, request.headers);
@@ -125,6 +128,7 @@ async function createAuthenticatedLogin(action: 'login' | 'register', body: Reco
           username: body.username,
           password: body.password,
           displayName: body.displayName,
+          verificationCode: body.verificationCode,
           ...(typeof body.channel === 'string' ? { channel: body.channel } : {}),
         }
         : { username: body.username, password: body.password }),
@@ -178,6 +182,10 @@ async function revokeBackendSession(backendSessionId: string, internalKey: strin
 
 function apiTarget() {
   return process.env.API_PROXY_TARGET || 'http://localhost:8080';
+}
+
+function isEmail(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length <= 120 && EMAIL_PATTERN.test(value.trim());
 }
 
 function internalApiKey() {

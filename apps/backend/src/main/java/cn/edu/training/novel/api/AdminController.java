@@ -17,6 +17,10 @@ public class AdminController implements UserResolver {
     public AdminController(NovelStore store){this.store=store;}
     @GetMapping("/reviews") ApiResponse<List<Book>> reviews(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.pending());}
     @PostMapping("/reviews/{bookId}") ApiResponse<Book> review(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.review(u.id(),bookId,body.approve(),body.reason()));}
+    @GetMapping("/books") ApiResponse<List<Book>> availabilityManagedBooks(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.availabilityManagedBooks());}
+    @PostMapping("/books/{bookId}/takedown") ApiResponse<Book> takeDownBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.takeDownBook(u.id(),bookId,body.reason()));}
+    @PostMapping("/books/{bookId}/restore") ApiResponse<Book> restoreBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.restoreBookForReview(u.id(),bookId,body.reason()));}
+    @GetMapping("/books/{bookId}/status-audits") ApiResponse<List<BookStatusAudit>> bookStatusAudits(HttpServletRequest request,@PathVariable long bookId,@RequestParam(defaultValue="20") @Min(1) @Max(100) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.bookStatusAudits(bookId,limit));}
     @GetMapping("/dashboard") ApiResponse<Map<String,Object>> dashboard(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(Map.of("activeReaders",store.activeReaders(),"todayReads",store.todayReads(),"publishedBooks",store.published(null,null,null).size(),"pendingReviews",store.pending().size(),"auditLog",store.audits()));}
     @GetMapping("/author-applications") ApiResponse<List<AuthorApplication>> authorApplications(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.authorApplications());}
     @PostMapping("/author-applications/{id}") ApiResponse<AuthorApplication> decideAuthor(HttpServletRequest request,@PathVariable long id,@Valid @RequestBody ReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.decideAuthorApplication(u.id(),id,body.approve(),body.reason()));}
@@ -28,5 +32,6 @@ public class AdminController implements UserResolver {
     public record ReviewRequest(boolean approve,@NotBlank @Size(max=1024) String reason){}
     // Content moderation decisions are stored separately with a 900-character limit.
     public record BookReviewRequest(boolean approve,@NotBlank @Size(max=900) String reason){}
+    public record BookStatusRequest(@NotBlank @Size(max=1024) String reason){}
     public record SensitiveWordRequest(@NotBlank @Size(max=128) String word){}
 }

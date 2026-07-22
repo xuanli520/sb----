@@ -133,6 +133,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
+
   redis:
     image: redis:7.4-alpine
     command: redis-server --appendonly yes
@@ -145,6 +147,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
@@ -180,10 +183,23 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing local/novel-covers
         mc anonymous set download local/novel-covers
-        mc admin user add local "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY" || true
+        if user_add_error="$$(mc admin user add local "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY" 2>&1)"; then
+          :
+        else
+          case "$$user_add_error" in
+            *"already exists"*|*"already in use"*) ;;
+            *) printf '%s\n' "Could not create MinIO cover writer: $$user_add_error" >&2; exit 1 ;;
+          esac
+        fi
         printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*"]}]}' > /tmp/novel-cover-writer-policy.json
         mc admin policy create local novel-cover-writer /tmp/novel-cover-writer-policy.json || mc admin policy update local novel-cover-writer /tmp/novel-cover-writer-policy.json
         mc admin policy attach local novel-cover-writer --user "$$MINIO_COVER_ACCESS_KEY"
+        # A pre-existing access key can have a different secret. Verify the configured writer
+        # can use its final narrow policy instead of treating that condition as success.
+        mc alias set cover-writer http://minio:9000 "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY"
+        printf '%s' minio-init-writer-check > /tmp/minio-cover-writer-check
+        mc cp /tmp/minio-cover-writer-check cover-writer/novel-covers/covers/.minio-init-writer-check
+        mc rm --force cover-writer/novel-covers/covers/.minio-init-writer-check
     depends_on:
       minio:
         condition: service_healthy

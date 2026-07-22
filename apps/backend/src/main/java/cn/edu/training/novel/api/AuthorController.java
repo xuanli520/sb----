@@ -6,6 +6,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Future;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
@@ -20,6 +22,7 @@ public class AuthorController implements UserResolver {
     private final CoverUploadService coverUploadService;
     public AuthorController(NovelStore store, CoverUploadService coverUploadService){this.store=store;this.coverUploadService=coverUploadService;}
     @GetMapping("/books") ApiResponse<List<Book>> list(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.authorBooks(u.id()));}
+    @GetMapping("/books/{bookId}/status-audits") ApiResponse<List<BookStatusAudit>> statusAudits(HttpServletRequest request,@PathVariable long bookId,@RequestParam(defaultValue="20") @Min(1) @Max(100) int limit){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.authorBookStatusAudits(u.id(),bookId,limit));}
     @PostMapping("/books") ApiResponse<Book> create(HttpServletRequest request,@Valid @RequestBody BookRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.createBook(u.id(),body.title(),body.category(),body.synopsis()));}
     @PutMapping("/books/{bookId}") ApiResponse<Book> updateBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookUpdateRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.updateBookMetadata(u.id(),bookId,body.title(),body.category(),body.synopsis(),body.serialStatus(),body.cover()));}
     @PostMapping(path="/books/{bookId}/cover", consumes=MediaType.MULTIPART_FORM_DATA_VALUE)

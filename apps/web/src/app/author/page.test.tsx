@@ -207,6 +207,7 @@ function deferred<T>() {
 }
 
 type MockAuthorApiOptions = {
+  books?: typeof books;
   rejectBookUpdate?: boolean;
   rejectBookDelete?: boolean;
   rejectChapterUpdate?: boolean;
@@ -219,10 +220,11 @@ type MockAuthorApiOptions = {
   analyticsRequest?: Promise<Response>;
   annotationPage?: FeedbackPageFixture<AnnotationFixture> | ((bookId: number, page: number) => FeedbackPageFixture<AnnotationFixture>);
   annotationRequest?: Promise<Response>;
+  statusAudits?: Array<{ id: number; bookId: number; action: 'TAKEDOWN' | 'RESTORE_FOR_REVIEW'; previousStatus: 'PUBLISHED' | 'OFFLINE'; status: 'OFFLINE' | 'PENDING_REVIEW'; reason: string; operatorUserId: number; createdAt: string }>;
 };
 
 function mockAuthorApi(options: MockAuthorApiOptions = {}) {
-  let bookItems = books.map((book) => ({ ...book }));
+  let bookItems = (options.books ?? books).map((book) => ({ ...book }));
   const volumesByBook: Record<number, Array<{ id: number; bookId: number; title: string; orderNo: number; createdAt: string }>> = {
     1: [{ id: 101, bookId: 1, title: '灯塔卷', orderNo: 1, createdAt: '2026-07-21T08:00:00Z' }],
     2: [{ id: 201, bookId: 2, title: '夜航卷', orderNo: 1, createdAt: '2026-07-21T08:00:00Z' }],
@@ -310,6 +312,11 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       bookItems = bookItems.map((book) => book.id === bookId ? updated : book);
       return Promise.resolve(response(updated));
     }
+
+    const statusAudits = endpoint.match(/^author\/books\/(\d+)\/status-audits\?limit=20$/);
+    if (method === 'GET' && statusAudits) return Promise.resolve(response(
+      (options.statusAudits ?? []).filter((audit) => audit.bookId === Number(statusAudits[1])),
+    ));
 
     const volumeList = endpoint.match(/^author\/books\/(\d+)\/volumes$/);
     if (method === 'GET' && volumeList) return Promise.resolve(response(volumesByBook[Number(volumeList[1])] ?? []));
@@ -438,6 +445,15 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       return Promise.resolve(response({ items: items.slice(page * size, (page + 1) * size), meta: { total: items.length, page, size } }));
     }
 
+    const moderationAdvice = endpoint.match(/^author\/books\/(\d+)\/(comments|annotations)\/(\d+)\/moderation-advice$/);
+    if (method === 'POST' && moderationAdvice) {
+      return Promise.resolve(response({
+        recommendation: body.recommendVisible === true ? 'RECOMMEND_VISIBLE' : 'RECOMMEND_REJECTED',
+        reason: String(body.reason),
+        updatedAt: '2026-07-22T08:30:00Z',
+      }));
+    }
+
     return Promise.reject(new Error(`Unexpected request: ${endpoint}`));
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -483,8 +499,51 @@ describe('author manuscript workspace', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/2/annotations?size=20', expect.anything()));
   });
 
-  it('renders only explicitly shared annotations and never exposes author moderation controls', async () => {
-    mockAuthorApi({
+  it('submits comment advice as a station-owner recommendation rather than a final decision', async () => {
+    const fetchMock = mockAuthorApi();
+    render(<AuthorPage />);
+
+    await screen.findByText('等待人工确认的段落');
+    const reason = screen.getByRole('textbox', { name: '评论 11 的审核建议说明' });
+    fireEvent.change(reason, { target: { value: '请站长结合上下文决定是否公开' } });
+    fireEvent.click(screen.getByRole('button', { name: '建议站长驳回评论 11' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/author/books/1/comments/11/moderation-advice',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ recommendVisible: false, reason: '请站长结合上下文决定是否公开' }),
+      }),
+    ));
+    expect(await screen.findByText('已提交驳回建议，等待站长最终审核。')).toBeTruthy();
+    expect(screen.getByText('待审核')).toBeTruthy();
+  });
+
+  it('shows an offline work\'s stationmaster reason without exposing an author restoration action', async () => {
+    const fetchMock = mockAuthorApi({
+      books: [{ ...books[0], status: 'OFFLINE' }],
+      statusAudits: [{
+        id: 801,
+        bookId: 1,
+        action: 'TAKEDOWN',
+        previousStatus: 'PUBLISHED',
+        status: 'OFFLINE',
+        reason: '涉嫌侵权，等待权利材料核验。',
+        operatorUserId: 1,
+        createdAt: '2026-07-22T08:00:00Z',
+      }],
+    });
+    render(<AuthorPage />);
+
+    await screen.findByText('涉嫌侵权，等待权利材料核验。');
+    expect(screen.getByText('作品已下线')).toBeTruthy();
+    expect(screen.getByText('该作品已下线，等待站长根据处置反馈决定是否重新进入审核。')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '提交完整作品' })).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/status-audits?limit=20', expect.anything()));
+  });
+
+  it('renders only explicitly shared annotations and lets authors submit non-final station-review advice', async () => {
+    const fetchMock = mockAuthorApi({
       annotationPage: {
         items: [
           { id: 401, bookId: 1, chapterId: 1001, userId: 70, authorName: '私密读者', paragraphIndex: 0, selectionStart: 0, selectionEnd: 4, selectedText: '不应显示的私密标注', note: '不应显示的私密备注', shareIntent: false, status: 'PRIVATE', createdAt: '2026-07-21T08:00:00Z' },
@@ -500,7 +559,19 @@ describe('author manuscript workspace', () => {
     expect(await screen.findByText('明确分享的文本')).toBeTruthy();
     expect(screen.queryByText('不应显示的私密标注')).toBeNull();
     expect(screen.queryByText('不应显示的私密备注')).toBeNull();
-    expect(screen.queryByRole('button', { name: /通过|驳回|审核/ })).toBeNull();
+    const reason = screen.getByRole('textbox', { name: '段评 402 的审核建议说明' });
+    fireEvent.change(reason, { target: { value: '保留给站长的公开建议' } });
+    fireEvent.click(screen.getByRole('button', { name: '建议站长公开段评 402' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/author/books/1/annotations/402/moderation-advice',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ recommendVisible: true, reason: '保留给站长的公开建议' }),
+      }),
+    ));
+    expect(await screen.findByText('已提交公开建议，等待站长最终审核。')).toBeTruthy();
+    expect(screen.getByText('待审核')).toBeTruthy();
   });
 
   it('shows empty, loading, and retryable failure states for shared annotations', async () => {

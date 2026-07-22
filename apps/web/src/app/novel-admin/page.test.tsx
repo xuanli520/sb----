@@ -123,18 +123,102 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
   }];
   let categories = [{ id: 11, type: 'CATEGORY', name: '科幻', enabled: true, sortOrder: 10 }];
   let tags = [{ id: 21, type: 'TAG', name: '成长', enabled: true, sortOrder: 10 }];
+  let availabilityBooks = [{
+    id: 61,
+    title: '风雪旧城',
+    author: '林见川',
+    category: '悬疑',
+    words: 88_000,
+    synopsis: '一部正在书城展示的测试作品。',
+    status: 'PUBLISHED',
+    serialStatus: '连载中',
+    cover: '#1f6d7a',
+    heat: 280,
+    purchasePrice: 30,
+  }];
+  const bookStatusAudits: Array<{
+    id: number;
+    bookId: number;
+    action: 'TAKEDOWN' | 'RESTORE_FOR_REVIEW';
+    previousStatus: 'PUBLISHED' | 'OFFLINE';
+    status: 'OFFLINE' | 'PENDING_REVIEW';
+    reason: string;
+    operatorUserId: number;
+    createdAt: string;
+  }> = [];
   const editorialRecommendations = [{
     rank: 1,
     book: { id: 1, title: '星海拾光', author: '林墨', category: '科幻', words: 286000, synopsis: '旧港口的来信。', status: 'PUBLISHED', serialStatus: '连载中', cover: '#1f6d7a', heat: 9820 },
   }];
   const hotSearchTerms = [{ id: 1, term: '星海', enabled: true, rank: 1, createdByUserId: 1, updatedByUserId: 1, createdAt: '2026-07-21T08:00:00Z', updatedAt: '2026-07-21T08:00:00Z' }];
+  let commercialRules = {
+    membershipDaysMaximumPerCode: 36500,
+    recommendationVotesPerDay: 10,
+    monthlyVotesPerMonth: 5,
+    rewardMinimumTokens: 1,
+    rewardMaximumTokensPerReward: 1000000,
+    rewardMaximumTokensPerDay: 5000000,
+    updatedAt: '2026-07-21T08:00:00Z',
+  };
+  const commercialRuleAudits: Array<Record<string, unknown>> = [];
   const accountAudits = [{ id: 501, accountId: 41, previousEnabled: true, enabled: false, reason: '违规内容需要暂停', operatorUserId: 1, createdAt: '2026-07-21T08:00:00Z' }];
+  const accountBehaviorEvents = Array.from({ length: 21 }, (_, index) => ({
+    eventType: index === 0 ? 'READING_PROGRESS' : index === 1 ? 'BOOKSHELF_ADDED' : index === 2 ? 'COMMENT_SUBMITTED' : 'READING_ACTIVITY',
+    occurredAt: `2026-07-${String(21 - Math.min(index, 20)).padStart(2, '0')}T08:00:00Z`,
+    bookId: 7,
+    bookTitle: '星海拾光',
+    chapterId: index === 0 ? 701 : null,
+    chapterTitle: index === 0 ? '第一章 旧港' : null,
+    status: index === 2 ? 'VISIBLE' : null,
+  }));
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
     if (path.endsWith('/admin/dashboard')) return Promise.resolve(response({ activeReaders: 14, todayReads: 33, publishedBooks: 5, pendingReviews: 1, auditLog: [] }));
+    if (path.endsWith('/admin/commercial-rules/audits?limit=20')) return Promise.resolve(response(commercialRuleAudits));
+    if (path.endsWith('/admin/commercial-rules') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(commercialRules));
+    if (path.endsWith('/admin/commercial-rules') && init?.method === 'PUT') {
+      const previousRules = commercialRules;
+      commercialRules = {
+        membershipDaysMaximumPerCode: Number(body.membershipDaysMaximumPerCode),
+        recommendationVotesPerDay: Number(body.recommendationVotesPerDay),
+        monthlyVotesPerMonth: Number(body.monthlyVotesPerMonth),
+        rewardMinimumTokens: Number(body.rewardMinimumTokens),
+        rewardMaximumTokensPerReward: Number(body.rewardMaximumTokensPerReward),
+        rewardMaximumTokensPerDay: Number(body.rewardMaximumTokensPerDay),
+        updatedAt: '2026-07-22T08:00:00Z',
+      };
+      commercialRuleAudits.unshift({ id: commercialRuleAudits.length + 1, previousRules, updatedRules: commercialRules, reason: String(body.reason), operatorUserId: 1, createdAt: commercialRules.updatedAt });
+      return Promise.resolve(response(commercialRules));
+    }
     if (path.endsWith('/admin/analytics/retention')) return Promise.resolve(response(retentionReport()));
     if (path.endsWith('/admin/reviews')) return Promise.resolve(response([]));
+    if (path.endsWith('/admin/books')) return Promise.resolve(response(availabilityBooks));
+    const bookStatusAuditsMatch = path.match(/\/admin\/books\/(\d+)\/status-audits\?limit=20$/);
+    if (bookStatusAuditsMatch) return Promise.resolve(response(bookStatusAudits.filter((audit) => audit.bookId === Number(bookStatusAuditsMatch[1]))));
+    const bookAvailabilityAction = path.match(/\/admin\/books\/(\d+)\/(takedown|restore)$/);
+    if (bookAvailabilityAction) {
+      const bookId = Number(bookAvailabilityAction[1]);
+      const action = bookAvailabilityAction[2];
+      const current = availabilityBooks.find((book) => book.id === bookId);
+      if (!current) return Promise.reject(new Error(`Unknown availability-managed book: ${bookId}`));
+      const takingDown = action === 'takedown';
+      const nextStatus = takingDown ? 'OFFLINE' : 'PENDING_REVIEW';
+      const updated = { ...current, status: nextStatus };
+      if (takingDown) availabilityBooks = availabilityBooks.map((book) => book.id === bookId ? updated : book);
+      else availabilityBooks = availabilityBooks.filter((book) => book.id !== bookId);
+      bookStatusAudits.unshift({
+        id: bookStatusAudits.length + 901,
+        bookId,
+        action: takingDown ? 'TAKEDOWN' : 'RESTORE_FOR_REVIEW',
+        previousStatus: takingDown ? 'PUBLISHED' : 'OFFLINE',
+        status: nextStatus,
+        reason: String(body.reason),
+        operatorUserId: 1,
+        createdAt: '2026-07-22T08:00:00Z',
+      });
+      return Promise.resolve(response(updated));
+    }
     if (path.endsWith('/admin/author-applications')) return Promise.resolve(response([]));
     if (path.endsWith('/admin/sensitive-words')) return Promise.resolve(response(['敏感词']));
     if (path.endsWith('/admin/comments?status=PENDING_REVIEW&size=20')) return Promise.resolve(response({ items: [pendingComment], meta: { total: 1, page: 0, size: 20 } }));
@@ -157,6 +241,36 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
     if (path.endsWith('/admin/redemption-codes?size=20')) return Promise.resolve(response({ items: redemptionCodes, page: 0, size: 20, total: redemptionCodes.length }));
     if (path.endsWith('/admin/editorial/recommendations')) return Promise.resolve(response(editorialRecommendations));
     if (path.endsWith('/admin/hot-searches')) return Promise.resolve(response(hotSearchTerms));
+    const behaviorSummaryMatch = path.match(/\/admin\/accounts\/(\d+)\/behavior-summary$/);
+    if (behaviorSummaryMatch) {
+      const accountId = Number(behaviorSummaryMatch[1]);
+      const account = accounts.find((item) => item.id === accountId);
+      if (!account) return Promise.reject(new Error(`Unknown account: ${accountId}`));
+      return Promise.resolve(response({
+        account,
+        readingProgressCount: 2,
+        bookshelfCount: 1,
+        checkinCount: 4,
+        bookmarkCount: 1,
+        bookPurchaseCount: 1,
+        redeemedCodeCount: 2,
+        rewardCount: 1,
+        commentCount: 3,
+        annotationCount: 1,
+        ratingCount: 1,
+        voteCount: 2,
+        readerActivityCount: 11,
+        lastReaderActivityAt: '2026-07-21T08:00:00Z',
+      }));
+    }
+    const behaviorEventsMatch = path.match(/\/admin\/accounts\/(\d+)\/behavior-events\?page=(\d+)&size=(\d+)$/);
+    if (behaviorEventsMatch) {
+      const accountId = Number(behaviorEventsMatch[1]);
+      if (!accounts.some((item) => item.id === accountId)) return Promise.reject(new Error(`Unknown account: ${accountId}`));
+      const page = Number(behaviorEventsMatch[2]);
+      const size = Number(behaviorEventsMatch[3]);
+      return Promise.resolve(response({ items: accountBehaviorEvents.slice(page * size, (page + 1) * size), total: accountBehaviorEvents.length, page, size }));
+    }
     if (path.includes('/admin/accounts?')) return Promise.resolve(response({ items: accounts, total: accounts.length, page: 0, size: 20 }));
     const accountStatusMatch = path.match(/\/admin\/accounts\/(\d+)\/status$/);
     if (accountStatusMatch) {
@@ -300,6 +414,44 @@ describe('admin channel retention report', () => {
     expect(within(retention).getByText('WECHAT')).toBeTruthy();
     expect(within(retention).getByText(/渠道只保留受控首触分类/)).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/analytics/retention', expect.anything()));
+  });
+});
+
+describe('admin book availability operations', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    push.mockReset();
+    refresh.mockReset();
+  });
+
+  it('requires an auditable reason, takes a published work down, and restores it only to review', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    await screen.findByRole('heading', { name: '作品下线与恢复' });
+    expect(screen.getByText('风雪旧城')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '下线《风雪旧城》' }));
+    await screen.findByText('请填写下线说明，系统会将其保留在处置审计中。');
+
+    fireEvent.change(screen.getByLabelText('下线说明 61'), { target: { value: '涉嫌侵权，待核验。' } });
+    fireEvent.click(screen.getByRole('button', { name: '下线《风雪旧城》' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/books/61/takedown', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ reason: '涉嫌侵权，待核验。' }),
+    })));
+    await screen.findByText('《风雪旧城》已下线，读者端不再可见。');
+    expect(screen.getAllByText('已下线').length).toBeGreaterThan(0);
+    expect(await screen.findByText('涉嫌侵权，待核验。')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('恢复说明 61'), { target: { value: '申诉材料已补齐。' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交复核《风雪旧城》' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/books/61/restore', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ reason: '申诉材料已补齐。' }),
+    })));
+    await screen.findByText('《风雪旧城》已重新进入整书审核，审核通过前不会重新上线。');
+    expect(screen.getByText('已提交重新审核')).toBeTruthy();
   });
 });
 
@@ -457,6 +609,28 @@ describe('admin account and taxonomy operations', () => {
     await screen.findByRole('heading', { name: '账号状态审计' });
     expect(screen.getAllByText('违规内容需要暂停').length).toBeGreaterThan(0);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/status-audits?limit=20', expect.anything()));
+  });
+
+  it('opens a redacted, paged behavior drawer from the existing account row', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    await screen.findByText('运营管理读者');
+    fireEvent.click(screen.getByRole('button', { name: '查看用户行为 41' }));
+
+    await screen.findByRole('heading', { name: '用户行为' });
+    expect(screen.getByLabelText('用户行为摘要')).toBeTruthy();
+    expect(screen.getByText('阅读进度')).toBeTruthy();
+    expect(screen.getByText('兑换')).toBeTruthy();
+    expect(screen.getByText('阅读进度更新')).toBeTruthy();
+    expect(screen.getByText('星海拾光 · 第一章 旧港')).toBeTruthy();
+    expect(screen.getByText(/私密正文与凭据不在此处显示/)).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-summary', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-events?page=0&size=20', expect.anything()));
+
+    fireEvent.click(screen.getByRole('button', { name: '下一页用户行为' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-events?page=1&size=20', expect.anything()));
+    expect(screen.getByText('第 2 / 2 页')).toBeTruthy();
   });
 
   it('creates a category and persists a taxonomy switch through the admin API', async () => {

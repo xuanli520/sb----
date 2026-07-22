@@ -189,6 +189,108 @@ class AdminOperationsIntegrationTest {
     }
 
     @Test
+    void administratorCanInspectARegisteredUsersRedactedPagedBehaviorTimeline() throws Exception {
+        AuthService.AuthenticatedSession target = authService.register(
+                "behavior.reader@example.test",
+                "行为查询读者",
+                "correct-horse-battery-staple");
+        long accountId = target.user().id();
+
+        jdbc.update("INSERT INTO novel_reader_progress(user_id, book_id, chapter_id, character_offset, updated_at) "
+                + "VALUES (?, 1, 1001, 12, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_bookshelf(user_id, book_id, added_at) VALUES (?, 1, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_daily_checkin(user_id, checkin_date, awarded_points, created_at) "
+                + "VALUES (?, CURRENT_DATE, 10, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_bookmark(user_id, book_id, chapter_id, character_offset, note, created_at) "
+                + "VALUES (?, 1, 1001, 12, '仅读者本人可见的书签备注', CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_book_entitlement(user_id, book_id, source_type, source_reference, purchase_amount, acquired_at) "
+                + "VALUES (?, 1, 'PURCHASE', '1', 30, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_redemption_code(code, batch_no, benefit_type, token_amount, book_id, membership_days, status, "
+                + "redeemed_by_user_id, redeemed_at, created_at, updated_at) "
+                + "VALUES ('SECRET-BEHAVIOR-CODE', 'behavior-test', 'TOKEN', 100, NULL, 0, 'REDEEMED', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                accountId);
+        jdbc.update("INSERT INTO novel_reward_record(rewarder_user_id, author_id, book_id, amount, created_at) "
+                + "VALUES (?, 2, 1, 20, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_comment(book_id, chapter_id, user_id, author_name, content, status, created_at, updated_at) "
+                + "VALUES (1, 1001, ?, '行为查询读者', '不应通过行为时间线暴露的评论正文', 'VISIBLE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                accountId);
+        jdbc.update("INSERT INTO novel_paragraph_annotation(book_id, chapter_id, user_id, author_name, paragraph_index, selection_start, "
+                + "selection_end, selected_text, note, share_intent, status, created_at, updated_at) "
+                + "VALUES (1, 1001, ?, '行为查询读者', 0, 0, 4, '不应暴露的划线原文', '不应暴露的划线备注', FALSE, 'PRIVATE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                accountId);
+        jdbc.update("INSERT INTO novel_book_rating(book_id, user_id, rating, created_at, updated_at) "
+                + "VALUES (1, ?, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_book_vote(book_id, user_id, vote_type, created_at) "
+                + "VALUES (1, ?, 'recommendation', CURRENT_TIMESTAMP)", accountId);
+        jdbc.update("INSERT INTO novel_reader_activity_event(user_id, book_id, chapter_id, event_type, activity_date, occurred_at) "
+                + "VALUES (?, 1, 1001, 'READING_PROGRESS', CURRENT_DATE, CURRENT_TIMESTAMP)", accountId);
+
+        mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-summary", accountId)
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-summary", accountId)
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.account.id").value(accountId))
+                .andExpect(jsonPath("$.data.readingProgressCount").value(1))
+                .andExpect(jsonPath("$.data.bookshelfCount").value(1))
+                .andExpect(jsonPath("$.data.checkinCount").value(1))
+                .andExpect(jsonPath("$.data.bookmarkCount").value(1))
+                .andExpect(jsonPath("$.data.bookPurchaseCount").value(1))
+                .andExpect(jsonPath("$.data.redeemedCodeCount").value(1))
+                .andExpect(jsonPath("$.data.rewardCount").value(1))
+                .andExpect(jsonPath("$.data.commentCount").value(1))
+                .andExpect(jsonPath("$.data.annotationCount").value(1))
+                .andExpect(jsonPath("$.data.ratingCount").value(1))
+                .andExpect(jsonPath("$.data.voteCount").value(1))
+                .andExpect(jsonPath("$.data.readerActivityCount").value(1))
+                .andExpect(jsonPath("$.data.lastReaderActivityAt").isNotEmpty());
+
+        String firstPage = mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .param("page", "0")
+                        .param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(12))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(2))
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        String completeTimeline = mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .param("page", "0")
+                        .param("size", "100"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(firstPage).doesNotContain("SECRET-BEHAVIOR-CODE");
+        assertThat(completeTimeline)
+                .contains("READING_PROGRESS", "BOOKSHELF_ADDED", "CHECKIN", "BOOK_PURCHASE", "REDEMPTION",
+                        "REWARD_SENT", "COMMENT_SUBMITTED", "READING_ACTIVITY")
+                .doesNotContain("SECRET-BEHAVIOR-CODE", "不应通过行为时间线暴露的评论正文", "不应暴露的划线原文", "不应暴露的划线备注", "仅读者本人可见的书签备注");
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_audit_event WHERE action LIKE ?", Integer.class,
+                "%account-behavior-summary operator=1 account=" + accountId + "%")).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_audit_event WHERE action LIKE ?", Integer.class,
+                "%account-behavior-events operator=1 account=" + accountId + "%")).isEqualTo(2);
+
+        mvc.perform(get("/api/v1/admin/accounts/999999/behavior-summary")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void fixedOrderAdminLocksPreserveOneEnabledAdministratorUnderConcurrentSuspensions() throws Exception {
         long firstAdmin = registerAdministrator("first.admin@example.test", "第一管理员");
         long secondAdmin = registerAdministrator("second.admin@example.test", "第二管理员");

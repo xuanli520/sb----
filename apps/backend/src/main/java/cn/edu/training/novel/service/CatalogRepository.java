@@ -1,18 +1,24 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.Book;
+import cn.edu.training.novel.domain.BookStatusAudit;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.Volume;
 import java.sql.Timestamp;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +44,16 @@ public class CatalogRepository {
             resultSet.getLong("author_id"),
             resultSet.getLong("heat"),
             resultSet.getLong("purchase_price"));
+    private static final RowMapper<BookStatusAudit> BOOK_STATUS_AUDIT_MAPPER = (resultSet, rowNum) ->
+            new BookStatusAudit(
+                    resultSet.getLong("id"),
+                    resultSet.getLong("book_id"),
+                    resultSet.getString("action"),
+                    BookStatus.valueOf(resultSet.getString("previous_status")),
+                    BookStatus.valueOf(resultSet.getString("status")),
+                    resultSet.getString("reason"),
+                    resultSet.getLong("operator_user_id"),
+                    instant(resultSet.getTimestamp("created_at")));
     private static final RowMapper<Chapter> CHAPTER_MAPPER = (resultSet, rowNum) -> new Chapter(
             resultSet.getLong("id"),
             resultSet.getLong("book_id"),
@@ -255,6 +271,51 @@ public class CatalogRepository {
                 BOOK_MAPPER,
                 BookStatus.PENDING_REVIEW.name(),
                 BookStatus.NEEDS_REVIEW.name());
+    }
+
+    /** Operator-facing inventory. Only work that can be taken down or restored is returned. */
+    public List<Book> findAvailabilityManagedBooks() {
+        return jdbcTemplate.query(
+                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE status IN (?, ?) ORDER BY id DESC",
+                BOOK_MAPPER,
+                BookStatus.PUBLISHED.name(),
+                BookStatus.OFFLINE.name());
+    }
+
+    public BookStatusAudit recordBookStatusAudit(
+            long bookId,
+            String action,
+            BookStatus previousStatus,
+            BookStatus status,
+            String reason,
+            long operatorUserId) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO novel_book_status_audit("
+                            + "book_id, action, previous_status, status, reason, operator_user_id, created_at) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, bookId);
+            statement.setString(2, action);
+            statement.setString(3, previousStatus.name());
+            statement.setString(4, status.name());
+            statement.setString(5, reason);
+            statement.setLong(6, operatorUserId);
+            return statement;
+        }, keyHolder);
+        return findBookStatusAudit(generatedId(keyHolder, "book status audit"))
+                .orElseThrow(() -> new IllegalStateException("book status audit was not saved"));
+    }
+
+    public List<BookStatusAudit> findBookStatusAudits(long bookId, int limit) {
+        return jdbcTemplate.query(
+                "SELECT id, book_id, action, previous_status, status, reason, operator_user_id, created_at "
+                        + "FROM novel_book_status_audit WHERE book_id = ? "
+                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
+                BOOK_STATUS_AUDIT_MAPPER,
+                bookId,
+                Math.max(1, Math.min(limit, 100)));
     }
 
     @Transactional
@@ -475,5 +536,31 @@ public class CatalogRepository {
                 Long.class,
                 id);
         return count != null && count > 0;
+    }
+
+    private Optional<BookStatusAudit> findBookStatusAudit(long auditId) {
+        return jdbcTemplate.query(
+                        "SELECT id, book_id, action, previous_status, status, reason, operator_user_id, created_at "
+                                + "FROM novel_book_status_audit WHERE id = ?",
+                        BOOK_STATUS_AUDIT_MAPPER,
+                        auditId)
+                .stream()
+                .findFirst();
+    }
+
+    private static long generatedId(KeyHolder keyHolder, String label) {
+        if (keyHolder.getKeyList().isEmpty()) {
+            throw new IllegalStateException("database did not return a generated " + label + " id");
+        }
+        Map<String, Object> keys = keyHolder.getKeyList().getFirst();
+        Object value = keys.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase("id"))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElseGet(() -> keys.values().stream().filter(Number.class::isInstance).findFirst().orElse(null));
+        if (!(value instanceof Number number)) {
+            throw new IllegalStateException("database did not return a numeric " + label + " id");
+        }
+        return number.longValue();
     }
 }

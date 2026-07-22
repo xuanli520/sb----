@@ -53,7 +53,7 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByRole('heading',{name:'内容与运营，清晰可追溯。'})).toBeVisible();
   await expect(page.getByRole('link', { name: '站长中心' })).toBeVisible();
   await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
-  await expect(page.getByText('活跃读者')).toBeVisible();
+  await expect(page.getByLabel('运营概览').getByText('活跃读者', { exact: true })).toBeVisible();
   const sensitiveWordForm = page.locator('form').filter({ has: page.getByRole('heading', { name: '敏感词库' }) });
   await sensitiveWordForm.getByRole('textbox', { name: '敏感词' }).fill('测试词条');
   await sensitiveWordForm.getByRole('button',{name:'添加'}).click();
@@ -154,7 +154,7 @@ test('a real reader is approved as an author and drafts stay out of another read
 
   await page.goto('/register');
   await page.getByLabel('显示名称').fill(displayName);
-  await page.getByLabel('用户名').fill(username);
+  await page.getByLabel('邮箱').fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByLabel('确认密码').fill(password);
   await page.getByRole('button', { name: '创建账户' }).click();
@@ -191,7 +191,7 @@ test('a real reader is approved as an author and drafts stay out of another read
   await expect(application).toHaveCount(0);
 
   await page.goto('/login');
-  await page.getByLabel('用户名或邮箱').fill(username);
+  await page.getByLabel('邮箱').fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);

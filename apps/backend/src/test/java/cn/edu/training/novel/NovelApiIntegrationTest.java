@@ -67,11 +67,11 @@ class NovelApiIntegrationTest {
     @Test void passwordAccountUsesOpaqueBffSessionAndServerSideRoles() throws Exception {
         String password = "correct-horse-battery-staple";
         String body = internalMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"reader@example.test\",\"displayName\":\"真实读者\",\"password\":\"" + password + "\"}"))
+                        .content("{\"username\":\"reader.account\",\"displayName\":\"真实读者\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.sessionId").isString())
                 .andReturn().getResponse().getContentAsString();
         String sessionId = JsonPath.read(body, "$.data.sessionId");
-        String storedHash = jdbc.queryForObject("SELECT password_hash FROM novel_account WHERE login_name = ?", String.class, "reader@example.test");
+        String storedHash = jdbc.queryForObject("SELECT password_hash FROM novel_account WHERE login_name = ?", String.class, "reader.account");
         assertThat(storedHash).startsWith("$2").isNotEqualTo(password);
 
         internalMvc.perform(get("/api/v1/account/profile").header("X-Novel-Bff-Session", sessionId).header("X-Novel-Principal", "admin"))
@@ -84,7 +84,7 @@ class NovelApiIntegrationTest {
         internalMvc.perform(post("/api/v1/auth/logout").header("X-Novel-Bff-Session", sessionId)).andExpect(status().isOk());
         internalMvc.perform(get("/api/v1/account/profile").header("X-Novel-Bff-Session", sessionId)).andExpect(status().isUnauthorized());
         internalMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"reader@example.test\",\"password\":\"incorrect-password\"}"))
+                        .content("{\"username\":\"reader.account\",\"password\":\"incorrect-password\"}"))
                 .andExpect(status().isUnauthorized());
     }
     @Test void readerCanManageShelfAndOneTimeRedemptionIsAudited() throws Exception {
@@ -152,7 +152,7 @@ class NovelApiIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING"));
         mvc.perform(get("/api/v1/admin/author-applications").header("X-Novel-Development-Principal","admin")).andExpect(jsonPath("$.data[0].penName").value("新作者"));
         String registration = internalMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"disable.target@example.test\",\"displayName\":\"待禁用读者\",\"password\":\"correct-horse-battery-staple\"}"))
+                        .content("{\"username\":\"disable.target\",\"displayName\":\"待禁用读者\",\"password\":\"correct-horse-battery-staple\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         long accountId = ((Number) JsonPath.read(registration, "$.data.user.id")).longValue();

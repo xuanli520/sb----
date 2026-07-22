@@ -7,13 +7,15 @@ import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Textarea } from '@/app/components/ui/textarea';
 import { Alert, AlertDescription } from '@/app/components/ui/alert';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { AdminOperationsPanels } from '@/components/novel/AdminOperationsPanels';
+import { CommercialRulesPanel } from '@/components/novel/CommercialRulesPanel';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
-import { Book, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
+import { Book, BookStatusAudit, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
 type Application = { id: number; penName: string; statement: string; status: string };
@@ -130,6 +132,12 @@ function RedemptionBenefitFields({
 export default function NovelAdminPage() {
   const [dashboard, setDashboard] = useState<Dashboard>();
   const [reviews, setReviews] = useState<Book[]>([]);
+  const [availabilityBooks, setAvailabilityBooks] = useState<Book[]>([]);
+  const [bookActionReasons, setBookActionReasons] = useState<Record<number, string>>({});
+  const [selectedBookStatusAuditId, setSelectedBookStatusAuditId] = useState<number>();
+  const [bookStatusAudits, setBookStatusAudits] = useState<BookStatusAudit[]>([]);
+  const [bookStatusAuditsLoading, setBookStatusAuditsLoading] = useState(false);
+  const [bookStatusAuditsError, setBookStatusAuditsError] = useState('');
   const [applications, setApplications] = useState<Application[]>([]);
   const [commentReviews, setCommentReviews] = useState<Comment[]>([]);
   const [commentReviewTotal, setCommentReviewTotal] = useState(0);
@@ -159,9 +167,10 @@ export default function NovelAdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextDashboard, nextReviews, nextApplications, nextWords, nextCommentReviews, nextAnnotationReviews, nextRedemptionCodes] = await Promise.all([
+      const [nextDashboard, nextReviews, nextAvailabilityBooks, nextApplications, nextWords, nextCommentReviews, nextAnnotationReviews, nextRedemptionCodes] = await Promise.all([
         novelApi<Dashboard>('admin/dashboard', 'admin'),
         novelApi<Book[]>('admin/reviews', 'admin'),
+        novelApi<Book[]>('admin/books', 'admin'),
         novelApi<Application[]>('admin/author-applications', 'admin'),
         novelApi<string[]>('admin/sensitive-words', 'admin'),
         novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin'),
@@ -170,6 +179,7 @@ export default function NovelAdminPage() {
       ]);
       setDashboard(nextDashboard);
       setReviews(nextReviews);
+      setAvailabilityBooks(nextAvailabilityBooks);
       setApplications(nextApplications);
       setWords(nextWords);
       setCommentReviews(nextCommentReviews.items);
@@ -214,6 +224,51 @@ export default function NovelAdminPage() {
       await load();
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '审核操作失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const loadBookStatusAudits = async (bookId: number) => {
+    setSelectedBookStatusAuditId(bookId);
+    setBookStatusAuditsLoading(true);
+    setBookStatusAuditsError('');
+    try {
+      setBookStatusAudits(await novelApi<BookStatusAudit[]>(`admin/books/${bookId}/status-audits?limit=20`, 'admin'));
+    } catch (reason) {
+      setBookStatusAudits([]);
+      setBookStatusAuditsError(reason instanceof Error ? reason.message : '作品处置记录暂时无法加载。');
+    } finally {
+      setBookStatusAuditsLoading(false);
+    }
+  };
+
+  const changeBookAvailability = async (book: Book) => {
+    const reason = bookActionReasons[book.id]?.trim();
+    const takingDown = book.status === 'PUBLISHED';
+    if (!reason) {
+      announce(takingDown ? '请填写下线说明，系统会将其保留在处置审计中。' : '请填写恢复说明，系统会将其保留在处置审计中。', 'error');
+      return;
+    }
+    const action = takingDown ? 'takedown' : 'restore';
+    setPendingAction(`book-status-${book.id}`);
+    try {
+      const updated = await novelApi<Book>(`admin/books/${book.id}/${action}`, 'admin', {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      setBookActionReasons((current) => {
+        const next = { ...current };
+        delete next[book.id];
+        return next;
+      });
+      announce(takingDown
+        ? `《${updated.title}》已下线，读者端不再可见。`
+        : `《${updated.title}》已重新进入整书审核，审核通过前不会重新上线。`);
+      await load();
+      await loadBookStatusAudits(book.id);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '作品处置失败，请稍后重试。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -601,6 +656,62 @@ export default function NovelAdminPage() {
         </aside>
       </section>
 
+      <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="book-availability-heading">
+        <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-emerald-700">违规处置</p>
+            <h2 id="book-availability-heading" className="mt-1 text-xl font-semibold text-stone-950">作品下线与恢复</h2>
+            <p className="mt-2 text-sm leading-6 text-stone-600">下线会立即移除读者书城与阅读入口；恢复只能重新进入整书审核，不能直接重新上线。</p>
+          </div>
+          <span className="text-sm text-stone-500">仅显示已上线或已下线作品</span>
+        </div>
+        {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+        {!loading && availabilityBooks.length === 0 ? <div className="px-5 py-12 text-center"><ShieldCheck className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有可处置作品</p><p className="mt-1 text-sm text-stone-500">已上线和已下线作品会在这里显示。</p></div> : null}
+        {!loading && availabilityBooks.length > 0 ? (
+          <div className="divide-y divide-stone-100">
+            {availabilityBooks.map((book) => {
+              const takingDown = book.status === 'PUBLISHED';
+              const reasonLabel = takingDown ? `下线说明 ${book.id}` : `恢复说明 ${book.id}`;
+              const actionLabel = takingDown ? `下线《${book.title}》` : `提交复核《${book.title}》`;
+              return (
+                <article key={book.id} className="grid gap-4 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,.7fr)]">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">{book.title}</h3><NovelStatusBadge status={book.status} /></div>
+                    <p className="mt-1 text-sm text-stone-500">{book.author} · {book.category} · {formatWordCount(book.words)}</p>
+                    <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-600">{book.synopsis}</p>
+                  </div>
+                  <div className="border-t border-stone-100 pt-4 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                    <Label htmlFor={`book-status-reason-${book.id}`} className="text-stone-700">{takingDown ? '下线说明' : '恢复说明'}</Label>
+                    <Textarea id={`book-status-reason-${book.id}`} aria-label={reasonLabel} value={bookActionReasons[book.id] ?? ''} onChange={(event) => setBookActionReasons((current) => ({ ...current, [book.id]: event.target.value }))} disabled={pendingAction === `book-status-${book.id}`} maxLength={1024} className="mt-2 min-h-20 resize-y rounded-none border-stone-300 bg-white px-3 py-2 text-sm leading-6 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder={takingDown ? '说明违规事实与处置依据' : '说明整改或申诉复核依据'} />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" aria-expanded={selectedBookStatusAuditId === book.id} onClick={() => {
+                        if (selectedBookStatusAuditId === book.id) {
+                          setSelectedBookStatusAuditId(undefined);
+                          setBookStatusAudits([]);
+                          setBookStatusAuditsError('');
+                          return;
+                        }
+                        void loadBookStatusAudits(book.id);
+                      }} disabled={pendingAction === `book-status-${book.id}`} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">查看处置记录</Button>
+                      <Button type="button" size="sm" aria-label={actionLabel} onClick={() => void changeBookAvailability(book)} disabled={pendingAction === `book-status-${book.id}`} className={takingDown ? 'h-auto rounded-none bg-rose-700 px-3 py-2 hover:bg-rose-800' : 'h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800'}>{takingDown ? <><ShieldAlert size={15} aria-hidden="true" />下线</> : <><Clock3 size={15} aria-hidden="true" />提交复核</>}</Button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+        {selectedBookStatusAuditId ? (
+          <div className="border-t border-stone-200 bg-stone-50 px-5 py-5" aria-live="polite">
+            <div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-stone-950">作品处置审计</h3><span className="text-xs text-stone-500">作品 #{selectedBookStatusAuditId}</span></div>
+            {bookStatusAuditsLoading ? <Skeleton className="mt-4 h-20 rounded-none bg-white" /> : null}
+            {bookStatusAuditsError ? <InlineNotice tone="error">处置记录无法显示：{bookStatusAuditsError}</InlineNotice> : null}
+            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length === 0 ? <p className="mt-3 text-sm text-stone-500">尚无作品下线或恢复记录。</p> : null}
+            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length > 0 ? <ol className="mt-4 space-y-3 border-l border-emerald-300 pl-4">{bookStatusAudits.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatRedemptionTime(audit.createdAt)}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol> : null}
+          </div>
+        ) : null}
+      </section>
+
       <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="comment-review-heading">
         <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -692,6 +803,7 @@ export default function NovelAdminPage() {
           </div>
         </form>
       </section>
+      <CommercialRulesPanel />
       <EditorialOperationsPanel />
       <AdminOperationsPanels />
     </NovelShell>
