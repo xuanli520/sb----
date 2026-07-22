@@ -3,7 +3,7 @@
   "info": {
     "title": "Novel Platform API",
     "version": "0.1.0",
-    "description": "Versioned REST contract for the novel platform backend. Browser clients use the same-origin Next BFF: replace the backend prefix `/api/v1` with `/api/novel` for the `public`, `account`, `author`, and `admin` route groups. The BFF owns browser cookies, CSRF validation, and the upstream internal headers; do not call protected backend routes from browser JavaScript directly. `/api/v1/auth/*` is an internal BFF-to-backend contract and is intentionally not exposed by the catch-all browser proxy. Email registration uses a configured SMTP sender and a one-time code; it fails closed when SMTP configuration is unavailable. Phone verification, WeChat/QQ OAuth, external payment, and production Qwen credentials are not represented as available API integrations."
+    "description": "Versioned REST contract for the novel platform backend. Browser clients use the same-origin Next BFF: replace the backend prefix `/api/v1` with `/api/novel` for the `public`, `account`, `author`, and `admin` route groups. The BFF owns browser cookies, CSRF validation, and the upstream internal headers; do not call protected backend routes from browser JavaScript directly. `/api/v1/auth/*` is an internal BFF-to-backend contract and is intentionally not exposed by the catch-all browser proxy. The sole `ADMIN` product role is the stationmaster (super administrator); there is no lower-privilege administrator role. Email registration uses a configured SMTP sender and a one-time code; it fails closed when SMTP configuration is unavailable. Phone verification, WeChat/QQ OAuth, external payment, and production Qwen credentials are not represented as available API integrations."
   },
   "servers": [
     {
@@ -931,6 +931,47 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
     },
+    "/api/v1/admin/email-delivery-settings": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getEmailDeliverySettings",
+        "summary": "Get the redacted SMTP delivery configuration",
+        "description": "Reserved for the sole stationmaster `ADMIN` role. The response never contains the SMTP password, email-verification HMAC secret, encryption key, or ciphertext; it exposes only whether each write-only secret is configured.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-super-administrator-only": true,
+        "x-response-data-schema": "#/components/schemas/EmailDeliverySettingsView",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "updateEmailDeliverySettings",
+        "summary": "Persist encrypted SMTP delivery settings",
+        "description": "Reserved for the sole stationmaster `ADMIN` role. `password` and `verificationHashSecret` are write-only. Omitting either retains its existing encrypted value; neither is ever returned by this API or an audit entry.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-super-administrator-only": true,
+        "x-response-data-schema": "#/components/schemas/EmailDeliverySettingsView",
+        "requestBody": { "$ref": "#/components/requestBodies/EmailDeliverySettingsUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/admin/email-delivery-settings/verify": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "verifyEmailDeliverySettings",
+        "summary": "Send a stationmaster SMTP configuration test email",
+        "description": "Reserved for the sole stationmaster `ADMIN` role. The test email contains no registration code or credential. SMTP diagnostics are never returned to the caller.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-super-administrator-only": true,
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "requestBody": { "$ref": "#/components/requestBodies/EmailDeliverySettingsVerificationRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
     "/api/v1/admin/author-applications": {
       "get": {
         "tags": ["Operations"],
@@ -1591,6 +1632,8 @@
     },
     "requestBodies": {
       "EmailVerificationRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailVerificationRequest" } } } },
+      "EmailDeliverySettingsUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailDeliverySettingsUpdateRequest" } } } },
+      "EmailDeliverySettingsVerificationRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailDeliverySettingsVerificationRequest" } } } },
       "RegisterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } } },
       "LoginRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
       "ProfileUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUpdateRequest" } } } },
@@ -1770,6 +1813,9 @@
       "SessionData": { "type": "object", "required": ["sessionId", "user", "expiresAt"], "properties": { "sessionId": { "type": "string", "description": "BFF-only backend session identifier; must not be written to browser cookies." }, "user": { "$ref": "#/components/schemas/UserData" }, "expiresAt": { "type": "string", "format": "date-time" } } },
       "EmailVerificationDeliveryData": { "type": "object", "required": ["expiresAt", "resendAvailableAt"], "properties": { "expiresAt": { "type": "string", "format": "date-time" }, "resendAvailableAt": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
       "EmailVerificationRequest": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email", "maxLength": 120 } }, "additionalProperties": false },
+      "EmailDeliverySettingsView": { "type": "object", "required": ["source", "enabled", "host", "port", "username", "from", "smtpAuth", "sslEnabled", "passwordConfigured", "verificationHashSecretConfigured"], "properties": { "source": { "type": "string", "enum": ["DEPLOYMENT", "ADMIN"] }, "enabled": { "type": "boolean" }, "host": { "type": "string" }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "username": { "type": "string" }, "from": { "type": "string", "format": "email" }, "smtpAuth": { "type": "boolean" }, "sslEnabled": { "type": "boolean" }, "passwordConfigured": { "type": "boolean", "description": "Presence flag only; the SMTP password is never returned." }, "verificationHashSecretConfigured": { "type": "boolean", "description": "Presence flag only; the HMAC secret is never returned." }, "updatedByUserId": { "type": ["integer", "null"], "format": "int64" }, "updatedAt": { "type": ["string", "null"], "format": "date-time" } }, "additionalProperties": false },
+      "EmailDeliverySettingsUpdateRequest": { "type": "object", "required": ["enabled", "host", "port", "username", "from", "smtpAuth", "sslEnabled", "reason"], "properties": { "enabled": { "type": "boolean" }, "host": { "type": "string", "minLength": 1, "maxLength": 255 }, "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "username": { "type": "string", "minLength": 1, "maxLength": 255 }, "password": { "type": "string", "maxLength": 1024, "writeOnly": true, "description": "Write-only. Omit or send blank only to retain the previously encrypted password." }, "from": { "type": "string", "format": "email", "minLength": 1, "maxLength": 320 }, "smtpAuth": { "type": "boolean" }, "sslEnabled": { "type": "boolean" }, "verificationHashSecret": { "type": "string", "maxLength": 1024, "writeOnly": true, "description": "Write-only. Omit or send blank only to retain the previously encrypted HMAC secret." }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },
+      "EmailDeliverySettingsVerificationRequest": { "type": "object", "required": ["recipient"], "properties": { "recipient": { "type": "string", "format": "email", "minLength": 1, "maxLength": 320 } }, "additionalProperties": false },
       "RegisterRequest": { "type": "object", "required": ["username", "displayName", "password", "verificationCode"], "properties": { "username": { "type": "string", "format": "email", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true }, "channel": { "type": "string", "maxLength": 32, "enum": ["DIRECT", "ORGANIC", "SEARCH", "WECHAT", "QQ", "DOUYIN", "XIAOHONGSHU", "INVITE"], "description": "Optional controlled first-touch registration channel. Unknown values are rejected; raw UTM URLs and referrers are not stored." }, "verificationCode": { "type": "string", "pattern": "^[0-9]{6}$", "writeOnly": true, "description": "Required for every BFF registration. It is delivered only by the SMTP verification endpoint and is never echoed by an API response." } }, "additionalProperties": false },
       "LoginRequest": { "type": "object", "required": ["username", "password"], "properties": { "username": { "type": "string", "format": "email", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true } }, "additionalProperties": false },
       "ProfileUpdateRequest": { "type": "object", "required": ["displayName"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },

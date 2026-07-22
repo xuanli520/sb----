@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { AdminOperationsPanels } from '@/components/novel/AdminOperationsPanels';
 import { CommercialRulesPanel } from '@/components/novel/CommercialRulesPanel';
+import { EmailDeliverySettingsPanel } from '@/components/novel/EmailDeliverySettingsPanel';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
 import { Book, BookStatusAudit, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
 
@@ -928,6 +929,7 @@ export default function NovelAdminPage() {
         </form>
       </section>
       <CommercialRulesPanel />
+      <EmailDeliverySettingsPanel />
       <EditorialOperationsPanel />
       <AdminOperationsPanels />
     </NovelShell>

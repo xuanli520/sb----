@@ -14,7 +14,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController @RequestMapping("/api/v1/admin")
 public class AdminController implements UserResolver {
     private final NovelStore store;
-    public AdminController(NovelStore store){this.store=store;}
+    private final EmailDeliverySettingsService emailDeliverySettingsService;
+    public AdminController(NovelStore store, EmailDeliverySettingsService emailDeliverySettingsService){this.store=store;this.emailDeliverySettingsService=emailDeliverySettingsService;}
     @GetMapping("/reviews") ApiResponse<List<Book>> reviews(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.pending());}
     @PostMapping("/reviews/{bookId}") ApiResponse<Book> review(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.review(u.id(),bookId,body.approve(),body.reason()));}
     @GetMapping("/books") ApiResponse<List<Book>> availabilityManagedBooks(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.availabilityManagedBooks());}
@@ -30,6 +31,9 @@ public class AdminController implements UserResolver {
     @PutMapping("/sensitive-words/{normalizedWord}/enabled") ApiResponse<SensitiveWord> setSensitiveWordEnabled(HttpServletRequest request,@PathVariable String normalizedWord,@Valid @RequestBody SensitiveWordEnabledRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.setSensitiveWordEnabled(u.id(),normalizedWord,body.enabled(),body.reason()));}
     @DeleteMapping("/sensitive-words/{normalizedWord}") ApiResponse<Void> deleteSensitiveWord(HttpServletRequest request,@PathVariable String normalizedWord,@Valid @RequestBody SensitiveWordDeleteRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);store.deleteSensitiveWord(u.id(),normalizedWord,body.reason());return ApiResponse.ok(null);}
     @GetMapping("/sensitive-words/audits") ApiResponse<List<SensitiveWordAudit>> sensitiveWordAudits(HttpServletRequest request,@RequestParam(defaultValue="20") @Min(1) @Max(100) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.sensitiveWordAudits(limit));}
+    @GetMapping("/email-delivery-settings") ApiResponse<EmailDeliverySettingsView> emailDeliverySettings(HttpServletRequest request){CurrentUser u=current(request);u.requireSuperAdministrator();return ApiResponse.ok(emailDeliverySettingsService.currentView(u));}
+    @PutMapping("/email-delivery-settings") ApiResponse<EmailDeliverySettingsView> updateEmailDeliverySettings(HttpServletRequest request,@Valid @RequestBody EmailDeliverySettingsUpdateRequest body){CurrentUser u=current(request);u.requireSuperAdministrator();return ApiResponse.ok(emailDeliverySettingsService.update(u,new EmailDeliverySettingsService.UpdateCommand(body.enabled(),body.host(),body.port(),body.username(),body.password(),body.from(),body.smtpAuth(),body.sslEnabled(),body.verificationHashSecret(),body.reason())));}
+    @PostMapping("/email-delivery-settings/verify") ApiResponse<Void> verifyEmailDeliverySettings(HttpServletRequest request,@Valid @RequestBody EmailDeliverySettingsVerificationRequest body){CurrentUser u=current(request);u.requireSuperAdministrator();emailDeliverySettingsService.verifyDelivery(u,body.recipient());return ApiResponse.ok(null);}
     @GetMapping("/moderation-audits") ApiResponse<List<ContentModerationAudit>> moderationAudits(HttpServletRequest request,@RequestParam(required=false) String contentType,@RequestParam(defaultValue="50") @Min(1) @Max(200) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.moderationAudits(contentType,limit));}
     @GetMapping("/moderation-reviews") ApiResponse<List<ContentModerationReview>> moderationReviews(HttpServletRequest request,@RequestParam @Min(1) long bookId,@RequestParam(defaultValue="50") @Min(1) @Max(200) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.moderationReviews(bookId,limit));}
     @GetMapping("/moderation-snapshots") ApiResponse<List<BookModerationSnapshot>> moderationSnapshots(HttpServletRequest request,@RequestParam @Min(1) long bookId,@RequestParam(defaultValue="20") @Min(1) @Max(100) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.moderationSnapshots(bookId,limit));}
@@ -41,4 +45,8 @@ public class AdminController implements UserResolver {
     public record SensitiveWordUpdateRequest(@NotBlank @Size(max=128) String word,@NotBlank @Size(max=512) String reason){}
     public record SensitiveWordEnabledRequest(boolean enabled,@NotBlank @Size(max=512) String reason){}
     public record SensitiveWordDeleteRequest(@NotBlank @Size(max=512) String reason){}
+    public record EmailDeliverySettingsUpdateRequest(boolean enabled,@NotBlank @Size(max=255) String host,@Min(1) @Max(65535) int port,@NotBlank @Size(max=255) String username,@Size(max=1024) String password,@NotBlank @jakarta.validation.constraints.Email @Size(max=320) String from,boolean smtpAuth,boolean sslEnabled,@Size(max=1024) String verificationHashSecret,@NotBlank @Size(max=512) String reason){
+        @Override public String toString(){return "EmailDeliverySettingsUpdateRequest[redacted]";}
+    }
+    public record EmailDeliverySettingsVerificationRequest(@NotBlank @jakarta.validation.constraints.Email @Size(max=320) String recipient){}
 }

@@ -35,6 +35,7 @@ services:
       NOVEL_EMAIL_VERIFICATION_ENABLED: ${NOVEL_EMAIL_VERIFICATION_ENABLED:-true}
       NOVEL_EMAIL_VERIFICATION_FROM: ${NOVEL_EMAIL_VERIFICATION_FROM:-}
       NOVEL_EMAIL_VERIFICATION_HASH_SECRET: ${NOVEL_EMAIL_VERIFICATION_HASH_SECRET:-}
+      NOVEL_EMAIL_SETTINGS_ENCRYPTION_KEY: ${NOVEL_EMAIL_SETTINGS_ENCRYPTION_KEY:-}
       NOVEL_EMAIL_VERIFICATION_CODE_TTL: ${NOVEL_EMAIL_VERIFICATION_CODE_TTL:-PT10M}
       NOVEL_EMAIL_VERIFICATION_RESEND_COOLDOWN: ${NOVEL_EMAIL_VERIFICATION_RESEND_COOLDOWN:-PT60S}
       NOVEL_EMAIL_VERIFICATION_MAX_REQUESTS_PER_WINDOW: ${NOVEL_EMAIL_VERIFICATION_MAX_REQUESTS_PER_WINDOW:-5}
@@ -87,7 +88,7 @@ services:
       - mysql
       - object-storage
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health > /dev/null"]
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health/readiness > /dev/null"]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -213,7 +214,7 @@ services:
             *) printf '%s\n' "Could not create MinIO cover writer: $$user_add_error" >&2; exit 1 ;;
           esac
         fi
-        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*"]}]}' > /tmp/novel-cover-writer-policy.json
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*"]}]}' > /tmp/novel-cover-writer-policy.json
         mc admin policy create local novel-cover-writer /tmp/novel-cover-writer-policy.json || mc admin policy update local novel-cover-writer /tmp/novel-cover-writer-policy.json
         mc admin policy attach local novel-cover-writer --user "$$MINIO_COVER_ACCESS_KEY"
         # A pre-existing access key can have a different secret. Verify the configured writer

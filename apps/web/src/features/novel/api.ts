@@ -43,6 +43,21 @@ export type HotSearchTermAudit = {
 };
 export type AccountProfile = { id:number; name:string; roles:string[] };
 export type AccountProfileUpdate = { displayName:string };
+/** Credential-free SMTP configuration returned only to the station super administrator. */
+export type EmailDeliverySettings = {
+  source:'DEPLOYMENT' | 'ADMIN';
+  enabled:boolean;
+  host:string;
+  port:number;
+  username:string;
+  from:string;
+  smtpAuth:boolean;
+  sslEnabled:boolean;
+  passwordConfigured:boolean;
+  verificationHashSecretConfigured:boolean;
+  updatedByUserId:number | null;
+  updatedAt:string | null;
+};
 export type AccountMembershipEntitlement = { expiresAt:string; active:boolean };
 export type AccountBookEntitlement = {
   bookId:number;

@@ -16,6 +16,22 @@ type SmtpMailboxMessage = {
   data: string;
 };
 
+function mailboxText(message: string) {
+  const separator = message.search(/\r?\n\r?\n/);
+  if (separator < 0) return message;
+  const headers = message.slice(0, separator);
+  const body = message.slice(separator).replace(/^\r?\n\r?\n/, '');
+  if (/^content-transfer-encoding:\s*base64\s*$/im.test(headers)) {
+    return Buffer.from(body.replace(/\s/g, ''), 'base64').toString('utf8');
+  }
+  if (/^content-transfer-encoding:\s*quoted-printable\s*$/im.test(headers)) {
+    const unfolded = body.replace(/=\r?\n/g, '');
+    const bytes = unfolded.replace(/=([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    return Buffer.from(bytes, 'latin1').toString('utf8');
+  }
+  return body;
+}
+
 async function requestEmailVerification(page: import('@playwright/test').Page, email: string, origin: string) {
   const response = await page.request.post('/api/novel/email-verification', {
     data: { email },
@@ -32,10 +48,23 @@ async function readEmailVerificationCode(page: import('@playwright/test').Page, 
     if (!inbox.ok()) return '';
     const payload = await inbox.json() as { messages?: SmtpMailboxMessage[] };
     const message = payload.messages?.find((candidate) => candidate.recipients.some((recipient) => recipient.toLowerCase() === email.toLowerCase()));
-    code = message?.data.match(/\b(\d{6})\b/)?.[1] ?? '';
+    code = message ? mailboxText(message.data).match(/\b(\d{6})\b/)?.[1] ?? '' : '';
     return code;
   }, { timeout: 15_000, intervals: [100, 250, 500] }).toMatch(/^\d{6}$/);
   return code;
+}
+
+async function readMailboxMessage(page: import('@playwright/test').Page, email: string) {
+  let message: SmtpMailboxMessage | undefined;
+  await expect.poll(async () => {
+    const inbox = await page.request.get(`${smtpMailboxUrl}/messages`);
+    if (!inbox.ok()) return false;
+    const payload = await inbox.json() as { messages?: SmtpMailboxMessage[] };
+    message = payload.messages?.find((candidate) => candidate.recipients.some((recipient) => recipient.toLowerCase() === email.toLowerCase()));
+    return Boolean(message);
+  }, { timeout: 15_000, intervals: [100, 250, 500] }).toBe(true);
+  if (!message) throw new Error('SMTP mailbox did not return the expected message');
+  return message;
 }
 
 async function registerReader(
@@ -84,6 +113,8 @@ test('reader and administrator journeys render through real BFF accounts', async
   await page.getByRole('button',{name:'发布'}).click();
   await expect(page.getByRole('status').filter({ hasText: '评论已发布' })).toBeVisible();
   await expect(page.getByText('浏览器端的阅读反馈').last()).toBeVisible();
+  await page.goto('/novel-admin');
+  await expect(page.getByRole('heading', { name: 'SMTP 邮件服务' })).toHaveCount(0);
   const adminSession = await page.request.post('/api/novel/session', {
     data: { action: 'login', ...bootstrapAdministrator },
     headers: { Origin: origin },
@@ -95,10 +126,41 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
   await expect(page.getByLabel('运营概览').getByText('活跃读者', { exact: true })).toBeVisible();
   const sensitiveWordForm = page.locator('form').filter({ has: page.getByRole('heading', { name: '敏感词库' }) });
-  await sensitiveWordForm.getByRole('textbox', { name: '敏感词' }).fill('测试词条');
+  await sensitiveWordForm.getByRole('textbox', { name: '敏感词', exact: true }).fill('测试词条');
   await sensitiveWordForm.getByRole('button',{name:'添加'}).click();
   await expect(page.getByRole('status').filter({ hasText: '敏感词已加入审核规则' })).toBeVisible();
-  await expect(page.getByText('测试词条', { exact: true })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '敏感词 测试词条' })).toHaveValue('测试词条');
+});
+
+test('the super administrator saves SMTP settings and receives a real verification delivery', async ({ page }, testInfo) => {
+  const origin = new URL(String(testInfo.project.use.baseURL)).origin;
+  const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
+  const recipient = `smtp-verification-${suffix}@example.test`;
+  const smtpPort = process.env.E2E_SMTP_PORT ?? '11025';
+  const session = await page.request.post('/api/novel/session', {
+    data: { action: 'login', ...bootstrapAdministrator },
+    headers: { Origin: origin },
+  });
+  expect(session.status()).toBe(200);
+
+  await page.goto('/novel-admin');
+  await expect(page.getByRole('heading', { name: 'SMTP 邮件服务' })).toBeVisible();
+  await page.getByLabel('SMTP 主机').fill('127.0.0.1');
+  await page.getByLabel('SMTP 端口').fill(smtpPort);
+  await page.getByLabel('SMTP 发件人地址').fill('e2e-mailer@example.test');
+  await page.getByLabel('SMTP 用户名').fill('e2e-mailer');
+  await page.getByLabel('SMTP 密码或授权码').fill('e2e-smtp-test-password');
+  await page.getByLabel('验证码哈希密钥').fill('e2e-email-verification-hmac-secret');
+  await page.getByLabel('SMTP 变更说明').fill('端到端验证 SMTP 配置保存和投递');
+  await page.getByRole('button', { name: '保存邮件服务' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'SMTP 邮件服务已保存，敏感凭据未回显。' })).toBeVisible();
+  await expect(page.getByText('超级管理员配置', { exact: true })).toBeVisible();
+
+  await page.getByLabel('验证收件人').fill(recipient);
+  await page.getByRole('button', { name: '发送验证邮件' }).click();
+  await expect(page.getByRole('status').filter({ hasText: `验证邮件已发送至 ${recipient}。` })).toBeVisible();
+  const message = await readMailboxMessage(page, recipient);
+  expect(mailboxText(message.data)).toContain('站长已验证当前 SMTP 邮件服务配置。');
 });
 
 test('public discovery applies catalog facets through the BFF and highlights the matched keyword', async ({ page }) => {
@@ -192,7 +254,7 @@ test('a real reader is approved as an author and drafts stay out of another read
 
   await page.goto('/register');
   await page.getByLabel('显示名称').fill(displayName);
-  await page.getByLabel('邮箱').fill(username);
+  await page.getByLabel('邮箱', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByLabel('确认密码').fill(password);
   await page.getByRole('button', { name: '发送验证码' }).click();
@@ -232,7 +294,7 @@ test('a real reader is approved as an author and drafts stay out of another read
   await expect(application).toHaveCount(0);
 
   await page.goto('/login');
-  await page.getByLabel('邮箱').fill(username);
+  await page.getByLabel('邮箱', { exact: true }).fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);

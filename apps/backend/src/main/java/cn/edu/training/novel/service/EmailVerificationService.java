@@ -1,6 +1,7 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.config.EmailVerificationProperties;
+import cn.edu.training.novel.domain.EmailDeliverySettings;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -15,8 +16,6 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,28 +41,19 @@ public class EmailVerificationService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final JdbcTemplate jdbc;
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final EmailVerificationProperties properties;
-    private final String smtpHost;
-    private final int smtpPort;
-    private final String smtpUsername;
-    private final String smtpPassword;
+    private final EmailDeliverySettingsService deliverySettingsService;
+    private final EmailDeliverySenderFactory senderFactory;
 
     public EmailVerificationService(
             JdbcTemplate jdbc,
-            ObjectProvider<JavaMailSender> mailSenderProvider,
-            EmailVerificationProperties properties,
-            @Value("${spring.mail.host:}") String smtpHost,
-            @Value("${spring.mail.port:0}") int smtpPort,
-            @Value("${spring.mail.username:}") String smtpUsername,
-            @Value("${spring.mail.password:}") String smtpPassword) {
+            EmailDeliverySettingsService deliverySettingsService,
+            EmailDeliverySenderFactory senderFactory,
+            EmailVerificationProperties properties) {
         this.jdbc = jdbc;
-        this.mailSenderProvider = mailSenderProvider;
+        this.deliverySettingsService = deliverySettingsService;
+        this.senderFactory = senderFactory;
         this.properties = properties;
-        this.smtpHost = smtpHost;
-        this.smtpPort = smtpPort;
-        this.smtpUsername = smtpUsername;
-        this.smtpPassword = smtpPassword;
     }
 
     /**
@@ -73,7 +63,8 @@ public class EmailVerificationService {
     @Transactional
     public VerificationDelivery requestRegistrationCode(String requestedEmail) {
         String email = normalizeEmail(requestedEmail);
-        JavaMailSender mailSender = requireAvailableSender();
+        EmailDeliverySettings settings = requireAvailableSettings();
+        JavaMailSender mailSender = senderFactory.create(settings);
         Instant now = Instant.now();
         Optional<VerificationRow> current = lockCurrent(email);
         RequestWindow requestWindow = nextRequestWindow(current.orElse(null), now);
@@ -86,7 +77,7 @@ public class EmailVerificationService {
                             + "SET code_hash = ?, expires_at = ?, used_at = NULL, sent_at = ?, "
                             + "request_window_started_at = ?, request_count = ?, verification_attempts = 0, "
                             + "last_attempt_at = NULL, updated_at = ? WHERE id = ?",
-                    codeHash(email, code),
+                    codeHash(email, code, settings.verificationHashSecret()),
                     Timestamp.from(expiresAt),
                     Timestamp.from(now),
                     Timestamp.from(requestWindow.startedAt()),
@@ -94,11 +85,11 @@ public class EmailVerificationService {
                     Timestamp.from(now),
                     current.get().id());
         } else {
-            insertCurrent(email, codeHash(email, code), now, expiresAt, requestWindow);
+            insertCurrent(email, codeHash(email, code, settings.verificationHashSecret()), now, expiresAt, requestWindow);
         }
 
         try {
-            mailSender.send(registrationMessage(email, code));
+            mailSender.send(registrationMessage(settings, email, code));
         } catch (RuntimeException exception) {
             // SMTP provider details can contain credentials or recipient data and must not reach
             // logs or the API. The transaction rolls the verification write back before 503.
@@ -111,7 +102,7 @@ public class EmailVerificationService {
     @Transactional(propagation = Propagation.REQUIRES_NEW, noRollbackFor = ResponseStatusException.class)
     public void consumeRegistrationCode(String requestedEmail, String rawCode) {
         String email = normalizeEmail(requestedEmail);
-        requireAvailableSender();
+        EmailDeliverySettings settings = requireAvailableSettings();
         if (rawCode == null || !VERIFICATION_CODE.matcher(rawCode).matches()) {
             throw invalidCode();
         }
@@ -123,7 +114,7 @@ public class EmailVerificationService {
         if (current.verificationAttempts() >= properties.getMaxVerificationAttempts()) {
             throw attemptsExceeded();
         }
-        String expectedHash = codeHash(email, rawCode);
+        String expectedHash = codeHash(email, rawCode, settings.verificationHashSecret());
         if (!MessageDigest.isEqual(
                 current.codeHash().getBytes(StandardCharsets.US_ASCII), expectedHash.getBytes(StandardCharsets.US_ASCII))) {
             int nextAttempts = current.verificationAttempts() + 1;
@@ -226,43 +217,30 @@ public class EmailVerificationService {
         return new RequestWindow(current.requestWindowStartedAt(), current.requestCount() + 1);
     }
 
-    private JavaMailSender requireAvailableSender() {
+    private EmailDeliverySettings requireAvailableSettings() {
+        EmailDeliverySettings settings = deliverySettingsService.effectiveSettings();
         if (!properties.isEnabled()
                 || !properties.hasValidPolicy()
-                || !isEmailAddress(properties.getFrom())
-                || !hasText(properties.getHashSecret())
-                || !hasText(smtpHost)
-                || smtpPort < 1
-                || !hasText(smtpUsername)
-                || !hasText(smtpPassword)) {
+                || !settings.isComplete()
+                || !isEmailAddress(settings.from())) {
             throw unavailable();
         }
-        try {
-            JavaMailSender sender = mailSenderProvider.getIfAvailable();
-            if (sender == null) {
-                throw unavailable();
-            }
-            return sender;
-        } catch (ResponseStatusException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw unavailable();
-        }
+        return settings;
     }
 
-    private SimpleMailMessage registrationMessage(String email, String code) {
+    private SimpleMailMessage registrationMessage(EmailDeliverySettings settings, String email, String code) {
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(properties.getFrom().trim());
+        message.setFrom(settings.from());
         message.setTo(email);
         message.setSubject("小说平台邮箱验证码");
         message.setText("你的注册验证码是：" + code + "\n验证码将在有效期内失效，请勿向他人透露。");
         return message;
     }
 
-    private String codeHash(String email, String code) {
+    private String codeHash(String email, String code, String hashSecret) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(properties.getHashSecret().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.init(new SecretKeySpec(hashSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] digest = mac.doFinal((REGISTRATION_PURPOSE + "\0" + email + "\0" + code).getBytes(StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException | InvalidKeyException exception) {
@@ -284,10 +262,6 @@ public class EmailVerificationService {
     private static Instant timestamp(java.sql.ResultSet resultSet, String column) throws java.sql.SQLException {
         Timestamp value = resultSet.getTimestamp(column);
         return value == null ? null : value.toInstant();
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 
     private static ResponseStatusException unavailable() {

@@ -55,6 +55,11 @@ NOVEL_EMAIL_VERIFICATION_HASH_SECRET=replace-with-a-separate-long-random-secret
 预期的安全行为。发送冷却、小时窗口和验证失败次数可用同名前缀的其余环境变量调整。手机号
 登录未实现，也不应把手机号提交到邮箱验证码接口。
 
+站长可在运营端保存一套替代部署变量的 SMTP 配置，但该能力仅向唯一的站长角色 `ADMIN` 开放；
+读者和作者不能读取、修改或发送 SMTP 验证邮件。持久化的 SMTP 密码和验证码 HMAC 密钥以
+`NOVEL_EMAIL_SETTINGS_ENCRYPTION_KEY` 加密后存储。API 只返回“是否已配置”的布尔状态，绝不
+返回 SMTP 密码、HMAC 密钥或加密密钥，也不得将这些值写入日志。
+
 ## 封面对象存储
 
 封面上传默认关闭：`NOVEL_COVER_STORAGE_ENABLED=false`。打开前，`.env` 必须包含

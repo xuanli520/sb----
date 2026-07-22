@@ -18,4 +18,14 @@ public record CurrentUser(long id, String name, Set<Role> roles) {
         };
     }
     public void require(Role role) { if (!roles.contains(role)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "missing permission: " + role); }
+
+    /**
+     * D-06 deliberately maps the sole {@link Role#ADMIN} product role to the stationmaster
+     * (super administrator). There is no second, lower-privilege administrator role.
+     */
+    public void requireSuperAdministrator() {
+        if (!roles.contains(Role.ADMIN)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "super administrator permission required");
+        }
+    }
 }
