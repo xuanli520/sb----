@@ -9,11 +9,8 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CSRF_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 const REDIS_PREFIX_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
 
-export type SessionRole = 'reader' | 'author' | 'admin';
-
 export type NovelBffSession =
-  | { kind: 'backend'; backendSessionId: string; csrfToken: string }
-  | { kind: 'development'; role: SessionRole; csrfToken: string };
+  { kind: 'backend'; backendSessionId: string; csrfToken: string; passwordChangeRequired: boolean };
 
 export interface NovelSessionStore {
   create(session: NovelBffSession, ttlSeconds: number): Promise<string>;
@@ -170,10 +167,6 @@ export function setNovelSessionStoreForTests(store: NovelSessionStore | undefine
   testSessionStore = store;
 }
 
-export function developmentLoginAllowed() {
-  return isLocalDevelopmentRuntime() && process.env.NOVEL_DEV_LOGIN_ENABLED === 'true';
-}
-
 export function createCsrfToken() {
   return randomBytes(24).toString('base64url');
 }
@@ -214,11 +207,8 @@ function isValidTtl(ttlSeconds: number) {
 
 function normalizeSession(session: NovelBffSession): NovelBffSession | undefined {
   if (!CSRF_TOKEN_PATTERN.test(session.csrfToken)) return undefined;
-  if (session.kind === 'backend' && typeof session.backendSessionId === 'string' && session.backendSessionId.length > 0 && session.backendSessionId.length <= 4_096) {
-    return { kind: 'backend', backendSessionId: session.backendSessionId, csrfToken: session.csrfToken };
-  }
-  if (session.kind === 'development' && isSessionRole(session.role)) {
-    return { kind: 'development', role: session.role, csrfToken: session.csrfToken };
+  if (session.kind === 'backend' && typeof session.backendSessionId === 'string' && session.backendSessionId.length > 0 && session.backendSessionId.length <= 4_096 && (session.passwordChangeRequired === undefined || typeof session.passwordChangeRequired === 'boolean')) {
+    return { kind: 'backend', backendSessionId: session.backendSessionId, csrfToken: session.csrfToken, passwordChangeRequired: session.passwordChangeRequired === true };
   }
   return undefined;
 }
@@ -231,10 +221,6 @@ function parseSession(value: string): NovelBffSession | undefined {
   } catch {
     return undefined;
   }
-}
-
-function isSessionRole(role: unknown): role is SessionRole {
-  return role === 'reader' || role === 'author' || role === 'admin';
 }
 
 function isLocalDevelopmentRuntime() {

@@ -45,13 +45,13 @@ describe('BFF session storage', () => {
     vi.unstubAllEnvs();
   });
 
-  it('expires an explicit development-memory session by its configured TTL', async () => {
+  it('expires an explicit backend-memory session by its configured TTL', async () => {
     let now = 1_000;
     const store = new InMemoryNovelSessionStore(() => now, () => sessionIdA);
     const csrfToken = createCsrfToken();
-    const id = await store.create({ kind: 'development', role: 'reader', csrfToken }, 30);
+    const id = await store.create({ kind: 'backend', backendSessionId: 'backend-session', csrfToken, passwordChangeRequired: false }, 30);
 
-    expect(await store.read(id)).toEqual({ kind: 'development', role: 'reader', csrfToken });
+    expect(await store.read(id)).toEqual({ kind: 'backend', backendSessionId: 'backend-session', csrfToken, passwordChangeRequired: false });
     now += 29_999;
     expect(await store.read(id)).toBeDefined();
     now += 1;
@@ -65,9 +65,9 @@ describe('BFF session storage', () => {
     const secondWorker = new RedisNovelSessionStore(new FakeRedisClient(shared, () => now), 'test:bff:', () => sessionIdB);
     const csrfToken = createCsrfToken();
 
-    const id = await firstWorker.create({ kind: 'backend', backendSessionId: 'backend-only-token', csrfToken }, 45);
+    const id = await firstWorker.create({ kind: 'backend', backendSessionId: 'backend-only-token', csrfToken, passwordChangeRequired: false }, 45);
     expect(shared.values.get(`test:bff:${id}`)?.expiresAt).toBe(now + 45_000);
-    expect(await secondWorker.read(id)).toEqual({ kind: 'backend', backendSessionId: 'backend-only-token', csrfToken });
+    expect(await secondWorker.read(id)).toEqual({ kind: 'backend', backendSessionId: 'backend-only-token', csrfToken, passwordChangeRequired: false });
 
     await secondWorker.delete(id);
     expect(await firstWorker.read(id)).toBeUndefined();

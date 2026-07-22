@@ -73,8 +73,8 @@ public class AdminOperationsService {
         if (existing.enabled() == enabled) {
             return new AccountStatusChange(existing.id(), existing.enabled(), existing, false, null);
         }
-        // Development principals use fixed demonstration ids. Only an administrator target can
-        // represent a real self-suspension, so a reader whose generated id happens to match is safe.
+        // Only an administrator target can represent a real self-suspension, so an unrelated
+        // reader identifier that happens to match remains safe.
         if (!enabled && operatorUserId == accountId && existing.roles().contains(Role.ADMIN)) {
             throw new IllegalStateException("current administrator cannot suspend their own account");
         }

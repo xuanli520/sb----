@@ -16,17 +16,13 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class InternalApiAuthInterceptor implements HandlerInterceptor {
     public static final String CURRENT_USER_ATTRIBUTE = InternalApiAuthInterceptor.class.getName() + ".currentUser";
     public static final String BFF_SESSION_HEADER = "X-Novel-Bff-Session";
-    private static final String DEVELOPMENT_PRINCIPAL_HEADER = "X-Novel-Development-Principal";
     private final byte[] expectedKey;
     private final AuthService authService;
-    private final boolean developmentAuthEnabled;
 
     public InternalApiAuthInterceptor(
             @Value("${novel.internal-api-key:}") String expectedKey,
-            @Value("${novel.development-auth-enabled:false}") boolean developmentAuthEnabled,
             AuthService authService) {
         this.expectedKey = expectedKey.getBytes(StandardCharsets.UTF_8);
-        this.developmentAuthEnabled = developmentAuthEnabled;
         this.authService = authService;
     }
 
@@ -48,21 +44,12 @@ public class InternalApiAuthInterceptor implements HandlerInterceptor {
 
         CurrentUser sessionUser = authService.resolveBffSession(request.getHeader(BFF_SESSION_HEADER)).orElse(null);
         if (sessionUser != null) {
+            if (sessionUser.passwordChangeRequired() && !allowsPasswordChange(path)) {
+                passwordChangeRequired(response);
+                return false;
+            }
             authenticate(request, sessionUser);
             return true;
-        }
-        if (developmentAuthEnabled) {
-            String role = request.getHeader(DEVELOPMENT_PRINCIPAL_HEADER);
-            // The old header is intentionally accepted only behind the explicit development switch.
-            if (role == null || role.isBlank()) role = request.getHeader("X-Novel-Principal");
-            try {
-                if (role != null && !role.isBlank()) {
-                    authenticate(request, CurrentUser.development(role));
-                    return true;
-                }
-            } catch (IllegalArgumentException ignored) {
-                // Unknown development roles must not fall through to a reader identity.
-            }
         }
         reject(response);
         return false;
@@ -82,9 +69,21 @@ public class InternalApiAuthInterceptor implements HandlerInterceptor {
         return path.equals(route) || path.startsWith(route + "/");
     }
 
+    private static boolean allowsPasswordChange(String path) {
+        return path.equals("/api/v1/account/password")
+                || path.equals("/api/v1/auth/session")
+                || path.equals("/api/v1/auth/logout");
+    }
+
     private static void reject(HttpServletResponse response) throws java.io.IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.getWriter().write("{\"code\":401,\"msg\":\"BFF session is required\",\"data\":null}");
+    }
+
+    private static void passwordChangeRequired(HttpServletResponse response) throws java.io.IOException {
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.getWriter().write("{\"code\":403,\"msg\":\"password change required\",\"data\":null}");
     }
 }

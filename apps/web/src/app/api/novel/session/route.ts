@@ -3,11 +3,9 @@ import {
   configuredSessionTtlSeconds,
   createCsrfToken,
   csrfTokensMatch,
-  developmentLoginAllowed,
   getNovelSessionStore,
   NOVEL_CSRF_COOKIE,
   NOVEL_SESSION_COOKIE,
-  SessionRole,
   sessionTtlFromBackendExpiry,
 } from '@/lib/novel/bff-session';
 import { consumeNovelAuthRateLimit } from '@/lib/novel/bff-auth-rate-limit';
@@ -15,15 +13,13 @@ import { hasTrustedSameOrigin } from '@/lib/novel/origin';
 
 export const runtime = 'nodejs';
 
-type BackendSession = { code: number; msg?: string; data?: { sessionId?: string; user?: unknown; expiresAt?: string } };
+type BackendSession = { code: number; msg?: string; data?: { sessionId?: string; user?: { passwordChangeRequired?: boolean }; expiresAt?: string } };
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VERIFICATION_CODE_PATTERN = /^\d{6}$/;
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   if (!hasTrustedSameOrigin(request)) return forbiddenOrigin();
-
-  if (typeof body.role === 'string') return createDevelopmentLogin(body.role);
 
   const action = body.action === 'register' ? 'register' : 'login';
   if (typeof body.username !== 'string' || typeof body.password !== 'string' || !isEmail(body.username)
@@ -90,24 +86,6 @@ export async function DELETE(request: NextRequest) {
   return clearSessionResponse();
 }
 
-async function createDevelopmentLogin(role: string) {
-  if (!developmentLoginAllowed()) return NextResponse.json({ code: 404, msg: 'not found', data: null }, { status: 404 });
-  if (!isSessionRole(role)) return NextResponse.json({ code: 400, msg: 'unsupported development role', data: null }, { status: 400 });
-
-  const csrfToken = createCsrfToken();
-  try {
-    const sessionId = await (await getNovelSessionStore()).create(
-      { kind: 'development', role, csrfToken },
-      configuredSessionTtlSeconds(),
-    );
-    const response = NextResponse.json({ code: 200, msg: 'ok', data: { role, developmentMode: true } });
-    setSessionCookies(response, sessionId, csrfToken, configuredSessionTtlSeconds());
-    return response;
-  } catch {
-    return sessionStoreUnavailable();
-  }
-}
-
 async function createAuthenticatedLogin(action: 'login' | 'register', body: Record<string, unknown>) {
   const internalKey = internalApiKey();
   if (!internalKey) return internalKeyUnavailable();
@@ -153,8 +131,9 @@ async function createAuthenticatedLogin(action: 'login' | 'register', body: Reco
 
     const csrfToken = createCsrfToken();
     try {
-      const browserSessionId = await store.create({ kind: 'backend', backendSessionId, csrfToken }, ttlSeconds);
-      const response = NextResponse.json({ code: 200, msg: 'ok', data: { user: payload.data?.user, expiresAt: payload.data?.expiresAt, developmentMode: false } });
+      const passwordChangeRequired = payload.data?.user?.passwordChangeRequired === true;
+      const browserSessionId = await store.create({ kind: 'backend', backendSessionId, csrfToken, passwordChangeRequired }, ttlSeconds);
+      const response = NextResponse.json({ code: 200, msg: 'ok', data: { user: payload.data?.user, expiresAt: payload.data?.expiresAt, passwordChangeRequired } });
       setSessionCookies(response, browserSessionId, csrfToken, ttlSeconds);
       return response;
     } catch {
@@ -190,10 +169,6 @@ function isEmail(value: unknown): value is string {
 
 function internalApiKey() {
   return process.env.NOVEL_INTERNAL_API_KEY || (process.env.NODE_ENV !== 'production' ? 'local-novel-internal-key' : '');
-}
-
-function isSessionRole(role: string): role is SessionRole {
-  return role === 'reader' || role === 'author' || role === 'admin';
 }
 
 function setSessionCookies(response: NextResponse, sessionId: string, csrfToken: string, ttlSeconds: number) {

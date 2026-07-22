@@ -14,7 +14,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, refresh }),
 }));
 
-import NovelAdminPage from './page';
+import { AdminWorkspacePage as NovelAdminPage } from '@/components/novel/admin/AdminWorkspacePage';
 
 const pendingComment = {
   id: 81,
@@ -607,6 +607,8 @@ describe('admin redemption-code operations', () => {
     render(<NovelAdminPage />);
 
     await screen.findByText('兑换码管理');
+    fireEvent.click(screen.getByRole('button', { name: '生成兑换码' }));
+    const dialog = await screen.findByRole('dialog');
     fireEvent.change(screen.getByLabelText('生成数量'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('生成批次'), { target: { value: 'summer-2026' } });
     fireEvent.change(screen.getByLabelText('码前缀'), { target: { value: 'summer' } });
@@ -614,7 +616,7 @@ describe('admin redemption-code operations', () => {
     fireEvent.change(screen.getByLabelText('生成会员天数'), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('生成书籍 ID'), { target: { value: '7' } });
     fireEvent.change(screen.getByLabelText('生成到期时间'), { target: { value: '2030-08-01T12:30' } });
-    fireEvent.click(screen.getByRole('button', { name: '生成兑换码' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成兑换码' }));
 
     const expiresAt = new Date('2030-08-01T12:30').toISOString();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/redemption-codes/generate', expect.objectContaining({
@@ -629,11 +631,13 @@ describe('admin redemption-code operations', () => {
     const fetchMock = mockAdminApi();
     render(<NovelAdminPage />);
 
-    await screen.findByRole('heading', { name: '导入兑换码' });
-    fireEvent.change(screen.getByLabelText('导入兑换码'), { target: { value: 'partner-2026-x9y8' } });
-    fireEvent.change(screen.getByLabelText('导入批次'), { target: { value: 'partner-2026' } });
-    fireEvent.change(screen.getByLabelText('导入代币数量'), { target: { value: '42' } });
-    fireEvent.click(screen.getByRole('button', { name: '导入单个码' }));
+    await screen.findByRole('button', { name: '导入单码' });
+    fireEvent.click(screen.getByRole('button', { name: '导入单码' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('兑换码内容'), { target: { value: 'partner-2026-x9y8' } });
+    fireEvent.change(within(dialog).getByLabelText('导入批次'), { target: { value: 'partner-2026' } });
+    fireEvent.change(within(dialog).getByLabelText('导入代币数量'), { target: { value: '42' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '导入单个码' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/redemption-codes/import', expect.objectContaining({
       method: 'POST',

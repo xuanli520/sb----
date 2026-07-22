@@ -10,7 +10,7 @@
 mvn --batch-mode --no-transfer-progress test
 cd apps/web && npm ci --ignore-scripts
 API_PROXY_TARGET=http://localhost:8080 NOVEL_INTERNAL_API_KEY=local-novel-internal-key \
-NOVEL_SESSION_STORE=memory NOVEL_DEV_LOGIN_ENABLED=true npm run dev
+NOVEL_SESSION_STORE=memory npm run dev
 ```
 
 在另一个终端启动 API：

@@ -1,10 +1,15 @@
 import { cn } from "./utils";
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
+function Skeleton({ className, "aria-hidden": ariaHidden, ...props }: React.ComponentProps<"div">) {
+  const isAnnounced = props.role !== undefined
+    || props["aria-label"] !== undefined
+    || props["aria-labelledby"] !== undefined;
+
   return (
     <div
       data-slot="skeleton"
-      className={cn("bg-accent animate-pulse rounded-md", className)}
+      aria-hidden={ariaHidden ?? !isAnnounced}
+      className={cn("bg-accent animate-pulse rounded-md motion-reduce:animate-none", className)}
       {...props}
     />
   );

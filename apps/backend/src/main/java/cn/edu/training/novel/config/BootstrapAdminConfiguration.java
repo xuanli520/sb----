@@ -1,9 +1,9 @@
 package cn.edu.training.novel.config;
 
 import cn.edu.training.novel.service.AuthService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,13 +12,33 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(BootstrapAdminProperties.class)
 public class BootstrapAdminConfiguration {
-    private static final Logger LOGGER = LoggerFactory.getLogger(BootstrapAdminConfiguration.class);
-
     @Bean
-    ApplicationRunner bootstrapAdminRunner(BootstrapAdminProperties properties, AuthService authService) {
-        return arguments -> properties.configuredAdmin().ifPresent(configuredAdmin -> {
-            AuthService.BootstrapAdminResult result = authService.bootstrapAdministrator(configuredAdmin);
-            LOGGER.info("Configured bootstrap administrator is {}.", result.name().toLowerCase(java.util.Locale.ROOT));
-        });
+    ApplicationRunner bootstrapAdminRunner(
+            BootstrapAdminProperties properties,
+            AuthService authService,
+            ConfigurableApplicationContext applicationContext) {
+        return arguments -> {
+            if (properties.isResetPassword()) {
+                BootstrapAdminProperties.ConfiguredAdmin configuredAdmin = properties.configuredAdmin()
+                        .orElseThrow(() -> new IllegalStateException("bootstrap administrator username and display-name are required for password reset"));
+                String password = authService.resetBootstrapAdministrator(configuredAdmin);
+                System.out.println("BOOTSTRAP_ADMIN_RESET_PASSWORD=" + password);
+                System.out.flush();
+                int exitCode = SpringApplication.exit(applicationContext, () -> 0);
+                System.exit(exitCode);
+                return;
+            }
+            properties.configuredAdmin().ifPresent(configuredAdmin -> {
+                boolean generatedPassword = configuredAdmin.password().isBlank();
+                BootstrapAdminProperties.ConfiguredAdmin effectiveAdmin = generatedPassword
+                        ? configuredAdmin.withPassword(AuthService.generatedPassword())
+                        : configuredAdmin;
+                AuthService.BootstrapAdminResult result = authService.bootstrapAdministrator(effectiveAdmin);
+                if (result == AuthService.BootstrapAdminResult.CREATED && generatedPassword) {
+                    System.err.println("BOOTSTRAP_ADMIN_INITIAL_PASSWORD=" + effectiveAdmin.password());
+                    System.err.flush();
+                }
+            });
+        };
     }
 }

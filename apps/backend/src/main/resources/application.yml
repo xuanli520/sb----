@@ -16,6 +16,7 @@ spring:
     protocol: smtp
     properties:
       "[mail.smtp.auth]": ${NOVEL_SMTP_AUTH:true}
+      "[mail.smtp.auth.mechanisms]": ${NOVEL_SMTP_AUTH_MECHANISMS:LOGIN}
       "[mail.smtp.ssl.enable]": ${NOVEL_SMTP_SSL_ENABLE:true}
       "[mail.smtp.connectiontimeout]": ${NOVEL_SMTP_CONNECTION_TIMEOUT_MILLIS:5000}
       "[mail.smtp.timeout]": ${NOVEL_SMTP_TIMEOUT_MILLIS:10000}
@@ -80,13 +81,13 @@ novel:
     # A base64url 32-byte deployment key. It encrypts only station-admin-entered SMTP secrets
     # stored in MySQL; without it, the admin SMTP settings endpoint fails closed.
     encryption-key: ${NOVEL_EMAIL_SETTINGS_ENCRYPTION_KEY:}
-  # Production has no implicit administrator. Set all three deployment variables to create the
-  # first account, or safely elevate an existing account whose password matches the configured
-  # secret. Leaving all three unset is an intentional no-op.
+  # Production creates the first administrator only when username and display-name are set.
+  # Password is optional: a blank value generates a one-time initial password at creation.
   bootstrap-admin:
     username: ${NOVEL_BOOTSTRAP_ADMIN_USERNAME:}
     display-name: ${NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME:}
     password: ${NOVEL_BOOTSTRAP_ADMIN_PASSWORD:}
+    reset-password: ${NOVEL_BOOTSTRAP_ADMIN_RESET_PASSWORD:false}
   audit:
     qwen:
       enabled: ${QWEN_AUDIT_ENABLED:false}

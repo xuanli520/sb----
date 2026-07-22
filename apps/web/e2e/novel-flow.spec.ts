@@ -102,7 +102,7 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '站长中心' })).toHaveCount(0);
   await expect(page.getByLabel('书城精选').getByRole('heading', { name: '星海拾光' })).toBeVisible();
-  await expect(page.getByRole('img', { name: '星海拾光的深空探索场景' })).toHaveAttribute('src', /novel-store-hero-gpt-image-2-v2/);
+  await expect(page.getByRole('img', { name: '星海拾光的星图藏书阁场景' })).toHaveAttribute('src', /bookstore-hero-sci-fi-gpt-image-2-v3/);
   await page.getByRole('link',{name:/开始阅读/}).first().click();
   await expect(page.getByRole('heading',{name:'第一章 旧港'})).toBeVisible();
   await page.getByRole('button',{name:'加入书架'}).click();
@@ -121,10 +121,11 @@ test('reader and administrator journeys render through real BFF accounts', async
   });
   expect(adminSession.status()).toBe(200);
   await page.goto('/novel-admin');
-  await expect(page.getByRole('heading',{name:'内容与运营，清晰可追溯。'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'工作台'})).toBeVisible();
   await expect(page.getByRole('link', { name: '站长中心' })).toBeVisible();
   await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
   await expect(page.getByLabel('运营概览').getByText('活跃读者', { exact: true })).toBeVisible();
+  await page.goto('/novel-admin/content/words');
   const sensitiveWordForm = page.locator('form').filter({ has: page.getByRole('heading', { name: '敏感词库' }) });
   await sensitiveWordForm.getByRole('textbox', { name: '敏感词', exact: true }).fill('测试词条');
   await sensitiveWordForm.getByRole('button',{name:'添加'}).click();
@@ -143,7 +144,7 @@ test('the super administrator saves SMTP settings and receives a real verificati
   });
   expect(session.status()).toBe(200);
 
-  await page.goto('/novel-admin');
+  await page.goto('/novel-admin/settings/email');
   await expect(page.getByRole('heading', { name: 'SMTP 邮件服务' })).toBeVisible();
   await page.getByLabel('SMTP 主机').fill('127.0.0.1');
   await page.getByLabel('SMTP 端口').fill(smtpPort);
@@ -283,7 +284,7 @@ test('a real reader is approved as an author and drafts stay out of another read
     headers: { Origin: origin },
   });
   expect(adminSession.status()).toBe(200);
-  await page.goto('/novel-admin');
+  await page.goto('/novel-admin/accounts/applications');
   await expect(page.getByRole('heading', { name: '创作者准入' })).toBeVisible();
   const application = page.locator('article').filter({
     has: page.getByRole('heading', { name: penName, exact: true }),

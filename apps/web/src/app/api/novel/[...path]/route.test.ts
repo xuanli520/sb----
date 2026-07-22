@@ -50,7 +50,7 @@ describe('novel BFF route', () => {
 
   async function backendSession(backendSessionId = 'backend-session') {
     const csrfToken = createCsrfToken();
-    const sessionId = await store.create({ kind: 'backend', backendSessionId, csrfToken }, 3_600);
+    const sessionId = await store.create({ kind: 'backend', backendSessionId, csrfToken, passwordChangeRequired: false }, 3_600);
     return { sessionId, csrfToken };
   }
 

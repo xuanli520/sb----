@@ -37,6 +37,7 @@ import { ScrollArea } from '@/app/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/app/components/ui/sheet';
 import { Slider } from '@/app/components/ui/slider';
+import { Skeleton } from '@/app/components/ui/skeleton';
 import { Textarea } from '@/app/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
@@ -468,6 +469,91 @@ const readerTransitionStyles = `
   }
 `;
 
+function ReaderLoadingSkeleton() {
+  return (
+    <NovelShell workspace="reader">
+      <section aria-live="polite" aria-busy="true" aria-label="正在打开章节" className="py-1">
+        <span className="sr-only">正在打开章节...</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4" aria-hidden="true">
+          <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+          <div className="space-y-2 text-right">
+            <Skeleton className="ml-auto h-4 w-32 rounded-none bg-stone-100" />
+            <Skeleton className="ml-auto h-3 w-24 rounded-none bg-stone-100" />
+          </div>
+        </div>
+
+        <div className="mt-5 grid border border-stone-200 bg-white lg:grid-cols-[232px_minmax(0,1fr)]" aria-hidden="true">
+          <div className="border-b border-stone-200 p-4 lg:border-b-0 lg:border-r">
+            <Skeleton className="h-3 w-16 rounded-none bg-emerald-100" />
+            <Skeleton className="mt-2 h-5 w-32 rounded-none bg-stone-100" />
+            <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-1">
+              <Skeleton className="h-9 w-full rounded-none bg-stone-100" />
+              <Skeleton className="h-9 w-full rounded-none bg-stone-100" />
+            </div>
+            <div className="mt-5 border-t border-stone-200 pt-4">
+              <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+              <Skeleton className="mt-3 h-4 w-full rounded-none bg-stone-100" />
+              <Skeleton className="mt-2 h-4 w-4/5 rounded-none bg-stone-100" />
+            </div>
+            <div className="mt-5 hidden space-y-3 border-t border-stone-200 pt-3 lg:block">
+              {[0, 1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-4 w-full rounded-none bg-stone-100" />)}
+            </div>
+          </div>
+
+          <div className="min-h-[620px]">
+            <div className="flex items-center justify-between border-b border-stone-200 px-5 py-3 sm:px-8">
+              <Skeleton className="h-3 w-16 rounded-none bg-stone-100" />
+              <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+            </div>
+            <div className="space-y-6 px-6 py-10 sm:px-12 sm:py-14 lg:px-16">
+              <Skeleton className="h-3 w-32 rounded-none bg-emerald-100" />
+              <Skeleton className="h-9 w-3/5 max-w-md rounded-none bg-stone-100" />
+              <div className="space-y-5 pt-4">
+                {[0, 1, 2, 3, 4, 5].map((item) => <Skeleton key={item} className={`h-4 rounded-none bg-stone-100 ${item === 4 ? 'w-3/5' : item === 2 ? 'w-4/5' : 'w-full'}`} />)}
+              </div>
+              <div className="border-t border-stone-200 pt-5">
+                <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+                <Skeleton className="mt-4 h-4 w-full rounded-none bg-stone-100" />
+                <Skeleton className="mt-2 h-4 w-4/5 rounded-none bg-stone-100" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </NovelShell>
+  );
+}
+
+function ReaderAnnotationsLoadingSkeleton() {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" aria-label="正在加载公开段评" className="mt-3 space-y-3">
+      <span className="sr-only">正在加载公开段评...</span>
+      {[0, 1].map((item) => (
+        <div key={item} className="border-l-2 border-emerald-200 pl-3" aria-hidden="true">
+          <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+          <Skeleton className="mt-2 h-4 w-full rounded-none bg-stone-100" />
+          <Skeleton className="mt-2 h-4 w-3/5 rounded-none bg-stone-100" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReaderCommentsLoadingSkeleton() {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" aria-label="正在加载本章评论" className="space-y-4">
+      <span className="sr-only">正在加载本章评论...</span>
+      {[0, 1].map((item) => (
+        <div key={item} className="border-l-2 border-emerald-200 pl-4" aria-hidden="true">
+          <Skeleton className="h-4 w-20 rounded-none bg-stone-100" />
+          <Skeleton className="mt-2 h-4 w-full max-w-xl rounded-none bg-stone-100" />
+          <Skeleton className="mt-2 h-4 w-3/5 max-w-md rounded-none bg-stone-100" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Reader({ params }: { params: Promise<{ id: string }> }) {
   const [detail, setDetail] = useState<Detail>();
   const [preference, setPreference] = useState<Preference>(defaultPreference);
@@ -476,7 +562,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [paragraphAnnotations, setParagraphAnnotations] = useState<ParagraphAnnotation[]>([]);
   const [publicParagraphAnnotations, setPublicParagraphAnnotations] = useState<PublicParagraphAnnotation[]>([]);
-  const [publicAnnotationsLoading, setPublicAnnotationsLoading] = useState(false);
+  const [publicAnnotationsLoading, setPublicAnnotationsLoading] = useState(true);
   const [publicAnnotationsError, setPublicAnnotationsError] = useState('');
   const [publicAnnotationsReloadVersion, setPublicAnnotationsReloadVersion] = useState(0);
   const [paragraphAnnotationDraft, setParagraphAnnotationDraft] = useState<ParagraphAnnotationDraft>();
@@ -484,7 +570,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [paragraphAnnotationShareIntent, setParagraphAnnotationShareIntent] = useState(false);
   const [comment, setComment] = useState('');
   const [chapterComments, setChapterComments] = useState<NovelComment[]>([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState('');
   const [commentsReloadVersion, setCommentsReloadVersion] = useState(0);
   const [interactionStats, setInteractionStats] = useState<InteractionStats>();
@@ -547,7 +633,11 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setTokenBalance(undefined);
       setHasBookEntitlement(undefined);
       setInteractionStats(undefined);
+      setChapterComments([]);
+      setCommentsLoading(true);
+      setCommentsError('');
       setPublicParagraphAnnotations([]);
+      setPublicAnnotationsLoading(true);
       setPublicAnnotationsError('');
       setPurchaseDialogOpen(false);
       setPurchaseError('');
@@ -601,6 +691,12 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId && isReadableChapter(item))
           : undefined;
         const initialChapter = restoredChapter ?? firstChapter;
+        setChapterComments([]);
+        setCommentsLoading(true);
+        setCommentsError('');
+        setPublicParagraphAnnotations([]);
+        setPublicAnnotationsLoading(true);
+        setPublicAnnotationsError('');
         activeChapterRef.current = initialChapter.id;
         setActiveChapterId(initialChapter.id);
 
@@ -799,6 +895,10 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     setChapterComments([]);
     setCommentsLoading(true);
     setCommentsError('');
+    publicAnnotationRequestSequence.current += 1;
+    setPublicParagraphAnnotations([]);
+    setPublicAnnotationsLoading(true);
+    setPublicAnnotationsError('');
     activeChapterRef.current = nextChapter.id;
     setActiveChapterId(nextChapter.id);
     setParagraphAnnotationDraft(undefined);
@@ -1044,9 +1144,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     }
   };
 
-  if (loading) {
-    return <NovelShell workspace="reader"><div className="grid min-h-[60vh] place-items-center text-sm text-stone-600">正在打开章节...</div></NovelShell>;
-  }
+  if (loading) return <ReaderLoadingSkeleton />;
 
   if (!detail || !isReadableChapter(chapter)) {
     return (
@@ -1282,7 +1380,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
                   <h2 id="public-annotations-heading" className="text-sm font-semibold">公开段评</h2>
                   {publicParagraphAnnotations.length > 0 ? <span className="text-xs" style={{ color: theme.muted }}>{publicParagraphAnnotations.length} 条</span> : null}
                 </div>
-                {publicAnnotationsLoading ? <p className="mt-3 text-sm" style={{ color: theme.muted }}>正在加载公开段评...</p> : null}
+                {publicAnnotationsLoading ? <ReaderAnnotationsLoadingSkeleton /> : null}
                 {!publicAnnotationsLoading && publicAnnotationsError ? (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-3 text-sm text-rose-800">
                     <p>公开段评暂时无法加载：{publicAnnotationsError}</p>
@@ -1465,7 +1563,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
             </div>
 
             <div className="mt-6 space-y-4" aria-live="polite">
-              {commentsLoading ? <p className="text-sm text-stone-500">正在加载本章评论...</p> : null}
+              {commentsLoading ? <ReaderCommentsLoadingSkeleton /> : null}
               {!commentsLoading && commentsError ? (
                 <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-3 text-sm text-rose-800">
                   <p>本章评论暂时无法加载：{commentsError}</p>

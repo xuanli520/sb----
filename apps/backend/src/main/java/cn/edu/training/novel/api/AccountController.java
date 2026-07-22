@@ -15,9 +15,14 @@ import org.springframework.web.bind.annotation.*;
 public class AccountController implements UserResolver {
     private final NovelStore store;
     private final AccountProfileService accountProfileService;
-    public AccountController(NovelStore store, AccountProfileService accountProfileService){this.store=store;this.accountProfileService=accountProfileService;}
+    private final AuthService authService;
+    public AccountController(NovelStore store, AccountProfileService accountProfileService, AuthService authService){this.store=store;this.accountProfileService=accountProfileService;this.authService=authService;}
     @GetMapping("/profile") ApiResponse<AccountProfile> profile(HttpServletRequest request) { return ApiResponse.ok(accountProfileService.profileFor(current(request))); }
     @PutMapping("/profile") ApiResponse<AccountProfile> updateProfile(HttpServletRequest request,@Valid @RequestBody ProfileUpdateRequest body) { return ApiResponse.ok(accountProfileService.updateDisplayName(current(request),body.displayName())); }
+    @PutMapping("/password") ApiResponse<Void> changePassword(HttpServletRequest request,@Valid @RequestBody PasswordChangeRequest body) {
+        authService.changePassword(current(request).id(), body.currentPassword(), body.newPassword());
+        return ApiResponse.ok(null);
+    }
     @GetMapping("/entitlements") ApiResponse<AccountEntitlements> entitlements(HttpServletRequest request) { return ApiResponse.ok(accountProfileService.entitlementsFor(current(request))); }
     @GetMapping("/bookshelf") ApiResponse<List<Book>> shelf(HttpServletRequest request) { CurrentUser u=current(request); return ApiResponse.ok(store.shelfBooks(u.id())); }
     @PostMapping("/bookshelf/{bookId}") ApiResponse<Map<String,Object>> shelfToggle(HttpServletRequest request,@PathVariable long bookId) { boolean saved=store.toggleShelf(current(request).id(),bookId); return ApiResponse.ok(Map.of("saved",saved)); }
@@ -41,6 +46,7 @@ public class AccountController implements UserResolver {
     @PostMapping("/author-applications") ApiResponse<AuthorApplication> applyAuthor(HttpServletRequest request,@Valid @RequestBody AuthorApplicationRequest body) { return ApiResponse.ok(store.applyAuthor(current(request).id(),body.penName(),body.statement())); }
     public record RedeemRequest(@NotBlank String code) {}
     public record ProfileUpdateRequest(@NotBlank @Size(max=1024) String displayName) {}
+    public record PasswordChangeRequest(@NotBlank @Size(min=12, max=128) String currentPassword,@NotBlank @Size(min=12, max=128) String newPassword) {}
     public record ReadingPreferenceRequest(@NotBlank String theme,@NotBlank String font,int fontSize,int lineHeight,int brightness,@NotBlank String pageMode) { ReadingPreference toDomain(){return new ReadingPreference(theme,font,fontSize,lineHeight,brightness,pageMode);} }
     public record ProgressRequest(long bookId,long chapterId,int offset) {}
     public record BookmarkRequest(long chapterId,int offset,String note) {}

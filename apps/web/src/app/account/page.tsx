@@ -28,6 +28,7 @@ import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Skeleton } from '@/app/components/ui/skeleton';
 import { Textarea } from '@/app/components/ui/textarea';
 import { NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
@@ -130,6 +131,89 @@ function CommentStatusBadge({ status }: { status: NovelCommentStatus }) {
   }[status];
 
   return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
+}
+
+function AccountLoadingSkeleton() {
+  return (
+    <section aria-live="polite" aria-busy="true" aria-label="正在加载账户信息" className="mt-7 space-y-9">
+      <span className="sr-only">正在加载账户信息...</span>
+      <div className="border-y border-stone-200 bg-white px-5 py-6 sm:px-7" aria-hidden="true">
+        <div className="flex flex-wrap items-center justify-between gap-5">
+          <div className="flex items-start gap-3">
+            <Skeleton className="size-10 shrink-0 rounded-none bg-emerald-100" />
+            <div className="space-y-3">
+              <Skeleton className="h-3 w-12 rounded-none bg-stone-100" />
+              <Skeleton className="h-7 w-40 rounded-none bg-stone-100 sm:w-52" />
+              <Skeleton className="h-4 w-24 rounded-none bg-stone-100" />
+            </div>
+          </div>
+          <Skeleton className="h-6 w-16 rounded-none bg-emerald-100" />
+        </div>
+      </div>
+
+      <div className="border-y border-stone-200 bg-white px-5 py-6 sm:px-7" aria-hidden="true">
+        <div className="flex items-start gap-3">
+          <Skeleton className="mt-0.5 size-5 rounded-none bg-emerald-100" />
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-24 rounded-none bg-stone-100" />
+            <Skeleton className="h-4 w-64 max-w-full rounded-none bg-stone-100" />
+          </div>
+        </div>
+        <div className="mt-5 space-y-3 border-l-4 border-emerald-200 bg-emerald-50/60 px-4 py-4">
+          <Skeleton className="h-5 w-20 rounded-none bg-emerald-100" />
+          <Skeleton className="h-4 w-full max-w-xl rounded-none bg-emerald-100" />
+          <Skeleton className="h-4 w-4/5 max-w-lg rounded-none bg-emerald-100" />
+        </div>
+      </div>
+
+      <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]" aria-hidden="true">
+        {[0, 1].map((item) => (
+          <div key={item} className={`border-t-2 pt-5 ${item === 0 ? 'border-emerald-200' : 'border-amber-200'}`}>
+            <div className="flex items-start gap-3">
+              <Skeleton className={`mt-0.5 size-5 rounded-none ${item === 0 ? 'bg-emerald-100' : 'bg-amber-100'}`} />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-24 rounded-none bg-stone-100" />
+                <Skeleton className="h-4 w-56 max-w-full rounded-none bg-stone-100" />
+              </div>
+            </div>
+            <Skeleton className="mt-5 h-24 w-full rounded-none bg-white ring-1 ring-stone-200" />
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]" aria-hidden="true">
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-28 rounded-none bg-stone-100" />
+          <Skeleton className="h-4 w-72 max-w-full rounded-none bg-stone-100" />
+          <Skeleton className="h-40 w-full rounded-none bg-white ring-1 ring-stone-200" />
+        </div>
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-24 rounded-none bg-stone-100" />
+          <Skeleton className="h-4 w-48 rounded-none bg-stone-100" />
+          <Skeleton className="h-40 w-full rounded-none bg-white ring-1 ring-stone-200" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AccountCommentsLoadingSkeleton() {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" aria-label="正在加载我的评论" className="mt-5 divide-y divide-stone-200 border-y border-stone-200">
+      <span className="sr-only">正在加载我的评论...</span>
+      {[0, 1].map((item) => (
+        <div key={item} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start" aria-hidden="true">
+          <div className="space-y-3">
+            <Skeleton className="h-5 w-40 rounded-none bg-stone-100" />
+            <Skeleton className="h-3 w-28 rounded-none bg-stone-100" />
+            <Skeleton className="h-4 w-full max-w-xl rounded-none bg-stone-100" />
+            <Skeleton className="h-4 w-4/5 max-w-lg rounded-none bg-stone-100" />
+          </div>
+          <Skeleton className="h-8 w-16 rounded-none bg-stone-100" />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function AccountPage() {
@@ -402,11 +486,7 @@ export default function AccountPage() {
         </Alert>
       ) : null}
 
-      {loading && !profile ? (
-        <section aria-live="polite" className="mt-7 border-y border-stone-200 bg-white px-5 py-8 text-sm text-stone-600">
-          正在加载账户信息...
-        </section>
-      ) : null}
+      {loading && !profile ? <AccountLoadingSkeleton /> : null}
 
       {loadError ? (
         <Alert className="mt-7 rounded-none border-rose-200 bg-rose-50 text-rose-900">
@@ -808,9 +888,7 @@ export default function AccountPage() {
               </div>
             </div>
 
-            {commentsLoading ? (
-              <p className="mt-5 border-y border-stone-200 px-4 py-6 text-sm text-stone-600" aria-live="polite">正在加载我的评论...</p>
-            ) : null}
+            {commentsLoading ? <AccountCommentsLoadingSkeleton /> : null}
 
             {!commentsLoading && commentsError ? (
               <div className="mt-5 flex flex-col gap-3 border-l-4 border-rose-500 bg-rose-50 px-4 py-4 text-sm text-rose-950 sm:flex-row sm:items-center sm:justify-between" role="alert">

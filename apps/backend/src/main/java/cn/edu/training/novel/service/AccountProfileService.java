@@ -36,8 +36,8 @@ public class AccountProfileService {
             if (accountExists(actor.id())) {
                 throw new SecurityException("account is disabled");
             }
-            // Explicit development identities remain readable, but cannot acquire a durable name.
-            return new AccountProfile(actor.id(), actor.name(), actor.roles());
+            // Legacy fixture principals remain readable, but cannot acquire a durable name.
+            return new AccountProfile(actor.id(), actor.name(), actor.roles(), actor.passwordChangeRequired());
         });
     }
 
@@ -66,11 +66,11 @@ public class AccountProfileService {
 
     private Optional<AccountProfile> enabledProfile(long accountId) {
         List<AccountProfile> profiles = jdbc.query(
-                "SELECT id, display_name, roles FROM novel_account WHERE id = ? AND enabled = TRUE",
+                "SELECT id, display_name, roles, password_change_required FROM novel_account WHERE id = ? AND enabled = TRUE",
                 (resultSet, rowNumber) -> new AccountProfile(
                         resultSet.getLong("id"),
                         resultSet.getString("display_name"),
-                        parseRoles(resultSet.getString("roles"))),
+                        parseRoles(resultSet.getString("roles")), resultSet.getBoolean("password_change_required")),
                 accountId);
         return profiles.stream().findFirst();
     }

@@ -215,7 +215,7 @@ public class NovelStore {
     public List<Bookmark> bookmarks(long userId,long bookId) { return readerRepository.bookmarks(userId, bookId); }
     @Transactional
     public Comment comment(long userId,String userName,long bookId,Long chapterId,String content) {
-        return comment(new CurrentUser(userId, userName, Set.of(Role.READER)), bookId, chapterId, content);
+        return comment(new CurrentUser(userId, userName, Set.of(Role.READER), false), bookId, chapterId, content);
     }
     @Transactional
     public Comment comment(CurrentUser actor,long bookId,Long chapterId,String content) {
@@ -309,7 +309,7 @@ public class NovelStore {
             String selectedText,
             String note,
             boolean shareIntent) {
-        return annotateParagraph(new CurrentUser(userId, userName, Set.of(Role.READER)), bookId, chapterId,
+        return annotateParagraph(new CurrentUser(userId, userName, Set.of(Role.READER), false), bookId, chapterId,
                 paragraphIndex, selectionStart, selectionEnd, selectedText, note, shareIntent);
     }
     @Transactional
@@ -1459,7 +1459,7 @@ public class NovelStore {
     }
 
     private static CurrentUser readerActor(long userId) {
-        return new CurrentUser(userId, "", Set.of(Role.READER));
+        return new CurrentUser(userId, "", Set.of(Role.READER), false);
     }
 
     private void validatePublishedCommentChapter(long bookId, Long chapterId) {
@@ -1573,7 +1573,7 @@ public class NovelStore {
         return operationsRepository.findAuthorProfile(userId)
                 .map(AuthorProfile::penName)
                 // Existing local fixtures predate author applications. Their persisted catalog
-                // record keeps the development author workflow usable without a code-level name.
+                // record keeps the legacy author workflow usable without a code-level name.
                 .or(() -> catalogRepository.findByAuthorId(userId).stream().map(Book::author).findFirst())
                 .orElseThrow(() -> new IllegalStateException("approved author profile is required to create a book"));
     }

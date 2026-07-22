@@ -46,7 +46,6 @@ describe('novel BFF session route', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
     vi.stubEnv('NODE_ENV', 'test');
-    vi.stubEnv('NOVEL_DEV_LOGIN_ENABLED', 'true');
     vi.stubEnv('API_PROXY_TARGET', 'http://backend.example.test');
     vi.stubEnv('NOVEL_INTERNAL_API_KEY', 'configured-internal-key');
     vi.stubEnv('NOVEL_PUBLIC_ORIGIN', '');
@@ -64,7 +63,7 @@ describe('novel BFF session route', () => {
     vi.unstubAllEnvs();
   });
 
-  it('rejects a cross-origin development-role login before it can issue a session', async () => {
+  it('rejects a cross-origin login before it can issue a session', async () => {
     const response = await POST(request({ method: 'POST', body: JSON.stringify({ role: 'admin' }) }, {
       origin: 'https://attacker.test',
       'content-type': 'application/json',
@@ -74,33 +73,6 @@ describe('novel BFF session route', () => {
     await expect(response.json()).resolves.toEqual({ code: 403, msg: 'invalid request origin', data: null });
     expect(response.headers.getSetCookie()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('stores development identity server-side and sends only an opaque HttpOnly cookie', async () => {
-    const response = await POST(request({ method: 'POST', body: JSON.stringify({ role: 'reader' }) }, {
-      origin: 'http://localhost:3000',
-      'content-type': 'application/json',
-    }));
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ code: 200, data: { role: 'reader', developmentMode: true } });
-    const sessionId = cookieValue(response, NOVEL_SESSION_COOKIE);
-    const csrfToken = cookieValue(response, NOVEL_CSRF_COOKIE);
-    expect(sessionId).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(await store.read(sessionId)).toEqual({ kind: 'development', role: 'reader', csrfToken });
-
-    const sessionCookie = responseCookies(response).find(cookie => cookie.startsWith(`${NOVEL_SESSION_COOKIE}=`));
-    const csrfCookie = responseCookies(response).find(cookie => cookie.startsWith(`${NOVEL_CSRF_COOKIE}=`));
-    expect(sessionCookie).toContain('Path=/');
-    expect(sessionCookie).toContain('Max-Age=28800');
-    expect(sessionCookie).toContain('HttpOnly');
-    expect(sessionCookie).toMatch(/SameSite=lax/i);
-    expect(sessionCookie).not.toContain('Secure');
-    expect(csrfCookie).toContain('Path=/');
-    expect(csrfCookie).toContain('Max-Age=28800');
-    expect(csrfCookie).toMatch(/SameSite=lax/i);
-    expect(csrfCookie).not.toContain('HttpOnly');
-    expect(csrfCookie).not.toContain('Secure');
   });
 
   it('propagates backend login and registration failures without issuing session cookies', async () => {
@@ -255,9 +227,9 @@ describe('novel BFF session route', () => {
     expect(responseCookies(response).find(cookie => cookie.startsWith(`${NOVEL_SESSION_COOKIE}=`))).toContain('Max-Age=90');
   });
 
-  it('requires exact origin and session-bound CSRF proof before deleting a development session', async () => {
+  it('requires exact origin and session-bound CSRF proof before deleting a backend session', async () => {
     const csrfToken = createCsrfToken();
-    const sessionId = await store.create({ kind: 'development', role: 'author', csrfToken }, 600);
+    const sessionId = await store.create({ kind: 'backend', backendSessionId: 'backend-session', csrfToken, passwordChangeRequired: false }, 600);
     const cookie = cookies(sessionId, csrfToken);
 
     const rejected = await DELETE(request({ method: 'DELETE' }, {
@@ -265,21 +237,21 @@ describe('novel BFF session route', () => {
     }));
     expect(rejected.status).toBe(403);
     expect(await store.read(sessionId)).toBeDefined();
-    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     const loggedOut = await DELETE(request({ method: 'DELETE' }, {
       origin: 'http://localhost:3000', cookie, 'x-novel-csrf': csrfToken,
     }));
     expect(loggedOut.status).toBe(200);
     expect(await store.read(sessionId)).toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
     expect(responseCookies(loggedOut).find(value => value.startsWith(`${NOVEL_SESSION_COOKIE}=`))).toContain('Max-Age=0');
     expect(responseCookies(loggedOut).find(value => value.startsWith(`${NOVEL_CSRF_COOKIE}=`))).toContain('Max-Age=0');
   });
 
   it('forwards only the server-side backend credential during logout and deletes its mapping', async () => {
     const csrfToken = createCsrfToken();
-    const sessionId = await store.create({ kind: 'backend', backendSessionId: 'backend-session', csrfToken }, 600);
+    const sessionId = await store.create({ kind: 'backend', backendSessionId: 'backend-session', csrfToken, passwordChangeRequired: false }, 600);
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
     const response = await DELETE(request({ method: 'DELETE' }, {
@@ -294,7 +266,7 @@ describe('novel BFF session route', () => {
     expect(await store.read(sessionId)).toBeUndefined();
   });
 
-  it('fails closed when the configured store cannot persist a development login', async () => {
+  it('fails closed when the configured store cannot persist a backend login', async () => {
     const unavailableStore: NovelSessionStore = {
       create: vi.fn().mockRejectedValue(new Error('redis unavailable')),
       read: vi.fn(),
@@ -302,7 +274,8 @@ describe('novel BFF session route', () => {
     };
     setNovelSessionStoreForTests(unavailableStore);
 
-    const response = await POST(request({ method: 'POST', body: JSON.stringify({ role: 'reader' }) }, {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ code: 200, data: { sessionId: 'backend-session', user: { passwordChangeRequired: false }, expiresAt: new Date(Date.now() + 60_000).toISOString() } }));
+    const response = await POST(request({ method: 'POST', body: JSON.stringify({ username: 'reader@example.test', password: 'correct-password' }) }, {
       origin: 'http://localhost:3000', 'content-type': 'application/json',
     }));
 

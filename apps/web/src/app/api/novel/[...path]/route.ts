@@ -40,6 +40,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     // A structurally valid-looking cookie is not authentication. The opaque browser id must map
     // to a live Redis record before the BFF can ever forward the backend session credential.
     if (!session) return loginRequired();
+    if (session.passwordChangeRequired && !isPasswordChangeRequest(path, request.method)) {
+      return passwordChangeRequired();
+    }
   }
 
   if (unsafeMethods.has(request.method)) {
@@ -63,8 +66,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const internalKey = internalApiKey();
     if (!internalKey) return internalKeyUnavailable();
     headers.set('X-Novel-Internal-Key', internalKey);
-    if (session.kind === 'development') headers.set('X-Novel-Development-Principal', session.role);
-    else headers.set('X-Novel-Bff-Session', session.backendSessionId);
+    headers.set('X-Novel-Bff-Session', session.backendSessionId);
   }
 
   const body = unsafeMethods.has(request.method) ? await request.arrayBuffer() : undefined;
@@ -75,13 +77,22 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       // still reflects the upstream authorization result; deletion is best-effort on this path.
       await store.delete(browserSessionId).catch(() => undefined);
     }
-    return new NextResponse(upstream.body, {
+    const response = new NextResponse(upstream.body, {
       status: upstream.status,
       headers: { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' },
     });
+    if (upstream.ok && isPasswordChangeRequest(path, request.method) && browserSessionId && store) {
+      await store.delete(browserSessionId).catch(() => undefined);
+      clearSessionCookies(response);
+    }
+    return response;
   } catch {
     return NextResponse.json({ code: 502, msg: 'backend service is unavailable', data: null }, { status: 502 });
   }
+}
+
+function isPasswordChangeRequest(path: string[], method: string) {
+  return method === 'PUT' && path.length === 2 && path[0] === 'account' && path[1] === 'password';
 }
 
 function notFound() {
@@ -90,6 +101,16 @@ function notFound() {
 
 function loginRequired() {
   return NextResponse.json({ code: 401, msg: 'login required', data: null }, { status: 401 });
+}
+
+function passwordChangeRequired() {
+  return NextResponse.json({ code: 403, msg: 'password change required', data: null }, { status: 403 });
+}
+
+function clearSessionCookies(response: NextResponse) {
+  const secure = process.env.NODE_ENV === 'production';
+  response.cookies.set(NOVEL_SESSION_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure, path: '/', maxAge: 0 });
+  response.cookies.set(NOVEL_CSRF_COOKIE, '', { httpOnly: false, sameSite: 'lax', secure, path: '/', maxAge: 0 });
 }
 
 function csrfRejected() {

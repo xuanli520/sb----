@@ -94,6 +94,20 @@ docker compose ps
 curl --fail http://127.0.0.1:${HTTP_PORT:-80}/api/healthz
 ```
 
+首次站长初始化：在 `.env` 中同时设置 `NOVEL_BOOTSTRAP_ADMIN_USERNAME` 与
+`NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME`。密码留空时，后端仅在首次创建管理员时输出
+`BOOTSTRAP_ADMIN_INITIAL_PASSWORD`；该账号登录后只能修改密码，改密后需使用新密码重新登录。
+容器日志包含该首密，应限制读取权限和保留周期，且不得复制到工单或聊天记录。
+
+若首密在修改前遗失，拥有部署主机权限的操作者可执行以下命令。它会生成新首密、启用该管理员、
+撤销全部会话并只向执行终端输出密码：
+
+```bash
+docker compose exec backend java -jar /app/app.jar \
+  --spring.main.web-application-type=none \
+  --novel.bootstrap-admin.reset-password=true
+```
+
 MySQL、Redis 和 MinIO 使用各自的原生命令健康检查，并以 `unless-stopped` 重启策略维持持久化
 服务。MinIO 初始化完成后后端才启动；后端通过 `/actuator/health`，Web 通过 `/api/healthz`，
 Nginx 通过 `/nginx-health` 检查；Web 会等待后端和 Redis 健康后启动，Nginx 会等待 Web

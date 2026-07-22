@@ -225,9 +225,12 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
   const authenticated = sessionStatus === 'authenticated' && account !== undefined;
   // A typed-in protected URL must not make an unprivileged account appear to be in that workspace.
   const activeWorkspace = permittedWorkspaces.has(workspace) ? workspace : 'reader';
+  const isBookstoreHome = workspace === 'reader' && pathname === '/';
 
   return (
-    <header className="sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur">
+    <header className={isBookstoreHome
+      ? 'sticky top-0 z-30 border-b border-emerald-950/25 bg-[#f3f5f1]/45 shadow-[0_8px_24px_rgba(6,61,46,.06)] backdrop-blur-xl'
+      : 'sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur'}>
       <div className="mx-auto flex min-h-16 max-w-[1200px] items-center gap-3 px-4 py-3 sm:gap-5 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2 text-stone-950" aria-label="阅界书城">
           <span className="grid size-8 place-items-center bg-emerald-700 text-white">

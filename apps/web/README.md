@@ -12,13 +12,11 @@ npm ci --ignore-scripts
 API_PROXY_TARGET=http://localhost:8080 \
 NOVEL_INTERNAL_API_KEY=local-novel-internal-key \
 NOVEL_SESSION_STORE=memory \
-NOVEL_DEV_LOGIN_ENABLED=true \
 npm run dev
 ```
 
 后端默认运行在 `http://localhost:8080`。本地开发通过显式
-`NOVEL_SESSION_STORE=memory` 使用进程内会话，并可启用明确标识的读者、作者和站长
-演示会话。生产环境固定使用 Redis，浏览器 Cookie 只保存随机 BFF ID，后端会话凭据
+`NOVEL_SESSION_STORE=memory` 使用进程内会话，但身份始终来自真实登录。生产环境固定使用 Redis，浏览器 Cookie 只保存随机 BFF ID，后端会话凭据
 只存在 Redis 中；生产同时要求 HTTPS 的 `NOVEL_PUBLIC_ORIGIN` 与
 `NOVEL_INTERNAL_API_KEY`。
 

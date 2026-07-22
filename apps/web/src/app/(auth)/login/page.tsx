@@ -12,6 +12,7 @@ import { Label } from '@/app/components/ui/label';
 type SessionResponse = {
   code?: number;
   msg?: string;
+  data?: { passwordChangeRequired?: boolean };
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -62,7 +63,7 @@ export default function LoginPage() {
       if (!response.ok || payload.code !== undefined && payload.code !== 200) {
         throw new Error(authErrorMessage(payload.msg, '登录失败，请稍后重试。'));
       }
-      router.push('/');
+      router.push(payload.data?.passwordChangeRequired ? '/account/password' : '/');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '登录失败，请稍后重试。');
     } finally {

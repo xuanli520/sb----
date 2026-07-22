@@ -1011,14 +1011,14 @@ export default function AuthorPage() {
 
       {notice ? <div className="mt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
 
-      <section className="mt-7 grid gap-px overflow-hidden border border-stone-200 bg-stone-200 sm:grid-cols-3" aria-label="作者概览">
+      <section className="mt-7 grid gap-px overflow-hidden border border-stone-200 bg-stone-200 sm:grid-cols-3" aria-label="作者概览" aria-busy={loading}>
         {[
           { label: '我的作品', value: books.length.toLocaleString('zh-CN'), icon: BookCopy },
           { label: '累计字数', value: formatWordCount(totalWords), icon: FileText },
           { label: '待审核作品', value: pendingBooks.toLocaleString('zh-CN'), icon: Send },
         ].map((metric) => {
           const Icon = metric.icon;
-          return <div key={metric.label} className="bg-white px-5 py-5"><Icon size={18} className="text-emerald-700" aria-hidden="true" /><strong className="mt-3 block text-2xl font-semibold text-stone-950">{metric.value}</strong><span className="mt-1 block text-sm text-stone-600">{metric.label}</span></div>;
+          return <div key={metric.label} className="bg-white px-5 py-5"><Icon size={18} className="text-emerald-700" aria-hidden="true" />{loading ? <Skeleton className="mt-3 h-8 w-16 rounded-none bg-stone-100" /> : <strong className="mt-3 block text-2xl font-semibold text-stone-950">{metric.value}</strong>}<span className="mt-1 block text-sm text-stone-600">{metric.label}</span></div>;
         })}
       </section>
 
@@ -1638,7 +1638,7 @@ export default function AuthorPage() {
             <Button type="button" variant="outline" onClick={() => void loadRewardReport(rewardQuery)} className="h-auto shrink-0 rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><RefreshCw size={16} aria-hidden="true" />重试</Button>
           </div>
         ) : null}
-        {rewardLoading && !rewardReport ? <div className="px-5 py-10 text-center text-sm text-stone-600" aria-live="polite"><Gift className="mx-auto animate-pulse text-stone-400" size={27} aria-hidden="true" /><p className="mt-3">正在加载打赏记录...</p></div> : null}
+        {rewardLoading && !rewardReport ? <div className="space-y-3 px-5 py-5" aria-busy="true"><span className="sr-only" role="status">正在加载打赏记录...</span><Skeleton className="h-10 rounded-none bg-stone-100" />{Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-14 rounded-none bg-stone-100" />)}</div> : null}
         {!rewardLoading && !rewardError && rewardReport && rewardReport.items.length === 0 ? <div className="px-5 py-10 text-center"><Gift className="mx-auto text-stone-400" size={27} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">暂时没有符合条件的打赏记录</p><p className="mt-1 text-sm text-stone-500">调整作品或日期后可继续查询。</p></div> : null}
         {!rewardError && rewardReport && (rewardReport.items.length > 0 || rewardReport.meta.total > 0) ? (
           <div className="px-5 py-1">

@@ -50,7 +50,7 @@ public class AuthController {
     @GetMapping("/session")
     ApiResponse<UserData> session(@RequestHeader(value = "X-Novel-Bff-Session", required = false) String sessionId) {
         CurrentUser user = authService.resolveBffSession(sessionId).orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "authentication required"));
-        return ApiResponse.ok(new UserData(user.id(), user.name(), user.roles()));
+        return ApiResponse.ok(new UserData(user.id(), user.name(), user.roles(), user.passwordChangeRequired()));
     }
 
     @PostMapping("/logout")
@@ -61,7 +61,7 @@ public class AuthController {
 
     private static SessionData toSessionData(AuthService.AuthenticatedSession session) {
         CurrentUser user = session.user();
-        return new SessionData(session.bffSessionId(), new UserData(user.id(), user.name(), user.roles()), session.expiresAt());
+        return new SessionData(session.bffSessionId(), new UserData(user.id(), user.name(), user.roles(), user.passwordChangeRequired()), session.expiresAt());
     }
 
     public record RegisterRequest(
@@ -80,5 +80,5 @@ public class AuthController {
 
     public record SessionData(String sessionId, UserData user, Instant expiresAt) {}
     public record EmailVerificationDeliveryData(Instant expiresAt, Instant resendAvailableAt) {}
-    public record UserData(long id, String name, java.util.Set<cn.edu.training.novel.domain.Role> roles) {}
+    public record UserData(long id, String name, java.util.Set<cn.edu.training.novel.domain.Role> roles, boolean passwordChangeRequired) {}
 }

@@ -124,12 +124,16 @@ function behaviorResource(event: AccountBehaviorEvent) {
 function TaxonomyCard({
   type,
   items,
+  loading,
+  hasLoaded,
   busyAction,
   onCreate,
   onUpdate,
 }: {
   type: 'CATEGORY' | 'TAG';
   items: TaxonomyItem[];
+  loading: boolean;
+  hasLoaded: boolean;
   busyAction?: string;
   onCreate: (type: 'CATEGORY' | 'TAG', name: string, sortOrder: number) => Promise<void>;
   onUpdate: (item: TaxonomyItem, values: TaxonomyDraft & { enabled: boolean }) => Promise<void>;
@@ -170,7 +174,7 @@ function TaxonomyCard({
   };
 
   return (
-    <section className="border border-stone-200 bg-white" aria-labelledby={`${type.toLowerCase()}-configuration-heading`}>
+    <section className="border border-stone-200 bg-white" aria-labelledby={`${type.toLowerCase()}-configuration-heading`} aria-busy={loading || undefined}>
       <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-5">
         <div>
           <p className="text-xs font-semibold text-emerald-700">目录配置</p>
@@ -179,7 +183,8 @@ function TaxonomyCard({
         <Tags className="text-emerald-700" size={20} aria-hidden="true" />
       </div>
       <div className="divide-y divide-stone-100">
-        {items.length === 0 ? <p className="px-5 py-7 text-sm text-stone-500">暂未配置{label}。</p> : null}
+        {loading && !hasLoaded ? <div className="space-y-4 px-5 py-4">{[0, 1].map((item) => <div key={item} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_86px_auto_auto] sm:items-end"><div><Skeleton className="h-3 w-16 rounded-none bg-stone-100" /><Skeleton className="mt-1 h-9 w-full rounded-none bg-stone-100" /></div><div><Skeleton className="h-3 w-10 rounded-none bg-stone-100" /><Skeleton className="mt-1 h-9 w-full rounded-none bg-stone-100" /></div><Skeleton className="h-9 w-20 rounded-none bg-stone-100" /><Skeleton className="h-9 w-14 rounded-none bg-stone-100" /></div>)}</div> : null}
+        {!loading && hasLoaded && items.length === 0 ? <p className="px-5 py-7 text-sm text-stone-500">暂未配置{label}。</p> : null}
         {items.map((item) => {
           const draft = draftFor(item);
           const action = `taxonomy-${type}-${item.id}`;
@@ -217,7 +222,7 @@ function TaxonomyCard({
   );
 }
 
-export function AdminOperationsPanels() {
+export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accounts' | 'catalog' }) {
   const [filters, setFilters] = useState<AccountFilters>(initialFilters);
   const [accounts, setAccounts] = useState<AccountPage>();
   const [categories, setCategories] = useState<TaxonomyItem[]>([]);
@@ -228,32 +233,49 @@ export function AdminOperationsPanels() {
   const [behaviorAccount, setBehaviorAccount] = useState<Account>();
   const [behaviorSummary, setBehaviorSummary] = useState<AccountBehaviorSummary>();
   const [behaviorEvents, setBehaviorEvents] = useState<AccountBehaviorEventPage>();
-  const [loading, setLoading] = useState(true);
+  const [accountsLoading, setAccountsLoading] = useState(mode === 'all' || mode === 'accounts');
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [taxonomyLoading, setTaxonomyLoading] = useState(mode === 'all' || mode === 'catalog');
+  const [taxonomyLoaded, setTaxonomyLoaded] = useState(false);
   const [pendingAction, setPendingAction] = useState<string>();
   const [notice, setNotice] = useState<Notice>();
+  const includesAccounts = mode === 'all' || mode === 'accounts';
+  const includesCatalog = mode === 'all' || mode === 'catalog';
 
-  const loadAccounts = useCallback(async (activeFilters: AccountFilters) => {
-    const next = await novelApi<AccountPage>(accountRoute(activeFilters), 'admin');
-    setAccounts(next);
+  const loadAccounts = useCallback(async (activeFilters: AccountFilters, showLoading = true) => {
+    if (showLoading) setAccountsLoading(true);
+    try {
+      const next = await novelApi<AccountPage>(accountRoute(activeFilters), 'admin');
+      setAccounts(next);
+      setAccountsLoaded(true);
+    } finally {
+      if (showLoading) setAccountsLoading(false);
+    }
   }, []);
-  const loadTaxonomy = useCallback(async () => {
-    const [nextCategories, nextTags] = await Promise.all([
-      novelApi<TaxonomyItem[]>('admin/taxonomy/CATEGORY', 'admin'),
-      novelApi<TaxonomyItem[]>('admin/taxonomy/TAG', 'admin'),
-    ]);
-    setCategories(nextCategories);
-    setTags(nextTags);
+  const loadTaxonomy = useCallback(async (showLoading = true) => {
+    if (showLoading) setTaxonomyLoading(true);
+    try {
+      const [nextCategories, nextTags] = await Promise.all([
+        novelApi<TaxonomyItem[]>('admin/taxonomy/CATEGORY', 'admin'),
+        novelApi<TaxonomyItem[]>('admin/taxonomy/TAG', 'admin'),
+      ]);
+      setCategories(nextCategories);
+      setTags(nextTags);
+      setTaxonomyLoaded(true);
+    } finally {
+      if (showLoading) setTaxonomyLoading(false);
+    }
   }, []);
   const load = useCallback(async () => {
-    setLoading(true);
     try {
-      await Promise.all([loadAccounts(initialFilters), loadTaxonomy()]);
+      await Promise.all([
+        ...(includesAccounts ? [loadAccounts(initialFilters)] : []),
+        ...(includesCatalog ? [loadTaxonomy()] : []),
+      ]);
     } catch (reason) {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '运营账户与目录配置暂时无法加载。' });
-    } finally {
-      setLoading(false);
     }
-  }, [loadAccounts, loadTaxonomy]);
+  }, [includesAccounts, includesCatalog, loadAccounts, loadTaxonomy]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -398,16 +420,16 @@ export function AdminOperationsPanels() {
     <section className="mt-7" aria-labelledby="account-governance-heading">
       <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold text-emerald-700">账号治理</p>
-          <h2 id="account-governance-heading" className="mt-1 text-xl font-semibold text-stone-950">用户状态与内容目录</h2>
-          <p className="mt-2 text-sm leading-6 text-stone-600">暂停会立即撤销登录会话；恢复后仍需重新登录。分类与标签的每次变更同样保留运营审计。</p>
+          <p className="text-xs font-semibold text-emerald-700">{includesAccounts ? '账号治理' : '内容目录'}</p>
+          <h2 id="account-governance-heading" className="mt-1 text-xl font-semibold text-stone-950">{includesAccounts && includesCatalog ? '用户状态与内容目录' : includesAccounts ? '用户状态与行为查询' : '分类与标签'}</h2>
+          <p className="mt-2 text-sm leading-6 text-stone-600">{includesAccounts ? '暂停会立即撤销登录会话；恢复后仍需重新登录。' : '分类与标签的每次变更都会保留运营审计。'}</p>
         </div>
         <UsersRound className="shrink-0 text-emerald-700" size={22} aria-hidden="true" />
       </div>
 
       {notice ? <div className="mt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
 
-      <section className="mt-5 border border-stone-200 bg-white" aria-labelledby="managed-account-heading">
+      {includesAccounts ? <section className="mt-5 border border-stone-200 bg-white" aria-labelledby="managed-account-heading" aria-busy={accountsLoading || undefined}>
         <div className="flex flex-col gap-4 border-b border-stone-200 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold text-emerald-700">访问控制</p>
@@ -448,8 +470,8 @@ export function AdminOperationsPanels() {
             <Button type="submit" variant="outline" size="icon" title="检索账号" aria-label="检索账号" className="h-9 w-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><Search size={16} aria-hidden="true" /></Button>
           </form>
         </div>
-        {loading ? <div className="p-5"><Skeleton className="h-40 rounded-none bg-stone-100" /></div> : null}
-        {!loading && !accounts?.items.length ? <p className="px-5 py-10 text-center text-sm text-stone-500">没有符合筛选条件的账号。</p> : null}
+        {accountsLoading && !accountsLoaded ? <div className="overflow-x-auto"><div className="min-w-[960px] divide-y divide-stone-100"><div className="grid grid-cols-[minmax(170px,1.1fr)_100px_80px_130px_minmax(250px,1fr)] gap-4 bg-stone-50 px-4 py-3">{[0, 1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-3 w-full rounded-none bg-stone-100" />)}</div>{[0, 1, 2].map((row) => <div key={row} className="grid grid-cols-[minmax(170px,1.1fr)_100px_80px_130px_minmax(250px,1fr)] items-center gap-4 px-4 py-4"><div><Skeleton className="h-4 w-28 rounded-none bg-stone-100" /><Skeleton className="mt-2 h-3 w-20 rounded-none bg-stone-100" /></div><Skeleton className="h-5 w-16 rounded-none bg-stone-100" /><Skeleton className="h-5 w-14 rounded-none bg-stone-100" /><Skeleton className="h-3 w-24 rounded-none bg-stone-100" /><div className="flex gap-2"><Skeleton className="h-9 flex-1 rounded-none bg-stone-100" /><Skeleton className="h-9 w-16 rounded-none bg-stone-100" /><Skeleton className="h-9 w-9 rounded-none bg-stone-100" /></div></div>)}</div></div> : null}
+        {!accountsLoading && accountsLoaded && !accounts?.items.length ? <p className="px-5 py-10 text-center text-sm text-stone-500">没有符合筛选条件的账号。</p> : null}
         {accounts?.items.length ? (
           <div className="overflow-x-auto">
             <Table className="min-w-[960px] text-stone-700">
@@ -461,13 +483,13 @@ export function AdminOperationsPanels() {
             </Table>
           </div>
         ) : null}
-        {accounts ? <p className="border-t border-stone-100 px-5 py-3 text-xs text-stone-500">共 {accounts.total.toLocaleString('zh-CN')} 个账号，当前显示 {accounts.items.length} 个。</p> : null}
-      </section>
+        {accountsLoaded && accounts ? <p className="border-t border-stone-100 px-5 py-3 text-xs text-stone-500">共 {accounts.total.toLocaleString('zh-CN')} 个账号，当前显示 {accounts.items.length} 个。</p> : null}
+      </section> : null}
 
-      <div className="mt-5 grid gap-6 xl:grid-cols-2">
-        <TaxonomyCard type="CATEGORY" items={categories} busyAction={pendingAction} onCreate={createTaxonomy} onUpdate={updateTaxonomy} />
-        <TaxonomyCard type="TAG" items={tags} busyAction={pendingAction} onCreate={createTaxonomy} onUpdate={updateTaxonomy} />
-      </div>
+      {includesCatalog ? <div className="mt-5 grid gap-6 xl:grid-cols-2">
+        <TaxonomyCard type="CATEGORY" items={categories} loading={taxonomyLoading} hasLoaded={taxonomyLoaded} busyAction={pendingAction} onCreate={createTaxonomy} onUpdate={updateTaxonomy} />
+        <TaxonomyCard type="TAG" items={tags} loading={taxonomyLoading} hasLoaded={taxonomyLoaded} busyAction={pendingAction} onCreate={createTaxonomy} onUpdate={updateTaxonomy} />
+      </div> : null}
 
       <Dialog open={Boolean(auditAccount)} onOpenChange={(open) => { if (!open) setAuditAccount(undefined); }}>
         <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-xl">

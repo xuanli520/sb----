@@ -41,7 +41,7 @@ export type HotSearchTermAudit = {
   operatorUserId:number;
   createdAt:string;
 };
-export type AccountProfile = { id:number; name:string; roles:string[] };
+export type AccountProfile = { id:number; name:string; roles:string[]; passwordChangeRequired:boolean };
 export type AccountProfileUpdate = { displayName:string };
 /** Credential-free SMTP configuration returned only to the station super administrator. */
 export type EmailDeliverySettings = {

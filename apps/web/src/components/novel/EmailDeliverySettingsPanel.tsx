@@ -74,6 +74,29 @@ function validPort(value: string) {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65_535 ? parsed : undefined;
 }
 
+function EmailDeliverySettingsSkeleton() {
+  return (
+    <section className="mt-7 border border-stone-200 bg-white" aria-busy="true">
+      <p className="sr-only" role="status">正在验证管理权限</p>
+      <div className="flex items-start justify-between gap-3 border-b border-stone-200 px-5 py-5">
+        <div className="min-w-0 flex-1">
+          <Skeleton className="h-3 w-24 rounded-none bg-stone-100" />
+          <Skeleton className="mt-3 h-6 w-40 rounded-none bg-stone-100" />
+          <Skeleton className="mt-3 h-4 max-w-xl rounded-none bg-stone-100" />
+          <Skeleton className="mt-2 h-4 w-4/5 max-w-lg rounded-none bg-stone-100" />
+        </div>
+        <Skeleton className="size-5 shrink-0 rounded-none bg-stone-100" />
+      </div>
+      <div className="grid gap-px bg-stone-100 p-px sm:grid-cols-3">
+        {[0, 1, 2].map((item) => <div key={item} className="bg-white px-5 py-4"><Skeleton className="h-3 w-16 rounded-none bg-stone-100" /><Skeleton className="mt-2 h-5 w-28 rounded-none bg-stone-100" /></div>)}
+      </div>
+      <div className="grid gap-4 px-5 py-5 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((item) => <div key={item}><Skeleton className="h-3 w-20 rounded-none bg-stone-100" /><Skeleton className="mt-2 h-10 w-full rounded-none bg-stone-100" /></div>)}
+      </div>
+    </section>
+  );
+}
+
 /**
  * This panel intentionally verifies the role before loading SMTP metadata. The backend remains
  * authoritative for authorization, but readers and authors never see the configuration surface.
@@ -82,7 +105,7 @@ export function EmailDeliverySettingsPanel() {
   const [access, setAccess] = useState<Access>('checking');
   const [settings, setSettings] = useState<EmailDeliverySettings>();
   const [draft, setDraft] = useState<SettingsDraft>(emptyDraft);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [testRecipient, setTestRecipient] = useState('');
@@ -203,13 +226,14 @@ export function EmailDeliverySettingsPanel() {
   };
 
   // A non-super-administrator must not get a visible configuration entry, even on a typed URL.
-  if (access === 'checking' || access === 'denied') return null;
+  if (access === 'checking') return <EmailDeliverySettingsSkeleton />;
+  if (access === 'denied') return null;
 
   const secretsMustBeEntered = settings?.source !== 'ADMIN';
   const canVerify = settings?.source === 'ADMIN' && settings.enabled;
 
   return (
-    <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="email-delivery-settings-heading">
+    <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="email-delivery-settings-heading" aria-busy={loading || undefined}>
       <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-semibold text-emerald-700">系统配置 · 超级管理员</p>
@@ -220,7 +244,7 @@ export function EmailDeliverySettingsPanel() {
       </div>
 
       {notice ? <div className="px-5 pt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
-      {loading ? <div className="grid gap-4 px-5 py-6 md:grid-cols-3"><Skeleton className="h-16 rounded-none bg-stone-100" /><Skeleton className="h-16 rounded-none bg-stone-100" /><Skeleton className="h-16 rounded-none bg-stone-100" /></div> : null}
+      {loading ? <><div className="grid gap-px bg-stone-100 p-px sm:grid-cols-3">{[0, 1, 2].map((item) => <div key={item} className="bg-white px-5 py-4"><Skeleton className="h-3 w-16 rounded-none bg-stone-100" /><Skeleton className="mt-2 h-5 w-28 rounded-none bg-stone-100" /></div>)}</div><div className="grid gap-4 px-5 py-5 lg:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((item) => <div key={item}><Skeleton className="h-3 w-20 rounded-none bg-stone-100" /><Skeleton className="mt-2 h-10 w-full rounded-none bg-stone-100" /></div>)}</div></> : null}
       {!loading && !settings ? <div className="flex flex-col gap-3 px-5 py-6 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-stone-600">尚未取得 SMTP 邮件服务配置。</p><Button type="button" variant="outline" size="sm" onClick={() => void loadSettings()} className="rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800">重试</Button></div> : null}
       {!loading && settings ? (
         <>
