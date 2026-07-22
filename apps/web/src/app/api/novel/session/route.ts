@@ -17,7 +17,7 @@ export const runtime = 'nodejs';
 
 type BackendSession = { code: number; msg?: string; data?: { sessionId?: string; user?: unknown; expiresAt?: string } };
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VERIFICATION_CODE_PATTERN = /^\d{6,8}$/;
+const VERIFICATION_CODE_PATTERN = /^\d{6}$/;
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));

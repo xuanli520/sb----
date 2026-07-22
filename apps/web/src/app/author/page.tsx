@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, ImageUp, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, ImageUp, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/app/components/ui/alert-dialog';
 import { Badge } from '@/app/components/ui/badge';
@@ -20,6 +20,7 @@ import { BookCover } from '@/components/novel/BookCover';
 import { AuthorAnalyticsReport, AuthorCommentPage, AuthorModerationAdvice, Book, BookStatusAudit, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
+type VolumeDeleteResult = { id: number; deleted: boolean; detachedChapterCount: number };
 type AuthorChapter = {
   id: number;
   bookId: number;
@@ -42,7 +43,7 @@ type RewardReport = {
 type RewardQuery = { bookId: number | undefined; from: string; to: string; page: number };
 type AnalyticsQuery = { bookId: number | undefined; from: string; to: string };
 type Notice = { message: string; tone: 'success' | 'error' };
-type DeleteTarget = { kind: 'book'; item: Book } | { kind: 'chapter'; item: AuthorChapter };
+type DeleteTarget = { kind: 'book'; item: Book } | { kind: 'chapter'; item: AuthorChapter } | { kind: 'volume'; item: Volume };
 type FeedbackTab = 'comments' | 'annotations';
 type FeedbackPageMeta = { total: number; page: number; size: number };
 
@@ -303,6 +304,8 @@ export default function AuthorPage() {
   const [chapterEditTitle, setChapterEditTitle] = useState('');
   const [chapterEditContent, setChapterEditContent] = useState('');
   const [chapterEditVolumeId, setChapterEditVolumeId] = useState<number>();
+  const [editingVolume, setEditingVolume] = useState<Volume>();
+  const [volumeEditTitle, setVolumeEditTitle] = useState('');
   const [editError, setEditError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [deleteError, setDeleteError] = useState('');
@@ -756,13 +759,73 @@ export default function AuthorPage() {
     }
   };
 
+  const openVolumeEditor = (volume: Volume) => {
+    setEditingVolume(volume);
+    setVolumeEditTitle(volume.title);
+    setEditError('');
+  };
+
+  const closeVolumeEditor = () => {
+    if (pendingAction === 'update-volume') return;
+    setEditingVolume(undefined);
+    setEditError('');
+  };
+
+  const updateVolume = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingVolume) return;
+    const nextTitle = volumeEditTitle.trim();
+    if (!nextTitle) {
+      setEditError('请填写卷册名称后再保存。');
+      return;
+    }
+
+    setPendingAction('update-volume');
+    setEditError('');
+    try {
+      const updated = await novelApi<Volume>(`author/books/${editingVolume.bookId}/volumes/${editingVolume.id}`, 'author', {
+        method: 'PUT',
+        body: JSON.stringify({ title: nextTitle }),
+      });
+      setVolumes((current) => current.map((volume) => volume.id === updated.id ? updated : volume));
+      setEditingVolume(undefined);
+      announce(`《${updated.title}》卷册信息已保存`);
+    } catch (reason) {
+      const message = failureMessage(reason, '服务暂时无法保存卷册信息。');
+      setEditError(`卷册未保存：${message}`);
+      announce(`卷册未保存：${message}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const moveVolume = async (volume: Volume, offset: number) => {
+    if (!selectedBookId) return;
+    const orderNo = volume.orderNo + offset;
+    if (orderNo < 1 || orderNo > volumes.length) return;
+
+    setPendingAction('reorder-volume');
+    try {
+      const reordered = await novelApi<Volume[]>(`author/books/${selectedBookId}/volumes/${volume.id}/order`, 'author', {
+        method: 'PUT',
+        body: JSON.stringify({ orderNo }),
+      });
+      setVolumes(reordered);
+      announce(`《${volume.title}》已移动到第 ${orderNo} 卷`);
+    } catch (reason) {
+      announce(`卷册排序未保存：${failureMessage(reason, '服务暂时无法调整卷册顺序。')}`, 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
   const openDeleteConfirmation = (target: DeleteTarget) => {
     setDeleteTarget(target);
     setDeleteError('');
   };
 
   const closeDeleteConfirmation = () => {
-    if (pendingAction === 'delete-book' || pendingAction === 'delete-chapter') return;
+    if (pendingAction === 'delete-book' || pendingAction === 'delete-chapter' || pendingAction === 'delete-volume') return;
     setDeleteTarget(undefined);
     setDeleteError('');
   };
@@ -771,25 +834,30 @@ export default function AuthorPage() {
     if (!deleteTarget) return;
     const target = deleteTarget;
     const isBook = target.kind === 'book';
+    const isVolume = target.kind === 'volume';
     const bookId = isBook ? target.item.id : target.item.bookId;
-    const chapterId = isBook ? undefined : target.item.id;
-    setPendingAction(isBook ? 'delete-book' : 'delete-chapter');
+    const action = isBook ? 'delete-book' : isVolume ? 'delete-volume' : 'delete-chapter';
+    setPendingAction(action);
     setDeleteError('');
     try {
-      await novelApi(
-        isBook ? `author/books/${bookId}` : `author/books/${bookId}/chapters/${chapterId}`,
-        'author',
-        { method: 'DELETE' },
-      );
       if (isBook) {
+        await novelApi(`author/books/${bookId}`, 'author', { method: 'DELETE' });
         setBooks((current) => current.filter((book) => book.id !== bookId));
         setSelectedBookId((current) => current === bookId ? undefined : current);
         setRewardBookId((current) => current === bookId ? undefined : current);
         setRewardQuery((current) => current.bookId === bookId ? { ...current, bookId: undefined, page: 0 } : current);
         announce(`《${target.item.title}》及其未发布内容已删除`);
+      } else if (isVolume) {
+        const result = await novelApi<VolumeDeleteResult>(`author/books/${bookId}/volumes/${target.item.id}`, 'author', { method: 'DELETE' });
+        setVolumes((current) => current.filter((volume) => volume.id !== target.item.id));
+        setChapters((current) => current.map((chapter) => chapter.volumeId === target.item.id ? { ...chapter, volumeId: null } : chapter));
+        setSelectedVolumeId((current) => current === target.item.id ? undefined : current);
+        announce(`《${target.item.title}》已删除，${result.detachedChapterCount} 个章节已保留为未归入卷册内容`);
+        await loadBookWorkspace(bookId);
       } else {
-        setChapters((current) => current.filter((chapter) => chapter.id !== chapterId));
-        setSelectedDraftId((current) => current === chapterId ? undefined : current);
+        await novelApi(`author/books/${bookId}/chapters/${target.item.id}`, 'author', { method: 'DELETE' });
+        setChapters((current) => current.filter((chapter) => chapter.id !== target.item.id));
+        setSelectedDraftId((current) => current === target.item.id ? undefined : current);
         announce(`《${target.item.title}》已删除`);
         await Promise.all([loadBooks(), loadBookWorkspace(bookId)]);
       }
@@ -1145,10 +1213,18 @@ export default function AuthorPage() {
                     const active = volume.id === selectedVolumeId;
                     const chapterCount = chapters.filter((chapter) => chapter.volumeId === volume.id).length;
                     return (
-                      <Button key={volume.id} type="button" variant="ghost" onClick={() => setSelectedVolumeId(volume.id)} aria-pressed={active} className={`flex h-auto w-full justify-between gap-4 rounded-none px-5 py-4 text-left text-inherit ${active ? 'bg-emerald-50 hover:bg-emerald-50' : 'hover:bg-stone-50'}`}>
-                        <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">第 {volume.orderNo} 卷 · {volume.title}</span><span className="mt-1 block text-xs text-stone-500">{chapterCount} 个章节</span></span>
-                        <span className="shrink-0 text-sm font-medium text-emerald-800">{active ? '正在使用' : '选用'}</span>
-                      </Button>
+                      <div key={volume.id} className={`flex items-center gap-2 px-5 py-3 ${active ? 'bg-emerald-50' : 'hover:bg-stone-50'}`}>
+                        <Button type="button" variant="ghost" onClick={() => setSelectedVolumeId(volume.id)} aria-pressed={active} className="h-auto min-w-0 flex-1 justify-between gap-4 rounded-none px-0 py-1 text-left text-inherit hover:bg-transparent">
+                          <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">第 {volume.orderNo} 卷 · {volume.title}</span><span className="mt-1 block text-xs text-stone-500">{chapterCount} 个章节</span></span>
+                          <span className="shrink-0 text-sm font-medium text-emerald-800">{active ? '正在使用' : '选用'}</span>
+                        </Button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button type="button" variant="outline" size="icon" title="上移卷册" aria-label={`上移第 ${volume.orderNo} 卷`} onClick={() => void moveVolume(volume, -1)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE' || volume.orderNo === 1} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowUp size={15} aria-hidden="true" /></Button>
+                          <Button type="button" variant="outline" size="icon" title="下移卷册" aria-label={`下移第 ${volume.orderNo} 卷`} onClick={() => void moveVolume(volume, 1)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE' || volume.orderNo === volumes.length} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowDown size={15} aria-hidden="true" /></Button>
+                          <Button type="button" variant="outline" size="icon" title="编辑卷册" aria-label={`编辑第 ${volume.orderNo} 卷`} onClick={() => openVolumeEditor(volume)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE'} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" /></Button>
+                          <Button type="button" variant="outline" size="icon" title="删除卷册" aria-label={`删除第 ${volume.orderNo} 卷`} onClick={() => openDeleteConfirmation({ kind: 'volume', item: volume })} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE'} className="size-8 rounded-none border-rose-200 bg-white text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" /></Button>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1723,20 +1799,40 @@ export default function AuthorPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(editingVolume)} onOpenChange={(open) => { if (!open) closeVolumeEditor(); }}>
+        <DialogContent className="rounded-none border-stone-300 bg-white text-stone-900 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>修改卷册</DialogTitle>
+            <DialogDescription>卷册名称会同步显示在目录和章节归属中，不会改动章节正文或发布状态。</DialogDescription>
+          </DialogHeader>
+          {editError ? <div role="alert"><InlineNotice tone="error">{editError}</InlineNotice></div> : null}
+          <form onSubmit={updateVolume}>
+            <Label htmlFor="edit-volume-title" className="text-stone-700">卷册名称</Label>
+            <Input id="edit-volume-title" aria-label="编辑卷册名称" required value={volumeEditTitle} onChange={(event) => setVolumeEditTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+            <DialogFooter className="mt-6">
+              <Button type="button" variant="outline" onClick={closeVolumeEditor} disabled={pendingAction === 'update-volume'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
+              <Button type="submit" disabled={pendingAction === 'update-volume'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-volume' ? '保存中' : '保存卷册'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) closeDeleteConfirmation(); }}>
         <AlertDialogContent className="rounded-none border-stone-300 bg-white text-stone-900">
           <AlertDialogHeader>
-            <AlertDialogTitle>{deleteTarget?.kind === 'book' ? '删除作品' : '删除章节'}</AlertDialogTitle>
+            <AlertDialogTitle>{deleteTarget?.kind === 'book' ? '删除作品' : deleteTarget?.kind === 'volume' ? '删除卷册' : '删除章节'}</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget?.kind === 'book'
                 ? `确定删除《${deleteTarget.item.title}》吗？只有未进入发布审核、且没有读者或交易记录的作品可以删除。`
-                : `确定删除《${deleteTarget?.item.title ?? ''}》吗？只有草稿或已排期章节且没有读者记录时，服务端才会允许删除。`}
+                : deleteTarget?.kind === 'volume'
+                  ? `确定删除《${deleteTarget.item.title}》吗？其中的章节会保留全部正文和发布状态，但改为未归入卷册。`
+                  : `确定删除《${deleteTarget?.item.title ?? ''}》吗？只有草稿或已排期章节且没有读者记录时，服务端才会允许删除。`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteError ? <div role="alert"><InlineNotice tone="error">{deleteError}</InlineNotice></div> : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</AlertDialogCancel>
-            <Button type="button" variant="destructive" onClick={() => void deleteTargetItem()} disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter'} className="rounded-none disabled:cursor-wait"><Trash2 size={16} aria-hidden="true" />{pendingAction === 'delete-book' || pendingAction === 'delete-chapter' ? '删除中' : '确认删除'}</Button>
+            <AlertDialogCancel disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter' || pendingAction === 'delete-volume'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</AlertDialogCancel>
+            <Button type="button" variant="destructive" onClick={() => void deleteTargetItem()} disabled={pendingAction === 'delete-book' || pendingAction === 'delete-chapter' || pendingAction === 'delete-volume'} className="rounded-none disabled:cursor-wait"><Trash2 size={16} aria-hidden="true" />{pendingAction === 'delete-book' || pendingAction === 'delete-chapter' || pendingAction === 'delete-volume' ? '删除中' : '确认删除'}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,8 +1,11 @@
 package cn.edu.training.novel.service;
 
+import cn.edu.training.novel.config.AuthorApplicationPolicyProperties;
 import cn.edu.training.novel.domain.*;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +24,9 @@ public class NovelStore {
     private final ContentModerationService contentModerationService;
     private final ContentModerationReviewService contentModerationReviewService;
     private final BookModerationSnapshotService bookModerationSnapshotService;
+    private final AuthorApplicationPolicyProperties authorApplicationPolicy;
+
+    /** Retains the test/repository recreation constructor with the documented default policy. */
     public NovelStore(
             AuditTrail auditTrail,
             CatalogRepository catalogRepository,
@@ -33,6 +39,35 @@ public class NovelStore {
             ContentModerationService contentModerationService,
             ContentModerationReviewService contentModerationReviewService,
             BookModerationSnapshotService bookModerationSnapshotService) {
+        this(
+                auditTrail,
+                catalogRepository,
+                walletRepository,
+                commercialRuleService,
+                readerRepository,
+                interactionRepository,
+                operationsRepository,
+                authService,
+                contentModerationService,
+                contentModerationReviewService,
+                bookModerationSnapshotService,
+                new AuthorApplicationPolicyProperties(Duration.ofDays(7)));
+    }
+
+    @Autowired
+    public NovelStore(
+            AuditTrail auditTrail,
+            CatalogRepository catalogRepository,
+            WalletRepository walletRepository,
+            CommercialRuleService commercialRuleService,
+            ReaderRepository readerRepository,
+            InteractionRepository interactionRepository,
+            OperationsRepository operationsRepository,
+            AuthService authService,
+            ContentModerationService contentModerationService,
+            ContentModerationReviewService contentModerationReviewService,
+            BookModerationSnapshotService bookModerationSnapshotService,
+            AuthorApplicationPolicyProperties authorApplicationPolicy) {
         this.auditTrail = auditTrail;
         this.catalogRepository = catalogRepository;
         this.walletRepository = walletRepository;
@@ -44,6 +79,7 @@ public class NovelStore {
         this.contentModerationService = contentModerationService;
         this.contentModerationReviewService = contentModerationReviewService;
         this.bookModerationSnapshotService = bookModerationSnapshotService;
+        this.authorApplicationPolicy = authorApplicationPolicy;
     }
     public List<Book> published(String query, String category, String status) {
         return catalogRepository.findPublished(query, category, status);
@@ -475,10 +511,15 @@ public class NovelStore {
         // Both this path and approval lock application rows before the profile. The profile query
         // must be a locking current read because ensureActive may already have opened a MySQL RR
         // transaction snapshot before an administrator's approval commits.
-        operationsRepository.lockAuthorApplicationsForUser(userId);
+        List<AuthorApplication> applications = operationsRepository.lockAuthorApplicationsForUser(userId);
         if (operationsRepository.findAuthorProfileForUpdate(userId).isPresent()) {
             throw new IllegalStateException("an approved author cannot submit another application");
         }
+        reapplyAvailableAt(applications).ifPresent(reapplyAvailableAt -> {
+            if (reapplyAvailableAt.isAfter(Instant.now())) {
+                throw new IllegalStateException("author application can be resubmitted after " + reapplyAvailableAt);
+            }
+        });
         AuthorApplication application = operationsRepository.createAuthorApplication(
                 userId,
                 requireTextAtMost(penName, "pen name is required", 128).trim(),
@@ -487,13 +528,15 @@ public class NovelStore {
         return application;
     }
     public Optional<AuthorApplication> currentAuthorApplication(long userId) {
-        return operationsRepository.findLatestAuthorApplicationForUser(userId);
+        return operationsRepository.findLatestAuthorApplicationForUser(userId).map(this::withLegacyReapplyAvailability);
     }
     public List<AuthorApplication> authorApplications() { return operationsRepository.findPendingAuthorApplications(); }
     @Transactional
     public AuthorApplication decideAuthorApplication(long reviewerUserId,long id,boolean approve,String reason) {
         String normalizedReason = requireTextAtMost(reason, "author application review reason is required", 1024).trim();
-        AuthorApplication application = operationsRepository.decideAuthorApplication(id, reviewerUserId, approve, normalizedReason);
+        Instant reapplyAvailableAt = approve ? null : Instant.now().plus(authorApplicationPolicy.rejectionCooldown());
+        AuthorApplication application = operationsRepository.decideAuthorApplication(
+                id, reviewerUserId, approve, normalizedReason, reapplyAvailableAt);
         if (approve) {
             operationsRepository.createAuthorProfile(application);
             authService.grantRole(application.userId(), Role.AUTHOR);
@@ -501,11 +544,123 @@ public class NovelStore {
         audit("author application=" + id + " reviewer=" + reviewerUserId + " " + application.status());
         return application;
     }
+
+    private Optional<Instant> reapplyAvailableAt(List<AuthorApplication> applications) {
+        return applications.stream()
+                .filter(application -> "REJECTED".equals(application.status()))
+                .map(this::effectiveReapplyAvailableAt)
+                .flatMap(Optional::stream)
+                .max(Comparator.naturalOrder());
+    }
+
+    private AuthorApplication withLegacyReapplyAvailability(AuthorApplication application) {
+        return effectiveReapplyAvailableAt(application)
+                .filter(reapplyAvailableAt -> application.reapplyAvailableAt() == null)
+                .map(reapplyAvailableAt -> new AuthorApplication(
+                        application.id(),
+                        application.userId(),
+                        application.penName(),
+                        application.statement(),
+                        application.status(),
+                        application.reason(),
+                        application.createdAt(),
+                        application.decidedAt(),
+                        application.decidedByUserId(),
+                        reapplyAvailableAt))
+                .orElse(application);
+    }
+
+    private Optional<Instant> effectiveReapplyAvailableAt(AuthorApplication application) {
+        if (!"REJECTED".equals(application.status())) {
+            return Optional.empty();
+        }
+        if (application.reapplyAvailableAt() != null) {
+            return Optional.of(application.reapplyAvailableAt());
+        }
+        if (application.decidedAt() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(application.decidedAt().plus(authorApplicationPolicy.rejectionCooldown()));
+    }
+    /** Internal active vocabulary projection retained for existing moderation callers. */
     public Set<String> sensitiveWords() { return operationsRepository.sensitiveWords(); }
+    public List<SensitiveWord> sensitiveWordEntries() { return operationsRepository.sensitiveWordEntries(); }
+    public List<SensitiveWordAudit> sensitiveWordAudits(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word audit limit must be between 1 and 100");
+        }
+        return operationsRepository.sensitiveWordAudits(limit);
+    }
+
+    /** Legacy helper retained for persistence fixtures which do not model an operator account. */
     @Transactional
     public void addSensitiveWord(String word) {
         String added = operationsRepository.addSensitiveWord(word);
         audit("sensitive word added word=" + added);
+    }
+
+    @Transactional
+    public SensitiveWord addSensitiveWord(long operatorUserId, String word) {
+        requireOperatorUserId(operatorUserId);
+        SensitiveWord created = operationsRepository.createSensitiveWord(word, operatorUserId);
+        operationsRepository.recordSensitiveWordAudit(
+                created.normalizedWord(), null, created.word(), null, true,
+                "CREATED", "站长新增本地敏感词", operatorUserId);
+        audit("sensitive-word action=CREATED key=" + created.normalizedWord() + " operator=" + operatorUserId);
+        return created;
+    }
+
+    @Transactional
+    public SensitiveWord updateSensitiveWord(long operatorUserId, String currentNormalizedWord, String word, String reason) {
+        requireOperatorUserId(operatorUserId);
+        String normalizedReason = requireSensitiveWordReason(reason);
+        SensitiveWord current = operationsRepository.lockSensitiveWord(currentNormalizedWord)
+                .orElseThrow(() -> new NoSuchElementException("sensitive word not found"));
+        String requestedWord = requireSensitiveWordValue(word);
+        if (current.word().equals(requestedWord)) {
+            throw new IllegalStateException("sensitive word has no changes");
+        }
+        SensitiveWord updated = operationsRepository.updateSensitiveWord(current, requestedWord, operatorUserId);
+        operationsRepository.recordSensitiveWordAudit(
+                current.normalizedWord(), current.word(), updated.word(), current.enabled(), updated.enabled(),
+                "UPDATED", normalizedReason, operatorUserId);
+        audit("sensitive-word action=UPDATED key=" + current.normalizedWord() + " operator=" + operatorUserId);
+        return updated;
+    }
+
+    @Transactional
+    public SensitiveWord setSensitiveWordEnabled(
+            long operatorUserId, String currentNormalizedWord, boolean enabled, String reason) {
+        requireOperatorUserId(operatorUserId);
+        String normalizedReason = requireSensitiveWordReason(reason);
+        SensitiveWord current = operationsRepository.lockSensitiveWord(currentNormalizedWord)
+                .orElseThrow(() -> new NoSuchElementException("sensitive word not found"));
+        if (current.enabled() == enabled) {
+            throw new IllegalStateException(enabled ? "sensitive word is already enabled" : "sensitive word is already disabled");
+        }
+        SensitiveWord updated = operationsRepository.setSensitiveWordEnabled(current, enabled, operatorUserId);
+        String action = enabled ? "ENABLED" : "DISABLED";
+        operationsRepository.recordSensitiveWordAudit(
+                current.normalizedWord(), current.word(), updated.word(), current.enabled(), updated.enabled(),
+                action, normalizedReason, operatorUserId);
+        audit("sensitive-word action=" + action + " key=" + current.normalizedWord() + " operator=" + operatorUserId);
+        return updated;
+    }
+
+    @Transactional
+    public void deleteSensitiveWord(long operatorUserId, String currentNormalizedWord, String reason) {
+        requireOperatorUserId(operatorUserId);
+        String normalizedReason = requireSensitiveWordReason(reason);
+        SensitiveWord current = operationsRepository.lockSensitiveWord(currentNormalizedWord)
+                .orElseThrow(() -> new NoSuchElementException("sensitive word not found"));
+        if (current.enabled()) {
+            throw new IllegalStateException("sensitive word must be disabled before deletion");
+        }
+        operationsRepository.deleteSensitiveWord(current);
+        operationsRepository.recordSensitiveWordAudit(
+                current.normalizedWord(), current.word(), null, current.enabled(), null,
+                "DELETED", normalizedReason, operatorUserId);
+        audit("sensitive-word action=DELETED key=" + current.normalizedWord() + " operator=" + operatorUserId);
     }
     @Transactional
     public boolean setUserEnabled(long userId,boolean enabled) {
@@ -603,10 +758,80 @@ public class NovelStore {
     public Volume createVolume(long userId, long bookId, String title) {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
-        String normalizedTitle = requireText(title, "volume title is required");
+        String normalizedTitle = requireTextAtMost(title, "volume title is required", 255).trim();
         Volume volume = catalogRepository.createVolume(book.id(), normalizedTitle, catalogRepository.nextVolumeOrder(book.id()));
         audit("create volume=" + volume.id() + " book=" + book.id());
         return volume;
+    }
+
+    @Transactional
+    public Volume updateVolume(long userId, long bookId, long volumeId, String title) {
+        Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
+        Volume volume = lockedVolumeForBook(book, volumeId);
+        String normalizedTitle = requireTextAtMost(title, "volume title is required", 255).trim();
+        Volume updated = catalogRepository.updateVolumeTitle(volume.id(), normalizedTitle);
+        audit("update volume=" + updated.id() + " author=" + userId + " book=" + book.id());
+        return updated;
+    }
+
+    /**
+     * Reorders a book's complete volume list under the parent-book lock.  Parking the current
+     * values first avoids transient violations of the unique (book_id, order_no) constraint.
+     */
+    @Transactional
+    public List<Volume> reorderVolume(long userId, long bookId, long volumeId, int orderNo) {
+        Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
+        List<Volume> lockedVolumes = catalogRepository.findVolumesByBookIdForUpdate(book.id());
+        int sourceIndex = indexOfVolume(lockedVolumes, volumeId);
+        if (sourceIndex < 0) {
+            lockedVolumeForBook(book, volumeId);
+            throw new IllegalStateException("volume was not included in current book ordering");
+        }
+        if (orderNo < 1 || orderNo > lockedVolumes.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "volume order must be between 1 and " + lockedVolumes.size());
+        }
+        if (sourceIndex == orderNo - 1) {
+            return lockedVolumes;
+        }
+
+        List<Volume> reordered = new ArrayList<>(lockedVolumes);
+        Volume moved = reordered.remove(sourceIndex);
+        reordered.add(orderNo - 1, moved);
+        List<Volume> normalized = normalizeVolumeOrders(reordered);
+        catalogRepository.parkVolumeOrders(book.id());
+        catalogRepository.writeVolumeOrders(normalized);
+        audit("reorder volume=" + volumeId + " author=" + userId + " book=" + book.id() + " order=" + orderNo);
+        return catalogRepository.findVolumesByBookId(book.id());
+    }
+
+    @Transactional
+    public VolumeDeleteResult deleteVolume(long userId, long bookId, long volumeId) {
+        Book book = lockedOwned(userId, bookId);
+        requireNotOfflineForAuthorMutation(book);
+        Volume target = lockedVolumeForBook(book, volumeId);
+        List<Volume> lockedVolumes = catalogRepository.findVolumesByBookIdForUpdate(book.id());
+        if (indexOfVolume(lockedVolumes, target.id()) < 0) {
+            throw new IllegalStateException("volume was not included in current book ordering");
+        }
+
+        int detachedChapterCount = catalogRepository.detachVolumeChapters(target.id());
+        catalogRepository.deleteVolume(target.id());
+        List<Volume> remaining = normalizeVolumeOrders(lockedVolumes.stream()
+                .filter(volume -> volume.id() != target.id())
+                .toList());
+        if (!remaining.isEmpty()) {
+            catalogRepository.parkVolumeOrders(book.id());
+            catalogRepository.writeVolumeOrders(remaining);
+        }
+        if (awaitingFullWorkReview(book.status())) {
+            queueWholeWorkSnapshot(book);
+        }
+        audit("delete volume=" + target.id() + " author=" + userId + " book=" + book.id()
+                + " detached-chapters=" + detachedChapterCount);
+        return new VolumeDeleteResult(target.id(), true, detachedChapterCount);
     }
 
     public List<Chapter> authorChapters(long userId, long bookId) {
@@ -1097,6 +1322,25 @@ public class NovelStore {
         }
         return volume;
     }
+
+    private static int indexOfVolume(List<Volume> volumes, long volumeId) {
+        for (int index = 0; index < volumes.size(); index++) {
+            if (volumes.get(index).id() == volumeId) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static List<Volume> normalizeVolumeOrders(List<Volume> volumes) {
+        List<Volume> normalized = new ArrayList<>(volumes.size());
+        for (int index = 0; index < volumes.size(); index++) {
+            Volume volume = volumes.get(index);
+            normalized.add(new Volume(
+                    volume.id(), volume.bookId(), volume.title(), index + 1, volume.createdAt()));
+        }
+        return normalized;
+    }
     private Chapter lockedChapterForBook(Book book, long chapterId) {
         Chapter chapter = catalogRepository.findChapterByIdForUpdate(chapterId)
                 .orElseThrow(() -> new NoSuchElementException("chapter not found"));
@@ -1271,6 +1515,29 @@ public class NovelStore {
         String required = requireText(value, message);
         if (required.length() > maximumLength) throw new IllegalArgumentException(message + " is too long");
         return required;
+    }
+    private static String requireSensitiveWordValue(String value) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word is required");
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 128) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word is too long");
+        }
+        if (normalized.chars().anyMatch(Character::isISOControl)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word contains control characters");
+        }
+        return normalized;
+    }
+    private static String requireSensitiveWordReason(String value) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word change reason is required");
+        }
+        String normalized = value.trim().replace('\n', ' ').replace('\r', ' ');
+        if (normalized.length() > 512) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word change reason is too long");
+        }
+        return normalized;
     }
     private static void requireDueTime(Instant dueAt) {
         if (dueAt == null) throw new IllegalArgumentException("due time is required");

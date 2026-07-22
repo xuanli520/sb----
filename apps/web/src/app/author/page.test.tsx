@@ -333,6 +333,44 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       return Promise.resolve(response(volume));
     }
 
+    const volumeDetail = endpoint.match(/^author\/books\/(\d+)\/volumes\/(\d+)$/);
+    if (method === 'PUT' && volumeDetail) {
+      const bookId = Number(volumeDetail[1]);
+      const volumeId = Number(volumeDetail[2]);
+      const item = volumesByBook[bookId]?.find((volume) => volume.id === volumeId);
+      if (!item) return Promise.resolve(rejected(`Unknown volume: ${volumeId}`));
+      const updated = { ...item, title: String(body.title) };
+      volumesByBook[bookId] = volumesByBook[bookId].map((volume) => volume.id === volumeId ? updated : volume);
+      return Promise.resolve(response(updated));
+    }
+    if (method === 'DELETE' && volumeDetail) {
+      const bookId = Number(volumeDetail[1]);
+      const volumeId = Number(volumeDetail[2]);
+      const existing = volumesByBook[bookId] ?? [];
+      if (!existing.some((volume) => volume.id === volumeId)) return Promise.resolve(rejected(`Unknown volume: ${volumeId}`));
+      const detachedChapterCount = (chaptersByBook[bookId] ?? []).filter((item) => item.volumeId === volumeId).length;
+      volumesByBook[bookId] = existing
+        .filter((volume) => volume.id !== volumeId)
+        .map((volume, index) => ({ ...volume, orderNo: index + 1 }));
+      chaptersByBook[bookId] = (chaptersByBook[bookId] ?? []).map((item) => item.volumeId === volumeId ? { ...item, volumeId: null } : item);
+      return Promise.resolve(response({ id: volumeId, deleted: true, detachedChapterCount }));
+    }
+
+    const volumeOrder = endpoint.match(/^author\/books\/(\d+)\/volumes\/(\d+)\/order$/);
+    if (method === 'PUT' && volumeOrder) {
+      const bookId = Number(volumeOrder[1]);
+      const volumeId = Number(volumeOrder[2]);
+      const targetOrder = Number(body.orderNo);
+      const existing = volumesByBook[bookId] ?? [];
+      const sourceIndex = existing.findIndex((volume) => volume.id === volumeId);
+      if (sourceIndex < 0 || targetOrder < 1 || targetOrder > existing.length) return Promise.resolve(rejected('volume order is invalid'));
+      const reordered = [...existing];
+      const [moved] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetOrder - 1, 0, moved);
+      volumesByBook[bookId] = reordered.map((volume, index) => ({ ...volume, orderNo: index + 1 }));
+      return Promise.resolve(response(volumesByBook[bookId]));
+    }
+
     const chapterList = endpoint.match(/^author\/books\/(\d+)\/chapters$/);
     if (method === 'GET' && chapterList) return Promise.resolve(response(chaptersByBook[Number(chapterList[1])] ?? []));
     if (method === 'POST' && chapterList) {
@@ -644,6 +682,56 @@ describe('author manuscript workspace', () => {
     })));
     await screen.findByRole('heading', { name: '第 5 章 · 新存稿' });
     expect(screen.getByText('章节草稿已保存')).toBeTruthy();
+  });
+
+  it('renames and reorders volumes through the author workspace controls', async () => {
+    const fetchMock = mockAuthorApi();
+    render(<AuthorPage />);
+
+    await screen.findByRole('button', { name: /灯塔卷/ });
+    fireEvent.change(screen.getByLabelText('卷册名称'), { target: { value: '回声卷' } });
+    fireEvent.click(screen.getByRole('button', { name: '新建卷册' }));
+    await screen.findByRole('button', { name: /第 2 卷 · 回声卷/ });
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑第 1 卷' }));
+    await screen.findByRole('dialog', { name: '修改卷册' });
+    fireEvent.change(screen.getByLabelText('编辑卷册名称'), { target: { value: '启航卷' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存卷册' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/volumes/101', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ title: '启航卷' }),
+    })));
+    await screen.findByText('《启航卷》卷册信息已保存');
+    fireEvent.click(screen.getByRole('button', { name: '下移第 1 卷' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/volumes/101/order', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ orderNo: 2 }),
+    })));
+    expect(await within(screen.getByLabelText('卷册列表')).findByText('第 2 卷 · 启航卷')).toBeTruthy();
+  });
+
+  it('deletes a volume, preserves its chapters as ungrouped, and retains a valid selected volume', async () => {
+    const fetchMock = mockAuthorApi();
+    render(<AuthorPage />);
+
+    await screen.findByRole('button', { name: /灯塔卷/ });
+    fireEvent.change(screen.getByLabelText('卷册名称'), { target: { value: '回声卷' } });
+    fireEvent.click(screen.getByRole('button', { name: '新建卷册' }));
+    await screen.findByRole('button', { name: /第 2 卷 · 回声卷/ });
+
+    fireEvent.click(screen.getByRole('button', { name: '删除第 1 卷' }));
+    await screen.findByRole('alertdialog', { name: '删除卷册' });
+    fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/volumes/101', expect.objectContaining({ method: 'DELETE' })));
+    await screen.findByText('《灯塔卷》已删除，4 个章节已保留为未归入卷册内容');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /第 1 卷 · 灯塔卷/ })).toBeNull());
+    const chapter = screen.getByRole('heading', { name: '第 1 章 · 抵达旧港' }).closest('article');
+    expect(chapter).not.toBeNull();
+    expect(within(chapter as HTMLElement).getByText('未归入卷册')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /第 1 卷 · 回声卷/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('schedules the draft selected from the chapter list with a future timestamp', async () => {

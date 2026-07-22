@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const backendPort = parsePort(process.env.E2E_BACKEND_PORT, 18080);
 const webPort = parsePort(process.env.E2E_WEB_PORT, 13000);
+const smtpPort = parsePort(process.env.E2E_SMTP_PORT, 11025);
+const smtpMailboxPort = parsePort(process.env.E2E_SMTP_MAILBOX_PORT, 18025);
 const backendUrl = `http://127.0.0.1:${backendPort}`;
 const webUrl = `http://127.0.0.1:${webPort}`;
 
@@ -17,7 +19,8 @@ export default defineConfig({
   testDir: './e2e', timeout: 45_000, reporter: 'line',
   use: { baseURL: webUrl, headless: true, screenshot: 'only-on-failure', launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : undefined },
   webServer: [
-    { command: `SERVER_PORT=${backendPort} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_DEVELOPMENT_AUTH_ENABLED=false NOVEL_BOOTSTRAP_ADMIN_USERNAME=e2e.admin@example.test NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME=E2EAdmin NOVEL_BOOTSTRAP_ADMIN_PASSWORD=e2e-bootstrap-admin-password NOVEL_RUNTIME_MODE=DEVELOPMENT NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED=true mvn -q -pl apps/backend spring-boot:run`, cwd: root, url: `${backendUrl}/actuator/health`, timeout: 90_000, reuseExistingServer: false },
+    { command: `node e2e/smtp-mailbox.mjs --smtp-port ${smtpPort} --http-port ${smtpMailboxPort}`, cwd: '.', url: `http://127.0.0.1:${smtpMailboxPort}/health`, timeout: 15_000, reuseExistingServer: false },
+    { command: `SERVER_PORT=${backendPort} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_DEVELOPMENT_AUTH_ENABLED=false NOVEL_BOOTSTRAP_ADMIN_USERNAME=e2e.admin@example.test NOVEL_BOOTSTRAP_ADMIN_DISPLAY_NAME=E2EAdmin NOVEL_BOOTSTRAP_ADMIN_PASSWORD=e2e-bootstrap-admin-password NOVEL_RUNTIME_MODE=DEVELOPMENT NOVEL_AUDIT_DEVELOPMENT_SIMULATION_ENABLED=true NOVEL_SMTP_HOST=127.0.0.1 NOVEL_SMTP_PORT=${smtpPort} NOVEL_SMTP_USERNAME=e2e-mailer NOVEL_SMTP_PASSWORD=e2e-smtp-test-password NOVEL_SMTP_AUTH=false NOVEL_SMTP_SSL_ENABLE=false NOVEL_EMAIL_VERIFICATION_FROM=e2e-mailer@example.test NOVEL_EMAIL_VERIFICATION_HASH_SECRET=e2e-email-verification-hmac-secret mvn -q -pl apps/backend spring-boot:run`, cwd: root, url: `${backendUrl}/actuator/health`, timeout: 90_000, reuseExistingServer: false },
     { command: `API_PROXY_TARGET=${backendUrl} NOVEL_INTERNAL_API_KEY=local-novel-internal-key NOVEL_SESSION_STORE=memory NOVEL_DEV_LOGIN_ENABLED=false npm run dev -- --port ${webPort}`, cwd: '.', url: webUrl, timeout: 90_000, reuseExistingServer: false },
   ],
 });

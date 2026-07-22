@@ -31,6 +31,30 @@ NOVEL_PUBLIC_ORIGIN=https://novel.example.com
 `NOVEL_AUTH_RATE_LIMIT_TRUSTED_PROXY_HEADERS` 只有在入口代理会覆盖每个请求的
 `X-Forwarded-For` 后才可启用。
 
+## 邮箱验证码 SMTP
+
+邮箱注册只能通过后端真实 SMTP 发送的一次性验证码完成，不提供本地邮件箱、明文验证码 API
+或开发降级。Compose 会把 `NOVEL_SMTP_*` 和 `NOVEL_EMAIL_VERIFICATION_*` 仅传入 `backend`；
+它们不得出现在 `web`、`NEXT_PUBLIC_*`、浏览器请求或日志中。缺少主机、端口、用户名、密码、
+发件人地址或 HMAC 密钥时，发送和邮箱注册都会以 `503` 失败关闭。
+
+以 QQ 邮箱为例，先在 QQ 邮箱中开启 SMTP 并生成独立的 SMTP 授权码，然后在 `.env` 中设置：
+
+```dotenv
+NOVEL_SMTP_HOST=smtp.qq.com
+NOVEL_SMTP_PORT=465
+NOVEL_SMTP_USERNAME=your-qq-mailbox@qq.com
+NOVEL_SMTP_PASSWORD=qq-smtp-authorization-code
+NOVEL_SMTP_SSL_ENABLE=true
+NOVEL_EMAIL_VERIFICATION_FROM=your-qq-mailbox@qq.com
+NOVEL_EMAIL_VERIFICATION_HASH_SECRET=replace-with-a-separate-long-random-secret
+```
+
+`NOVEL_EMAIL_VERIFICATION_HASH_SECRET` 不是 SMTP 密码；它用于以 HMAC-SHA-256 保存验证码摘要，
+避免六位验证码在数据库泄漏后被离线枚举。部署更换该密钥会使尚未使用的验证码立即失效，属于
+预期的安全行为。发送冷却、小时窗口和验证失败次数可用同名前缀的其余环境变量调整。手机号
+登录未实现，也不应把手机号提交到邮箱验证码接口。
+
 ## 封面对象存储
 
 封面上传默认关闭：`NOVEL_COVER_STORAGE_ENABLED=false`。打开前，`.env` 必须包含

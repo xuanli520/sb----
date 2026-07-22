@@ -15,7 +15,7 @@ type SessionResponse = {
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const verificationCodePattern = /^\d{6,8}$/;
+const verificationCodePattern = /^\d{6}$/;
 const acquisitionChannels = new Set(['DIRECT', 'ORGANIC', 'SEARCH', 'WECHAT', 'QQ', 'DOUYIN', 'XIAOHONGSHU', 'INVITE']);
 
 function registrationChannel(): string | undefined {
@@ -101,7 +101,7 @@ export default function RegisterPage() {
       return;
     }
     if (!verificationCodePattern.test(verificationCode.trim())) {
-      setError('请输入邮件中的 6 至 8 位验证码。');
+      setError('请输入邮件中的 6 位验证码。');
       return;
     }
 
@@ -203,7 +203,7 @@ export default function RegisterPage() {
                     type="text"
                     autoComplete="one-time-code"
                     inputMode="numeric"
-                    maxLength={8}
+                    maxLength={6}
                     value={verificationCode}
                     onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, ''))}
                     disabled={submitting || sendingVerification}

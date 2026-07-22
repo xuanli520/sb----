@@ -44,7 +44,7 @@ public class AuthController {
 
     @PostMapping("/login")
     ApiResponse<SessionData> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.ok(toSessionData(authService.login(request.username(), request.password())));
+        return ApiResponse.ok(toSessionData(authService.loginFromBff(request.username(), request.password())));
     }
 
     @GetMapping("/session")
@@ -65,17 +65,17 @@ public class AuthController {
     }
 
     public record RegisterRequest(
-            @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
+            @NotBlank @Email @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
             @NotBlank @Size(min = 1, max = 128) String displayName,
             @NotBlank @Size(min = 12, max = 128) String password,
             @Size(max = 32) String channel,
-            @Pattern(regexp = "[0-9]{6}", message = "must contain six digits") String verificationCode) {}
+            @NotBlank @Pattern(regexp = "[0-9]{6}", message = "must contain six digits") String verificationCode) {}
 
     public record EmailVerificationRequest(
             @NotBlank @Email @Size(max = 120) String email) {}
 
     public record LoginRequest(
-            @NotBlank @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
+            @NotBlank @Email @Pattern(regexp = "[A-Za-z0-9._@+-]{3,120}") String username,
             @NotBlank @Size(min = 12, max = 128) String password) {}
 
     public record SessionData(String sessionId, UserData user, Instant expiresAt) {}

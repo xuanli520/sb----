@@ -420,6 +420,7 @@
         "tags": ["Reader account"],
         "operationId": "getCurrentAuthorApplication",
         "summary": "Get the current account author application, when present",
+        "description": "For a rejected application, `reapplyAvailableAt` tells the reader when a new application may be submitted.",
         "security": [{ "BffSession": [] }],
         "x-response-data-schema": "#/components/schemas/NullableAuthorApplication",
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
@@ -428,6 +429,7 @@
         "tags": ["Reader account"],
         "operationId": "applyForAuthorRole",
         "summary": "Submit an author application",
+        "description": "A rejected application can be resubmitted only after its server-recorded `reapplyAvailableAt` boundary. The deployment-owned rejection cooldown defaults to P7D.",
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-response-data-schema": "#/components/schemas/AuthorApplication",
@@ -583,6 +585,47 @@
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "requestBody": { "$ref": "#/components/requestBodies/VolumeRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/volumes/{volumeId}": {
+      "put": {
+        "tags": ["Author workspace"],
+        "operationId": "updateAuthorVolume",
+        "summary": "Rename an author-owned volume",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/Volume",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathVolumeId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/VolumeRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "tags": ["Author workspace"],
+        "operationId": "deleteAuthorVolume",
+        "summary": "Delete an author-owned volume and retain its chapters as ungrouped content",
+        "description": "The service sets each matching chapter's volumeId to null. Chapter identity, text, lifecycle state, publication history, order, and book word count are retained.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/VolumeDeleteResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathVolumeId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/volumes/{volumeId}/order": {
+      "put": {
+        "tags": ["Author workspace"],
+        "operationId": "reorderAuthorVolume",
+        "summary": "Move an author-owned volume to an ordinal position",
+        "description": "The response is the complete, contiguous volume order after the move.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/VolumeList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathVolumeId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/VolumeOrderRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
       }
     },
     "/api/v1/author/books/{bookId}/chapters": {
@@ -920,7 +963,7 @@
         "summary": "Get local sensitive-word entries",
         "security": [{ "BffSession": [] }],
         "x-required-role": "ADMIN",
-        "x-response-data-schema": "#/components/schemas/StringSet",
+        "x-response-data-schema": "#/components/schemas/SensitiveWordList",
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       },
       "post": {
@@ -930,9 +973,61 @@
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "ADMIN",
-        "x-response-data-schema": "#/components/schemas/SensitiveWordResult",
+        "x-response-data-schema": "#/components/schemas/SensitiveWord",
         "requestBody": { "$ref": "#/components/requestBodies/SensitiveWordRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/sensitive-words/{normalizedWord}": {
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "updateSensitiveWord",
+        "summary": "Rename a local sensitive-word entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/SensitiveWord",
+        "parameters": [{ "$ref": "#/components/parameters/PathNormalizedWord" }],
+        "requestBody": { "$ref": "#/components/requestBodies/SensitiveWordUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "tags": ["Operations"],
+        "operationId": "deleteSensitiveWord",
+        "summary": "Delete a disabled local sensitive-word entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "parameters": [{ "$ref": "#/components/parameters/PathNormalizedWord" }],
+        "requestBody": { "$ref": "#/components/requestBodies/SensitiveWordDeleteRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/sensitive-words/{normalizedWord}/enabled": {
+      "put": {
+        "tags": ["Operations"],
+        "operationId": "setSensitiveWordEnabled",
+        "summary": "Enable or disable a local sensitive-word entry",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/SensitiveWord",
+        "parameters": [{ "$ref": "#/components/parameters/PathNormalizedWord" }],
+        "requestBody": { "$ref": "#/components/requestBodies/SensitiveWordEnabledRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/sensitive-words/audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getSensitiveWordAudits",
+        "summary": "Get bounded immutable sensitive-word lifecycle audit records",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/SensitiveWordAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
     },
     "/api/v1/admin/moderation-audits": {
@@ -1378,7 +1473,7 @@
         "tags": ["Internal BFF session"],
         "operationId": "registerBackendSession",
         "summary": "Create a password account and backend session",
-        "description": "Internal BFF-to-backend route only. The browser uses `POST /api/novel/session` instead. An email-shaped `username` requires the current six-digit code sent by `sendRegistrationEmailVerification`; the code is one-time, expires, and is never returned by this API. Phone verification and OAuth are not provided.",
+        "description": "Internal BFF-to-backend route only. The browser uses `POST /api/novel/session` instead. Registration accepts an email address and requires the current six-digit code sent by `sendRegistrationEmailVerification`; the code is one-time, expires, and is never returned by this API. Phone verification and OAuth are not provided.",
         "security": [{ "InternalBffKey": [] }],
         "x-internal-bff-only": true,
         "x-response-data-schema": "#/components/schemas/SessionData",
@@ -1460,6 +1555,7 @@
       "PathTaxonomyId": { "name": "taxonomyId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "PathTermId": { "name": "termId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "PathCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
+      "PathNormalizedWord": { "name": "normalizedWord", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
       "SearchQuery": { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Literal keyword search." },
       "Category": { "name": "category", "in": "query", "schema": { "type": "string" } },
       "CategoryAlias": { "name": "type", "in": "query", "schema": { "type": "string" }, "description": "Compatibility alias used only when `category` is blank." },
@@ -1511,6 +1607,7 @@
       "BookUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookUpdateRequest" } } } },
       "CoverUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; filename and declared MIME type are not trusted." } }, "additionalProperties": false } } } },
       "VolumeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeRequest" } } } },
+      "VolumeOrderRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeOrderRequest" } } } },
       "ChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterRequest" } } } },
       "DraftChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DraftChapterRequest" } } } },
       "ChapterUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterUpdateRequest" } } } },
@@ -1519,6 +1616,9 @@
       "BookStatusRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookStatusRequest" } } } },
       "ReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviewRequest" } } } },
       "SensitiveWordRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordRequest" } } } },
+      "SensitiveWordUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordUpdateRequest" } } } },
+      "SensitiveWordEnabledRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordEnabledRequest" } } } },
+      "SensitiveWordDeleteRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordDeleteRequest" } } } },
       "CommentReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentReviewRequest" } } } },
       "ParagraphAnnotationReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ParagraphAnnotationReviewRequest" } } } },
       "AuthorModerationAdviceRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthorModerationAdviceRequest" } } } },
@@ -1564,6 +1664,7 @@
       "BookList": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } },
       "Volume": { "type": "object", "required": ["id", "bookId", "title", "orderNo", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "orderNo": { "type": "integer" }, "createdAt": { "type": "string", "format": "date-time" } } },
       "VolumeList": { "type": "array", "items": { "$ref": "#/components/schemas/Volume" } },
+      "VolumeDeleteResult": { "type": "object", "required": ["id", "deleted", "detachedChapterCount"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true }, "detachedChapterCount": { "type": "integer", "minimum": 0 } } },
       "Chapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": "string" }, "published": { "type": "boolean" }, "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "PUBLISHED", "NEEDS_REVIEW"] }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" } } },
       "ChapterList": { "type": "array", "items": { "$ref": "#/components/schemas/Chapter" } },
       "ReaderChapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo", "readable", "access"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": ["string", "null"], "description": "Chapter body is null when `readable` is false; it is never a masked or truncated body." }, "published": { "type": "boolean", "const": true }, "status": { "type": "string", "const": "PUBLISHED" }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" }, "readable": { "type": "boolean" }, "access": { "type": "string", "enum": ["PREVIEW", "BOOK_ENTITLEMENT", "MEMBERSHIP", "AUTHOR", "ADMIN", "ENTITLEMENT_REQUIRED"] } } },
@@ -1607,7 +1708,7 @@
       "VoteResult": { "type": "object", "required": ["type", "count", "remaining", "limit"], "properties": { "type": { "type": "string", "enum": ["recommendation", "monthly"] }, "count": { "type": "integer", "format": "int64", "description": "All-time public count for this book and vote type." }, "remaining": { "type": "integer", "minimum": 0 }, "limit": { "type": "integer", "minimum": 0 } } },
       "RewardResult": { "type": "object", "required": ["bookId", "amount", "balance"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "amount": { "type": "integer", "minimum": 1 }, "balance": { "type": "integer", "minimum": 0 } }, "description": "Reward result includes the server-derived token balance after the immutable debit." },
       "PurchaseResult": { "type": "object", "additionalProperties": true, "description": "Purchase result includes server-derived entitlement/balance state." },
-      "AuthorApplication": { "type": "object", "required": ["id", "userId", "penName", "statement", "status", "reason", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "penName": { "type": "string" }, "statement": { "type": "string" }, "status": { "type": "string" }, "reason": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "decidedAt": { "type": ["string", "null"], "format": "date-time" }, "decidedByUserId": { "type": ["integer", "null"], "format": "int64" } } },
+      "AuthorApplication": { "type": "object", "required": ["id", "userId", "penName", "statement", "status", "reason", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "penName": { "type": "string" }, "statement": { "type": "string" }, "status": { "type": "string" }, "reason": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "decidedAt": { "type": ["string", "null"], "format": "date-time" }, "decidedByUserId": { "type": ["integer", "null"], "format": "int64" }, "reapplyAvailableAt": { "type": ["string", "null"], "format": "date-time", "description": "Set only after rejection. A new application is accepted at or after this server-recorded UTC instant." } } },
       "NullableAuthorApplication": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/AuthorApplication" }] },
       "AuthorApplicationList": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorApplication" } },
       "DeleteResult": { "type": "object", "required": ["id", "deleted"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true } } },
@@ -1660,14 +1761,17 @@
       "HotSearchTermAudit": { "type": "object", "required": ["id", "termId", "term", "action", "details", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "termId": { "type": "integer", "format": "int64" }, "term": { "type": "string" }, "action": { "type": "string" }, "previousRank": { "type": ["integer", "null"] }, "rank": { "type": ["integer", "null"] }, "details": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
       "HotSearchTermAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/HotSearchTermAudit" } },
       "StringSet": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-      "SensitiveWordResult": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string" } } },
+      "SensitiveWord": { "type": "object", "required": ["normalizedWord", "word", "enabled", "createdAt", "updatedAt"], "properties": { "normalizedWord": { "type": "string" }, "word": { "type": "string" }, "enabled": { "type": "boolean" }, "createdByUserId": { "type": ["integer", "null"], "format": "int64" }, "updatedByUserId": { "type": ["integer", "null"], "format": "int64" }, "disabledByUserId": { "type": ["integer", "null"], "format": "int64" }, "disabledAt": { "type": ["string", "null"], "format": "date-time" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "SensitiveWordList": { "type": "array", "items": { "$ref": "#/components/schemas/SensitiveWord" } },
+      "SensitiveWordAudit": { "type": "object", "required": ["id", "normalizedWord", "action", "reason", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "normalizedWord": { "type": "string" }, "previousWord": { "type": ["string", "null"] }, "word": { "type": ["string", "null"] }, "previousEnabled": { "type": ["boolean", "null"] }, "enabled": { "type": ["boolean", "null"] }, "action": { "type": "string", "enum": ["CREATED", "UPDATED", "ENABLED", "DISABLED", "DELETED"] }, "reason": { "type": "string" }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "SensitiveWordAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/SensitiveWordAudit" } },
       "EmptyData": { "type": "null" },
       "UserData": { "type": "object", "required": ["id", "name", "roles"], "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } } } },
       "SessionData": { "type": "object", "required": ["sessionId", "user", "expiresAt"], "properties": { "sessionId": { "type": "string", "description": "BFF-only backend session identifier; must not be written to browser cookies." }, "user": { "$ref": "#/components/schemas/UserData" }, "expiresAt": { "type": "string", "format": "date-time" } } },
       "EmailVerificationDeliveryData": { "type": "object", "required": ["expiresAt", "resendAvailableAt"], "properties": { "expiresAt": { "type": "string", "format": "date-time" }, "resendAvailableAt": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
       "EmailVerificationRequest": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email", "maxLength": 120 } }, "additionalProperties": false },
-      "RegisterRequest": { "type": "object", "required": ["username", "displayName", "password"], "properties": { "username": { "type": "string", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true }, "channel": { "type": "string", "maxLength": 32, "enum": ["DIRECT", "ORGANIC", "SEARCH", "WECHAT", "QQ", "DOUYIN", "XIAOHONGSHU", "INVITE"], "description": "Optional controlled first-touch registration channel. Unknown values are rejected; raw UTM URLs and referrers are not stored." }, "verificationCode": { "type": "string", "pattern": "^[0-9]{6}$", "writeOnly": true, "description": "Required when username is an email address. It is delivered only by the SMTP verification endpoint and is never echoed by an API response." } }, "additionalProperties": false },
-      "LoginRequest": { "type": "object", "required": ["username", "password"], "properties": { "username": { "type": "string", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true } }, "additionalProperties": false },
+      "RegisterRequest": { "type": "object", "required": ["username", "displayName", "password", "verificationCode"], "properties": { "username": { "type": "string", "format": "email", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true }, "channel": { "type": "string", "maxLength": 32, "enum": ["DIRECT", "ORGANIC", "SEARCH", "WECHAT", "QQ", "DOUYIN", "XIAOHONGSHU", "INVITE"], "description": "Optional controlled first-touch registration channel. Unknown values are rejected; raw UTM URLs and referrers are not stored." }, "verificationCode": { "type": "string", "pattern": "^[0-9]{6}$", "writeOnly": true, "description": "Required for every BFF registration. It is delivered only by the SMTP verification endpoint and is never echoed by an API response." } }, "additionalProperties": false },
+      "LoginRequest": { "type": "object", "required": ["username", "password"], "properties": { "username": { "type": "string", "format": "email", "pattern": "^[A-Za-z0-9._@+-]{3,120}$" }, "password": { "type": "string", "minLength": 12, "maxLength": 128, "writeOnly": true } }, "additionalProperties": false },
       "ProfileUpdateRequest": { "type": "object", "required": ["displayName"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "ProgressRequest": { "type": "object", "required": ["bookId", "chapterId", "offset"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
       "BookmarkRequest": { "type": "object", "required": ["chapterId", "offset"], "properties": { "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "note": { "type": "string" } }, "additionalProperties": false },
@@ -1680,6 +1784,7 @@
       "BookRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
       "BookUpdateRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 }, "serialStatus": { "type": "string", "maxLength": 32 }, "cover": { "type": "string", "maxLength": 1024 } }, "additionalProperties": false },
       "VolumeRequest": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 } }, "additionalProperties": false },
+      "VolumeOrderRequest": { "type": "object", "required": ["orderNo"], "properties": { "orderNo": { "type": "integer", "minimum": 1 } }, "additionalProperties": false },
       "ChapterRequest": { "type": "object", "required": ["title", "content", "submit"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "submit": { "type": "boolean" }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
       "DraftChapterRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
       "ChapterUpdateRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
@@ -1688,6 +1793,9 @@
       "BookReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
       "BookStatusRequest": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "SensitiveWordRequest": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 } }, "additionalProperties": false },
+      "SensitiveWordUpdateRequest": { "type": "object", "required": ["word", "reason"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },
+      "SensitiveWordEnabledRequest": { "type": "object", "required": ["enabled", "reason"], "properties": { "enabled": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },
+      "SensitiveWordDeleteRequest": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },
       "CommentReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "ParagraphAnnotationReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "AuthorModerationAdviceRequest": { "type": "object", "required": ["recommendVisible", "reason"], "properties": { "recommendVisible": { "type": "boolean", "description": "A non-final recommendation for the station owner, not a visibility decision." }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },

@@ -59,6 +59,11 @@ novel:
   # mode can allow the opt-in local moderation simulation.
   runtime-mode: ${NOVEL_RUNTIME_MODE:PRODUCTION}
   internal-api-key: ${NOVEL_INTERNAL_API_KEY:}
+  author-application:
+    # D-05: readers may resubmit only after this server-side interval following a rejection.
+    # The rejection timestamp is materialized with the decision so later config changes do not
+    # shorten or extend an already-issued retry boundary.
+    rejection-cooldown: ${NOVEL_AUTHOR_APPLICATION_REJECTION_COOLDOWN:P7D}
   email-verification:
     # This remains a real SMTP capability only. If any required SMTP/from/hash-secret value is
     # absent, email registration and code delivery fail closed with 503 instead of emitting a

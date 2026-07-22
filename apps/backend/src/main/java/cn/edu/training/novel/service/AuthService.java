@@ -56,6 +56,10 @@ public class AuthService {
         this.emailVerificationService = emailVerificationService;
     }
 
+    /**
+     * Trusted direct provisioning path for legacy migrations and server-side test fixtures. It is
+     * not called by any browser-facing BFF controller, which uses {@link #registerFromBff}.
+     */
     @Transactional
     public AuthenticatedSession register(String username, String displayName, String password) {
         return register(username, displayName, password, null);
@@ -86,12 +90,13 @@ public class AuthService {
             String verificationCode) {
         String loginName = normalizeLoginName(username);
         String normalizedChannel = normalizeAcquisitionChannel(channel);
-        if (EmailVerificationService.isEmailAddress(loginName)) {
-            if (findAccountByLoginName(loginName).isPresent()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
-            }
-            emailVerificationService.consumeRegistrationCode(loginName, verificationCode);
+        if (!EmailVerificationService.isEmailAddress(loginName)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "an email address is required");
         }
+        if (findAccountByLoginName(loginName).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "login name is already registered");
+        }
+        emailVerificationService.consumeRegistrationCode(loginName, verificationCode);
         return registerNormalized(loginName, displayName, password, normalizedChannel);
     }
 
@@ -130,7 +135,21 @@ public class AuthService {
 
     @Transactional
     public AuthenticatedSession login(String username, String password) {
-        Optional<AccountRow> candidate = findAccountByLoginName(normalizeLoginName(username));
+        return loginNormalized(normalizeLoginName(username), password);
+    }
+
+    /** Browser/BFF login accepts email accounts only; no phone-login path is implemented. */
+    @Transactional
+    public AuthenticatedSession loginFromBff(String username, String password) {
+        String loginName = normalizeLoginName(username);
+        if (!EmailVerificationService.isEmailAddress(loginName)) {
+            throw invalidCredentials();
+        }
+        return loginNormalized(loginName, password);
+    }
+
+    private AuthenticatedSession loginNormalized(String loginName, String password) {
+        Optional<AccountRow> candidate = findAccountByLoginName(loginName);
         if (candidate.isEmpty()) {
             passwordEncoder.matches(password, absentAccountHash);
             throw invalidCredentials();

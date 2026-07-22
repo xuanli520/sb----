@@ -9,6 +9,48 @@ const bootstrapAdministrator = {
   username: 'e2e.admin@example.test',
   password: 'e2e-bootstrap-admin-password',
 };
+const smtpMailboxUrl = `http://127.0.0.1:${process.env.E2E_SMTP_MAILBOX_PORT ?? '18025'}`;
+
+type SmtpMailboxMessage = {
+  recipients: string[];
+  data: string;
+};
+
+async function requestEmailVerification(page: import('@playwright/test').Page, email: string, origin: string) {
+  const response = await page.request.post('/api/novel/email-verification', {
+    data: { email },
+    headers: { Origin: origin },
+  });
+  expect(response.status()).toBe(200);
+  return readEmailVerificationCode(page, email);
+}
+
+async function readEmailVerificationCode(page: import('@playwright/test').Page, email: string) {
+  let code = '';
+  await expect.poll(async () => {
+    const inbox = await page.request.get(`${smtpMailboxUrl}/messages`);
+    if (!inbox.ok()) return '';
+    const payload = await inbox.json() as { messages?: SmtpMailboxMessage[] };
+    const message = payload.messages?.find((candidate) => candidate.recipients.some((recipient) => recipient.toLowerCase() === email.toLowerCase()));
+    code = message?.data.match(/\b(\d{6})\b/)?.[1] ?? '';
+    return code;
+  }, { timeout: 15_000, intervals: [100, 250, 500] }).toMatch(/^\d{6}$/);
+  return code;
+}
+
+async function registerReader(
+  page: import('@playwright/test').Page,
+  email: string,
+  displayName: string,
+  password: string,
+  origin: string,
+) {
+  const verificationCode = await requestEmailVerification(page, email, origin);
+  return page.request.post('/api/novel/session', {
+    data: { action: 'register', username: email, displayName, password, verificationCode },
+    headers: { Origin: origin },
+  });
+}
 
 test('reader and administrator journeys render through real BFF accounts', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
@@ -16,15 +58,13 @@ test('reader and administrator journeys render through real BFF accounts', async
   const readerPassword = 'reader-journey-password-2026';
   const anonymous = await page.request.get('/api/novel/admin/dashboard');
   expect(anonymous.status()).toBe(401);
-  const readerSession = await page.request.post('/api/novel/session', {
-    data: {
-      action: 'register',
-      username: `reader-journey-${suffix}@example.test`,
-      displayName: `读者旅程 ${suffix}`,
-      password: readerPassword,
-    },
-    headers: { Origin: origin },
-  });
+  const readerSession = await registerReader(
+    page,
+    `reader-journey-${suffix}@example.test`,
+    `读者旅程 ${suffix}`,
+    readerPassword,
+    origin,
+  );
   expect(readerSession.status()).toBe(200);
   const csrfDenied = await page.request.post('/api/novel/account/checkin', { headers:{ Origin:'https://untrusted.example' } });
   expect(csrfDenied.status()).toBe(403);
@@ -107,15 +147,13 @@ test('mobile navigation and reader chapter directory sheets work through the BFF
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
   await page.setViewportSize({ width: 390, height: 844 });
 
-  const readerSession = await page.request.post('/api/novel/session', {
-    data: {
-      action: 'register',
-      username: `mobile-reader-${suffix}@example.test`,
-      displayName: `移动读者 ${suffix}`,
-      password: 'mobile-reader-password-2026',
-    },
-    headers: { Origin: origin },
-  });
+  const readerSession = await registerReader(
+    page,
+    `mobile-reader-${suffix}@example.test`,
+    `移动读者 ${suffix}`,
+    'mobile-reader-password-2026',
+    origin,
+  );
   expect(readerSession.status()).toBe(200);
 
   const profileResponse = page.waitForResponse((response) => response.url().endsWith('/api/novel/account/profile') && response.status() === 200);
@@ -157,6 +195,9 @@ test('a real reader is approved as an author and drafts stay out of another read
   await page.getByLabel('邮箱').fill(username);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByLabel('确认密码').fill(password);
+  await page.getByRole('button', { name: '发送验证码' }).click();
+  await expect(page.getByText('验证码已发送，请查收邮箱。')).toBeVisible();
+  await page.getByLabel('邮箱验证码').fill(await readEmailVerificationCode(page, username));
   await page.getByRole('button', { name: '创建账户' }).click();
   await expect(page).toHaveURL(/\/$/);
 
@@ -222,15 +263,13 @@ test('a real reader is approved as an author and drafts stay out of another read
   const otherReaderContext = await browser.newContext({ baseURL });
   try {
     const otherReaderPage = await otherReaderContext.newPage();
-    const otherReaderSession = await otherReaderPage.request.post('/api/novel/session', {
-      data: {
-        action: 'register',
-        username: `catalog-reader-${suffix}@example.test`,
-        displayName: `目录读者 ${suffix}`,
-        password,
-      },
-      headers: { Origin: origin },
-    });
+    const otherReaderSession = await registerReader(
+      otherReaderPage,
+      `catalog-reader-${suffix}@example.test`,
+      `目录读者 ${suffix}`,
+      password,
+      origin,
+    );
     expect(otherReaderSession.status()).toBe(200);
 
     const publicBooksResponse = await otherReaderPage.request.get(`/api/novel/public/books?q=${encodeURIComponent(title)}`);

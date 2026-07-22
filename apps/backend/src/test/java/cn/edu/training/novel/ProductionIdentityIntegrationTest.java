@@ -1,15 +1,13 @@
 package cn.edu.training.novel;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.jayway.jsonpath.JsonPath;
+import cn.edu.training.novel.service.AuthService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -22,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ProductionIdentityIntegrationTest {
     @Autowired MockMvc mvc;
+    @Autowired AuthService authService;
 
     @Test void developmentRoleHeadersAreRejectedButBackendIssuedSessionIsAcceptedInProduction() throws Exception {
         mvc.perform(get("/api/v1/admin/dashboard")
@@ -33,13 +32,8 @@ class ProductionIdentityIntegrationTest {
                         .header("X-Novel-Development-Principal", "admin"))
                 .andExpect(status().isUnauthorized());
 
-        String body = mvc.perform(post("/api/v1/auth/register")
-                        .header("X-Novel-Internal-Key", "local-novel-internal-key")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"production.reader\",\"displayName\":\"生产读者\",\"password\":\"correct-horse-battery-staple\"}"))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        String sessionId = JsonPath.read(body, "$.data.sessionId");
+        String sessionId = authService.register(
+                "production.reader@example.test", "生产读者", "correct-horse-battery-staple").bffSessionId();
 
         mvc.perform(get("/api/v1/account/profile").header("X-Novel-Bff-Session", sessionId))
                 .andExpect(status().isUnauthorized());

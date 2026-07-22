@@ -162,6 +162,24 @@ class EmailVerificationIntegrationTest {
                 .isZero();
     }
 
+    @Test
+    void phoneLikeCredentialsAreNotAcceptedByTheBffAuthenticationContract() throws Exception {
+        mvc.perform(post("/api/v1/auth/register")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"13800138000\",\"displayName\":\"手机号读者\",\"password\":\"correct-horse-battery-staple\",\"verificationCode\":\"123456\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/auth/login")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"13800138000\",\"password\":\"correct-horse-battery-staple\"}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_account WHERE login_name = ?", Integer.class,
+                "13800138000"))
+                .isZero();
+    }
+
     private static String codeFrom(SimpleMailMessage message) {
         Matcher matcher = CODE.matcher(message.getText());
         if (!matcher.find()) {

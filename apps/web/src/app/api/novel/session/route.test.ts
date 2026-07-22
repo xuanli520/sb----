@@ -143,6 +143,31 @@ describe('novel BFF session route', () => {
     });
   });
 
+  it('rejects a phone-shaped login name before it reaches the authentication service', async () => {
+    const response = await POST(request({
+      method: 'POST',
+      body: JSON.stringify({ username: '13800138000', password: 'secure-password' }),
+    }, { origin: 'http://localhost:3000', 'content-type': 'application/json' }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ code: 400, msg: 'email and password are required', data: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(rateLimiter.consume).not.toHaveBeenCalled();
+  });
+
+  it('requires exactly six digits for an email registration verification code', async () => {
+    const response = await POST(request({
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'register', username: 'reader@example.test', password: 'secure-password', displayName: 'Reader', verificationCode: '1234567',
+      }),
+    }, { origin: 'http://localhost:3000', 'content-type': 'application/json' }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ code: 400, msg: 'email, password, displayName, and verificationCode are required', data: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('returns the same no-store 429 envelope for known and unknown submitted names before contacting the backend', async () => {
     const deniedLimiter: NovelAuthRateLimiter = {
       consume: vi.fn().mockResolvedValue({ allowed: false, retryAfterSeconds: 42 }),

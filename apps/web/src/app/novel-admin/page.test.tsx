@@ -112,6 +112,9 @@ function retentionReport() {
 
 function mockAdminApi(seedCodes = initialRedemptionCodes) {
   let redemptionCodes = seedCodes.map((code) => ({ ...code }));
+  let sensitiveWords: Array<{ normalizedWord: string; word: string; enabled: boolean; disabledAt: string | null }> = [{
+    normalizedWord: '敏感词', word: '敏感词', enabled: true, disabledAt: null,
+  }];
   let annotations = [{ ...pendingAnnotation }];
   let accounts = [{
     id: 41,
@@ -220,7 +223,35 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       return Promise.resolve(response(updated));
     }
     if (path.endsWith('/admin/author-applications')) return Promise.resolve(response([]));
-    if (path.endsWith('/admin/sensitive-words')) return Promise.resolve(response(['敏感词']));
+    if (path.endsWith('/admin/sensitive-words') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(sensitiveWords));
+    if (path.endsWith('/admin/sensitive-words') && init?.method === 'POST') {
+      const created = { normalizedWord: String(body.word), word: String(body.word), enabled: true, disabledAt: null };
+      sensitiveWords = [...sensitiveWords, created];
+      return Promise.resolve(response(created));
+    }
+    const sensitiveWordEnableMatch = path.match(/\/admin\/sensitive-words\/([^/]+)\/enabled$/);
+    if (sensitiveWordEnableMatch && init?.method === 'PUT') {
+      const normalizedWord = decodeURIComponent(sensitiveWordEnableMatch[1]);
+      const current = sensitiveWords.find((item) => item.normalizedWord === normalizedWord);
+      if (!current) return Promise.reject(new Error(`Unknown sensitive word: ${normalizedWord}`));
+      const updated = { ...current, enabled: Boolean(body.enabled), disabledAt: body.enabled ? null : '2026-07-22T09:00:00Z' };
+      sensitiveWords = sensitiveWords.map((item) => item.normalizedWord === normalizedWord ? updated : item);
+      return Promise.resolve(response(updated));
+    }
+    const sensitiveWordMatch = path.match(/\/admin\/sensitive-words\/([^/]+)$/);
+    if (sensitiveWordMatch && init?.method === 'PUT') {
+      const normalizedWord = decodeURIComponent(sensitiveWordMatch[1]);
+      const current = sensitiveWords.find((item) => item.normalizedWord === normalizedWord);
+      if (!current) return Promise.reject(new Error(`Unknown sensitive word: ${normalizedWord}`));
+      const updated = { ...current, normalizedWord: String(body.word), word: String(body.word) };
+      sensitiveWords = sensitiveWords.map((item) => item.normalizedWord === normalizedWord ? updated : item);
+      return Promise.resolve(response(updated));
+    }
+    if (sensitiveWordMatch && init?.method === 'DELETE') {
+      const normalizedWord = decodeURIComponent(sensitiveWordMatch[1]);
+      sensitiveWords = sensitiveWords.filter((item) => item.normalizedWord !== normalizedWord);
+      return Promise.resolve(response(null));
+    }
     if (path.endsWith('/admin/comments?status=PENDING_REVIEW&size=20')) return Promise.resolve(response({ items: [pendingComment], meta: { total: 1, page: 0, size: 20 } }));
     if (path.endsWith('/admin/comments/81/review')) {
       return Promise.resolve(response({ ...pendingComment, status: body.approve ? 'VISIBLE' : 'REJECTED' }));
@@ -391,6 +422,44 @@ describe('admin comment review queue', () => {
       method: 'POST',
       body: JSON.stringify({ approve: false, reason: '不符合社区规范，需要修改后重发' }),
     })));
+  });
+});
+
+describe('admin sensitive-word lifecycle', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    push.mockReset();
+    refresh.mockReset();
+  });
+
+  it('records reasons while an administrator edits, disables, and deletes a sensitive word', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    await screen.findByRole('heading', { name: '敏感词库' });
+    fireEvent.change(screen.getByLabelText('敏感词 敏感词'), { target: { value: '新敏感词' } });
+    fireEvent.change(screen.getByLabelText('敏感词操作说明 敏感词'), { target: { value: '更正词条内容' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存敏感词 敏感词' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/sensitive-words/%E6%95%8F%E6%84%9F%E8%AF%8D', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({ word: '新敏感词', reason: '更正词条内容' }),
+    })));
+    await screen.findByText('敏感词已更新并写入审计记录。');
+
+    fireEvent.change(screen.getByLabelText('敏感词操作说明 新敏感词'), { target: { value: '临时停用复核' } });
+    fireEvent.click(screen.getByRole('button', { name: '停用敏感词 新敏感词' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/sensitive-words/%E6%96%B0%E6%95%8F%E6%84%9F%E8%AF%8D/enabled', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({ enabled: false, reason: '临时停用复核' }),
+    })));
+    await screen.findByText('敏感词已停用，不再参与拦截。');
+
+    fireEvent.change(screen.getByLabelText('敏感词操作说明 新敏感词'), { target: { value: '确认不再需要' } });
+    fireEvent.click(screen.getByRole('button', { name: '删除敏感词 新敏感词' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/sensitive-words/%E6%96%B0%E6%95%8F%E6%84%9F%E8%AF%8D', expect.objectContaining({
+      method: 'DELETE', body: JSON.stringify({ reason: '确认不再需要' }),
+    })));
+    await screen.findByText('已删除停用的敏感词，并保留审计记录。');
+    expect(screen.queryByLabelText('敏感词 新敏感词')).toBeNull();
   });
 });
 

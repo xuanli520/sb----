@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.edu.training.novel.service.AdminOperationsService;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.EmailVerificationService;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Duration;
 import java.util.List;
@@ -47,6 +48,7 @@ class MySqlPersistenceIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired NovelStore store;
     @Autowired AuthService authService;
+    @Autowired EmailVerificationService emailVerificationService;
     @Autowired AdminOperationsService adminOperationsService;
 
     @DynamicPropertySource
@@ -90,7 +92,7 @@ class MySqlPersistenceIT {
                 session.user().id());
         assertThat(storedHash).hasSize(64).isNotEqualTo(session.bffSessionId());
 
-        AuthService reloadedService = new AuthService(jdbc, 4, Duration.ofHours(8));
+        AuthService reloadedService = new AuthService(jdbc, 4, Duration.ofHours(8), emailVerificationService);
         assertThat(reloadedService.resolveBffSession(session.bffSessionId()))
                 .hasValueSatisfying(user -> assertThat(user.id()).isEqualTo(session.user().id()));
 

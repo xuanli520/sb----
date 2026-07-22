@@ -2,6 +2,8 @@ package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.AuthorApplication;
 import cn.edu.training.novel.domain.AuthorProfile;
+import cn.edu.training.novel.domain.SensitiveWord;
+import cn.edu.training.novel.domain.SensitiveWordAudit;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -23,7 +25,7 @@ import org.springframework.stereotype.Repository;
 public class OperationsRepository {
     private static final String PENDING = "PENDING";
     private static final String AUTHOR_APPLICATION_COLUMNS =
-            "id, user_id, pen_name, statement, status, decision_reason, created_at, decided_at, decided_by_user_id";
+            "id, user_id, pen_name, statement, status, decision_reason, created_at, decided_at, decided_by_user_id, reapply_available_at";
     private static final RowMapper<AuthorApplication> AUTHOR_APPLICATION_MAPPER = (resultSet, rowNumber) -> new AuthorApplication(
             resultSet.getLong("id"),
             resultSet.getLong("user_id"),
@@ -33,12 +35,36 @@ public class OperationsRepository {
             resultSet.getString("decision_reason"),
             instant(resultSet.getTimestamp("created_at")),
             nullableInstant(resultSet.getTimestamp("decided_at")),
-            resultSet.getObject("decided_by_user_id", Long.class));
+            resultSet.getObject("decided_by_user_id", Long.class),
+            nullableInstant(resultSet.getTimestamp("reapply_available_at")));
     private static final RowMapper<AuthorProfile> AUTHOR_PROFILE_MAPPER = (resultSet, rowNumber) -> new AuthorProfile(
             resultSet.getLong("user_id"),
             resultSet.getString("pen_name"),
             resultSet.getLong("approved_application_id"),
             instant(resultSet.getTimestamp("approved_at")));
+    private static final String SENSITIVE_WORD_COLUMNS = "normalized_word, word, enabled, created_by_user_id, "
+            + "updated_by_user_id, disabled_by_user_id, disabled_at, created_at, updated_at";
+    private static final RowMapper<SensitiveWord> SENSITIVE_WORD_MAPPER = (resultSet, rowNumber) -> new SensitiveWord(
+            resultSet.getString("normalized_word"),
+            resultSet.getString("word"),
+            resultSet.getBoolean("enabled"),
+            resultSet.getObject("created_by_user_id", Long.class),
+            resultSet.getObject("updated_by_user_id", Long.class),
+            resultSet.getObject("disabled_by_user_id", Long.class),
+            nullableInstant(resultSet.getTimestamp("disabled_at")),
+            instant(resultSet.getTimestamp("created_at")),
+            instant(resultSet.getTimestamp("updated_at")));
+    private static final RowMapper<SensitiveWordAudit> SENSITIVE_WORD_AUDIT_MAPPER = (resultSet, rowNumber) -> new SensitiveWordAudit(
+            resultSet.getLong("id"),
+            resultSet.getString("normalized_word"),
+            resultSet.getString("previous_word"),
+            resultSet.getString("word"),
+            resultSet.getObject("previous_enabled", Boolean.class),
+            resultSet.getObject("enabled", Boolean.class),
+            resultSet.getString("action"),
+            resultSet.getString("reason"),
+            resultSet.getLong("operator_user_id"),
+            instant(resultSet.getTimestamp("created_at")));
 
     private final JdbcTemplate jdbc;
 
@@ -117,9 +143,20 @@ public class OperationsRepository {
                 userId);
     }
 
-    public AuthorApplication decideAuthorApplication(long applicationId, long reviewerUserId, boolean approve, String reason) {
+    public AuthorApplication decideAuthorApplication(
+            long applicationId,
+            long reviewerUserId,
+            boolean approve,
+            String reason,
+            Instant reapplyAvailableAt) {
         if (reviewerUserId <= 0) {
             throw new IllegalArgumentException("reviewer user id is required");
+        }
+        if (!approve && reapplyAvailableAt == null) {
+            throw new IllegalArgumentException("reapply availability is required for a rejected author application");
+        }
+        if (approve && reapplyAvailableAt != null) {
+            throw new IllegalArgumentException("approved author applications cannot have a reapply availability");
         }
         AuthorApplication application = lockAuthorApplication(applicationId)
                 .orElseThrow(() -> new java.util.NoSuchElementException("author application not found"));
@@ -132,11 +169,12 @@ public class OperationsRepository {
         String status = approve ? "APPROVED" : "REJECTED";
         int changed = jdbc.update(
                 "UPDATE novel_author_application SET pending_user_id = NULL, status = ?, decision_reason = ?, "
-                        + "decided_by_user_id = ?, decided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+                        + "decided_by_user_id = ?, reapply_available_at = ?, decided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
                         + "WHERE id = ? AND status = ?",
                 status,
                 reason == null ? "" : reason,
                 reviewerUserId,
+                reapplyAvailableAt == null ? null : Timestamp.from(reapplyAvailableAt),
                 applicationId,
                 PENDING);
         if (changed != 1) {
@@ -184,37 +222,163 @@ public class OperationsRepository {
 
     public Set<String> sensitiveWords() {
         List<String> words = jdbc.query(
-                "SELECT word FROM novel_sensitive_word ORDER BY normalized_word ASC",
+                "SELECT word FROM novel_sensitive_word WHERE enabled = TRUE ORDER BY normalized_word ASC",
                 (resultSet, rowNumber) -> resultSet.getString(1));
         return Set.copyOf(new LinkedHashSet<>(words));
     }
 
-    /** Idempotently inserts a word so repeated operations do not create duplicate vocabulary rows. */
+    /** Returns both enabled and disabled terms for the administrator's lifecycle console. */
+    public List<SensitiveWord> sensitiveWordEntries() {
+        return jdbc.query(
+                "SELECT " + SENSITIVE_WORD_COLUMNS + " FROM novel_sensitive_word ORDER BY enabled DESC, normalized_word ASC",
+                SENSITIVE_WORD_MAPPER);
+    }
+
+    public List<SensitiveWordAudit> sensitiveWordAudits(int limit) {
+        return jdbc.query(
+                "SELECT id, normalized_word, previous_word, word, previous_enabled, enabled, action, reason, "
+                        + "operator_user_id, created_at FROM novel_sensitive_word_audit "
+                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
+                SENSITIVE_WORD_AUDIT_MAPPER,
+                limit);
+    }
+
+    public Optional<SensitiveWord> lockSensitiveWord(String rawNormalizedWord) {
+        String normalizedWord = normalizeWord(requireWord(rawNormalizedWord));
+        List<SensitiveWord> words = jdbc.query(
+                "SELECT " + SENSITIVE_WORD_COLUMNS + " FROM novel_sensitive_word WHERE normalized_word = ? FOR UPDATE",
+                SENSITIVE_WORD_MAPPER,
+                normalizedWord);
+        return words.stream().findFirst();
+    }
+
+    /** Legacy direct insertion retained for non-administrative persistence tests. */
     public String addSensitiveWord(String word) {
         String displayWord = requireWord(word);
         String normalizedWord = normalizeWord(displayWord);
         try {
             jdbc.update(
-                    "INSERT INTO novel_sensitive_word(normalized_word, word, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    "INSERT INTO novel_sensitive_word(normalized_word, word, enabled, created_at, updated_at) "
+                            + "VALUES (?, ?, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                     normalizedWord,
                     displayWord);
         } catch (DuplicateKeyException exception) {
             jdbc.update(
-                    "UPDATE novel_sensitive_word SET word = ?, updated_at = CURRENT_TIMESTAMP WHERE normalized_word = ?",
+                    "UPDATE novel_sensitive_word SET word = ?, enabled = TRUE, disabled_by_user_id = NULL, disabled_at = NULL, "
+                            + "updated_at = CURRENT_TIMESTAMP WHERE normalized_word = ?",
                     displayWord,
                     normalizedWord);
         }
         return displayWord;
     }
 
+    public SensitiveWord createSensitiveWord(String word, long operatorUserId) {
+        String displayWord = requireWord(word);
+        String normalizedWord = normalizeWord(displayWord);
+        try {
+            jdbc.update(
+                    "INSERT INTO novel_sensitive_word(normalized_word, word, enabled, created_by_user_id, updated_by_user_id, "
+                            + "created_at, updated_at) VALUES (?, ?, TRUE, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    normalizedWord,
+                    displayWord,
+                    operatorUserId,
+                    operatorUserId);
+        } catch (DuplicateKeyException exception) {
+            throw new IllegalStateException("sensitive word already exists");
+        }
+        return findSensitiveWord(normalizedWord)
+                .orElseThrow(() -> new IllegalStateException("sensitive word was not saved"));
+    }
+
+    public SensitiveWord updateSensitiveWord(SensitiveWord current, String word, long operatorUserId) {
+        String displayWord = requireWord(word);
+        String normalizedWord = normalizeWord(displayWord);
+        try {
+            int changed = jdbc.update(
+                    "UPDATE novel_sensitive_word SET normalized_word = ?, word = ?, updated_by_user_id = ?, "
+                            + "updated_at = CURRENT_TIMESTAMP WHERE normalized_word = ?",
+                    normalizedWord,
+                    displayWord,
+                    operatorUserId,
+                    current.normalizedWord());
+            if (changed != 1) {
+                throw new IllegalStateException("sensitive word was not updated");
+            }
+        } catch (DuplicateKeyException exception) {
+            throw new IllegalStateException("another sensitive word already uses this value");
+        }
+        return findSensitiveWord(normalizedWord)
+                .orElseThrow(() -> new IllegalStateException("sensitive word was not saved"));
+    }
+
+    public SensitiveWord setSensitiveWordEnabled(SensitiveWord current, boolean enabled, long operatorUserId) {
+        int changed;
+        if (enabled) {
+            changed = jdbc.update(
+                    "UPDATE novel_sensitive_word SET enabled = TRUE, updated_by_user_id = ?, disabled_by_user_id = NULL, "
+                            + "disabled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE normalized_word = ?",
+                    operatorUserId,
+                    current.normalizedWord());
+        } else {
+            changed = jdbc.update(
+                    "UPDATE novel_sensitive_word SET enabled = FALSE, updated_by_user_id = ?, disabled_by_user_id = ?, "
+                            + "disabled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE normalized_word = ?",
+                    operatorUserId,
+                    operatorUserId,
+                    current.normalizedWord());
+        }
+        if (changed != 1) {
+            throw new IllegalStateException("sensitive word state was not updated");
+        }
+        return findSensitiveWord(current.normalizedWord())
+                .orElseThrow(() -> new IllegalStateException("sensitive word was not saved"));
+    }
+
+    public void deleteSensitiveWord(SensitiveWord current) {
+        int changed = jdbc.update("DELETE FROM novel_sensitive_word WHERE normalized_word = ?", current.normalizedWord());
+        if (changed != 1) {
+            throw new IllegalStateException("sensitive word was not deleted");
+        }
+    }
+
+    public void recordSensitiveWordAudit(
+            String normalizedWord,
+            String previousWord,
+            String word,
+            Boolean previousEnabled,
+            Boolean enabled,
+            String action,
+            String reason,
+            long operatorUserId) {
+        jdbc.update(
+                "INSERT INTO novel_sensitive_word_audit(normalized_word, previous_word, word, previous_enabled, enabled, "
+                        + "action, reason, operator_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                normalizedWord,
+                previousWord,
+                word,
+                previousEnabled,
+                enabled,
+                action,
+                reason,
+                operatorUserId);
+    }
+
     /** Uses the persisted vocabulary at decision time; there is deliberately no JVM cache. */
     public boolean containsSensitiveWord(String value) {
         if (value == null || value.isEmpty()) return false;
         return jdbc.query(
-                        "SELECT word FROM novel_sensitive_word ORDER BY normalized_word ASC",
+                        "SELECT word FROM novel_sensitive_word WHERE enabled = TRUE ORDER BY normalized_word ASC",
                         (resultSet, rowNumber) -> resultSet.getString(1))
                 .stream()
                 .anyMatch(value::contains);
+    }
+
+    private Optional<SensitiveWord> findSensitiveWord(String normalizedWord) {
+        List<SensitiveWord> words = jdbc.query(
+                "SELECT " + SENSITIVE_WORD_COLUMNS + " FROM novel_sensitive_word WHERE normalized_word = ?",
+                SENSITIVE_WORD_MAPPER,
+                normalizedWord);
+        return words.stream().findFirst();
     }
 
     public long countEnabledReaders() {

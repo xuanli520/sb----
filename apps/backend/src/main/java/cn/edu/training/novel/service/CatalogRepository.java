@@ -242,6 +242,15 @@ public class CatalogRepository {
                 bookId);
     }
 
+    /** Locks the complete ordered volume set after the caller has acquired the parent-book lock. */
+    public List<Volume> findVolumesByBookIdForUpdate(long bookId) {
+        return jdbcTemplate.query(
+                "SELECT id, book_id, title, order_no, created_at FROM novel_volume "
+                        + "WHERE book_id = ? ORDER BY order_no ASC, id ASC FOR UPDATE",
+                VOLUME_MAPPER,
+                bookId);
+    }
+
     public Optional<Volume> findVolumeById(long volumeId) {
         List<Volume> volumes = jdbcTemplate.query(
                 "SELECT id, book_id, title, order_no, created_at FROM novel_volume WHERE id = ?",
@@ -422,6 +431,49 @@ public class CatalogRepository {
                 title,
                 orderNo);
         return findVolumeById(id).orElseThrow(() -> new IllegalStateException("volume was not created"));
+    }
+
+    public Volume updateVolumeTitle(long volumeId, String title) {
+        int updated = jdbcTemplate.update(
+                "UPDATE novel_volume SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                title,
+                volumeId);
+        if (updated == 0) {
+            throw new IllegalStateException("volume not found");
+        }
+        return findVolumeById(volumeId).orElseThrow(() -> new IllegalStateException("volume not found"));
+    }
+
+    /** Temporarily moves every order away from the positive user-visible range before a rewrite. */
+    public void parkVolumeOrders(long bookId) {
+        jdbcTemplate.update("UPDATE novel_volume SET order_no = -order_no WHERE book_id = ?", bookId);
+    }
+
+    /** Writes a fully normalized, contiguous order after {@link #parkVolumeOrders(long)}. */
+    public void writeVolumeOrders(List<Volume> orderedVolumes) {
+        for (Volume volume : orderedVolumes) {
+            int updated = jdbcTemplate.update(
+                    "UPDATE novel_volume SET order_no = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    volume.orderNo(),
+                    volume.id());
+            if (updated == 0) {
+                throw new IllegalStateException("volume not found");
+            }
+        }
+    }
+
+    /** Retains chapters and their publication lifecycle when their organizational parent is removed. */
+    public int detachVolumeChapters(long volumeId) {
+        return jdbcTemplate.update(
+                "UPDATE novel_chapter SET volume_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE volume_id = ?",
+                volumeId);
+    }
+
+    public void deleteVolume(long volumeId) {
+        int deleted = jdbcTemplate.update("DELETE FROM novel_volume WHERE id = ?", volumeId);
+        if (deleted == 0) {
+            throw new IllegalStateException("volume not found");
+        }
     }
 
     public Book updateBook(Book book) {

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Check, ClipboardCheck, Clock3, MessageSquareText, Plus, ShieldAlert, ShieldCheck, TextQuote, Users, X } from 'lucide-react';
+import { BookOpen, Check, ClipboardCheck, Clock3, MessageSquareText, Plus, Power, Save, ShieldAlert, ShieldCheck, TextQuote, Trash2, Users, X } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -37,6 +37,12 @@ type RedemptionCodePage = { items: RedemptionCode[]; page: number; size: number;
 type GeneratedRedemptionCodeBatch = { batchNo: string; codes: RedemptionCode[] };
 type RedemptionBenefitsDraft = { tokenAmount: string; membershipDays: string; bookId: string; expiresAt: string };
 type Notice = { message: string; tone: 'success' | 'error' };
+type SensitiveWord = {
+  normalizedWord: string;
+  word: string;
+  enabled: boolean;
+  disabledAt: string | null;
+};
 
 const emptyRedemptionBenefits: RedemptionBenefitsDraft = { tokenAmount: '', membershipDays: '', bookId: '', expiresAt: '' };
 
@@ -145,8 +151,10 @@ export default function NovelAdminPage() {
   const [annotationReviews, setAnnotationReviews] = useState<ParagraphAnnotation[]>([]);
   const [annotationReviewTotal, setAnnotationReviewTotal] = useState(0);
   const [annotationReasons, setAnnotationReasons] = useState<Record<number, string>>({});
-  const [words, setWords] = useState<string[]>([]);
+  const [words, setWords] = useState<SensitiveWord[]>([]);
   const [word, setWord] = useState('');
+  const [wordEdits, setWordEdits] = useState<Record<string, string>>({});
+  const [wordReasons, setWordReasons] = useState<Record<string, string>>({});
   const [redemptionCodes, setRedemptionCodes] = useState<RedemptionCode[]>([]);
   const [redemptionCodeTotal, setRedemptionCodeTotal] = useState(0);
   const [generateQuantity, setGenerateQuantity] = useState('10');
@@ -172,7 +180,7 @@ export default function NovelAdminPage() {
         novelApi<Book[]>('admin/reviews', 'admin'),
         novelApi<Book[]>('admin/books', 'admin'),
         novelApi<Application[]>('admin/author-applications', 'admin'),
-        novelApi<string[]>('admin/sensitive-words', 'admin'),
+        novelApi<SensitiveWord[]>('admin/sensitive-words', 'admin'),
         novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin'),
         novelApi<ParagraphAnnotationPage>('admin/annotations?status=PENDING_REVIEW&size=20', 'admin'),
         novelApi<RedemptionCodePage>('admin/redemption-codes?size=20', 'admin'),
@@ -346,6 +354,93 @@ export default function NovelAdminPage() {
       await load();
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '添加敏感词失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const sensitiveWordReason = (entry: SensitiveWord) => wordReasons[entry.normalizedWord]?.trim();
+
+  const saveSensitiveWord = async (entry: SensitiveWord) => {
+    const nextWord = wordEdits[entry.normalizedWord]?.trim() ?? entry.word;
+    const reason = sensitiveWordReason(entry);
+    if (!nextWord || nextWord === entry.word) {
+      announce('请先修改敏感词内容。', 'error');
+      return;
+    }
+    if (!reason) {
+      announce('请填写修改说明，系统会将其保留在审计记录中。', 'error');
+      return;
+    }
+    setPendingAction(`word-update-${entry.normalizedWord}`);
+    try {
+      await novelApi<SensitiveWord>(`admin/sensitive-words/${encodeURIComponent(entry.normalizedWord)}`, 'admin', {
+        method: 'PUT', body: JSON.stringify({ word: nextWord, reason }),
+      });
+      setWordEdits((current) => {
+        const next = { ...current };
+        delete next[entry.normalizedWord];
+        return next;
+      });
+      setWordReasons((current) => {
+        const next = { ...current };
+        delete next[entry.normalizedWord];
+        return next;
+      });
+      announce('敏感词已更新并写入审计记录。');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '更新敏感词失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const setSensitiveWordEnabled = async (entry: SensitiveWord, enabled: boolean) => {
+    const reason = sensitiveWordReason(entry);
+    if (!reason) {
+      announce('请填写操作说明，系统会将其保留在审计记录中。', 'error');
+      return;
+    }
+    setPendingAction(`word-enabled-${entry.normalizedWord}`);
+    try {
+      await novelApi<SensitiveWord>(`admin/sensitive-words/${encodeURIComponent(entry.normalizedWord)}/enabled`, 'admin', {
+        method: 'PUT', body: JSON.stringify({ enabled, reason }),
+      });
+      setWordReasons((current) => {
+        const next = { ...current };
+        delete next[entry.normalizedWord];
+        return next;
+      });
+      announce(enabled ? '敏感词已恢复生效。' : '敏感词已停用，不再参与拦截。');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '更新敏感词状态失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const deleteSensitiveWord = async (entry: SensitiveWord) => {
+    const reason = sensitiveWordReason(entry);
+    if (!reason) {
+      announce('请填写删除说明，系统会将其保留在审计记录中。', 'error');
+      return;
+    }
+    setPendingAction(`word-delete-${entry.normalizedWord}`);
+    try {
+      await novelApi(`admin/sensitive-words/${encodeURIComponent(entry.normalizedWord)}`, 'admin', {
+        method: 'DELETE', body: JSON.stringify({ reason }),
+      });
+      setWordReasons((current) => {
+        const next = { ...current };
+        delete next[entry.normalizedWord];
+        return next;
+      });
+      announce('已删除停用的敏感词，并保留审计记录。');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '删除敏感词失败，请稍后重试。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -798,8 +893,37 @@ export default function NovelAdminPage() {
               <Button type="submit" disabled={pendingAction === 'word'} className="h-11 shrink-0 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800"><Plus size={15} aria-hidden="true" />添加</Button>
             </span>
           </div>
-          <div className="mt-5 flex flex-wrap gap-2" aria-label="当前敏感词">
-            {words.length ? words.map((item) => <Badge key={item} variant="outline" className="rounded-none border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-900">{item}</Badge>) : <p className="text-sm text-stone-500">暂未配置词条</p>}
+          <div className="mt-5 divide-y divide-stone-100 border-y border-stone-100" aria-label="当前敏感词">
+            {words.length ? words.map((entry) => {
+              const busy = pendingAction?.endsWith(`-${entry.normalizedWord}`) ?? false;
+              return (
+                <div key={entry.normalizedWord} className="grid gap-3 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Input
+                        aria-label={`敏感词 ${entry.word}`}
+                        value={wordEdits[entry.normalizedWord] ?? entry.word}
+                        onChange={(event) => setWordEdits((current) => ({ ...current, [entry.normalizedWord]: event.target.value }))}
+                        disabled={busy}
+                        className="h-9 min-w-0 max-w-48 rounded-none border-stone-300 bg-white px-2 text-sm text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"
+                      />
+                      <Badge variant="outline" className={`shrink-0 rounded-none ${entry.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-stone-300 bg-stone-100 text-stone-600'}`}>
+                        {entry.enabled ? '生效中' : '已停用'}
+                      </Badge>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-1">
+                      <Button type="button" variant="ghost" size="icon" title="保存敏感词修改" aria-label={`保存敏感词 ${entry.word}`} onClick={() => void saveSensitiveWord(entry)} disabled={busy} className="size-8 rounded-none text-emerald-800 hover:bg-emerald-50"><Save size={15} aria-hidden="true" /></Button>
+                      <Button type="button" variant="ghost" size="icon" title={entry.enabled ? '停用敏感词' : '启用敏感词'} aria-label={`${entry.enabled ? '停用' : '启用'}敏感词 ${entry.word}`} onClick={() => void setSensitiveWordEnabled(entry, !entry.enabled)} disabled={busy} className="size-8 rounded-none text-stone-600 hover:bg-stone-100"><Power size={15} aria-hidden="true" /></Button>
+                      {!entry.enabled ? <Button type="button" variant="ghost" size="icon" title="删除已停用敏感词" aria-label={`删除敏感词 ${entry.word}`} onClick={() => void deleteSensitiveWord(entry)} disabled={busy} className="size-8 rounded-none text-rose-700 hover:bg-rose-50"><Trash2 size={15} aria-hidden="true" /></Button> : null}
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor={`sensitive-word-reason-${entry.normalizedWord}`} className="text-xs text-stone-600">操作说明</Label>
+                    <Input id={`sensitive-word-reason-${entry.normalizedWord}`} aria-label={`敏感词操作说明 ${entry.word}`} value={wordReasons[entry.normalizedWord] ?? ''} onChange={(event) => setWordReasons((current) => ({ ...current, [entry.normalizedWord]: event.target.value }))} disabled={busy} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="修改、启停或删除前填写" />
+                  </div>
+                </div>
+              );
+            }) : <p className="py-4 text-sm text-stone-500">暂未配置词条</p>}
           </div>
         </form>
       </section>

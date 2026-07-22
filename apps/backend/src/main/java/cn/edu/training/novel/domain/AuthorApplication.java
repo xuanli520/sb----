@@ -11,7 +11,8 @@ public record AuthorApplication(
         String reason,
         Instant createdAt,
         Instant decidedAt,
-        Long decidedByUserId) {
+        Long decidedByUserId,
+        Instant reapplyAvailableAt) {
 
     /** Compatibility constructor for callers that do not yet expose an approval timestamp. */
     public AuthorApplication(
@@ -22,7 +23,7 @@ public record AuthorApplication(
             String status,
             String reason,
             Instant createdAt) {
-        this(id, userId, penName, statement, status, reason, createdAt, null, null);
+        this(id, userId, penName, statement, status, reason, createdAt, null, null, null);
     }
 
     /** Compatibility constructor for callers that only expose the decision timestamp. */
@@ -35,6 +36,6 @@ public record AuthorApplication(
             String reason,
             Instant createdAt,
             Instant decidedAt) {
-        this(id, userId, penName, statement, status, reason, createdAt, decidedAt, null);
+        this(id, userId, penName, statement, status, reason, createdAt, decidedAt, null, null);
     }
 }

@@ -88,8 +88,16 @@ class OperationsPersistenceIntegrationTest {
         assertThat(rejected.reason()).isEqualTo("请补充作品计划");
         assertThat(rejected.decidedAt()).isNotNull();
         assertThat(rejected.decidedByUserId()).isEqualTo(1L);
+        assertThat(rejected.reapplyAvailableAt()).isAfter(rejected.decidedAt());
         assertThat(reloadedStore.authorApplications()).isEmpty();
 
+        assertThatThrownBy(() -> reloadedStore.applyAuthor(userId, "北辰", "冷却期内不应重复提交。"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("author application can be resubmitted after ");
+        jdbcTemplate.update(
+                "UPDATE novel_author_application SET reapply_available_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(1)),
+                rejected.id());
         AuthorApplication retry = reloadedStore.applyAuthor(userId, "北辰", "已补充完整作品计划。");
         AuthorApplication approved = reloadedStore.decideAuthorApplication(1L, retry.id(), true, "审核通过");
         assertThat(approved.status()).isEqualTo("APPROVED");
