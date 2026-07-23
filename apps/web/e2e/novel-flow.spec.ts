@@ -90,6 +90,14 @@ async function loginAdministrator(page: import('@playwright/test').Page, origin:
     data: { action: 'login', ...bootstrapAdministrator },
     headers: { Origin: origin },
   });
+  if (response.status() === 401) {
+    response = await page.request.post('/api/novel/session', {
+      data: { action: 'login', ...activatedBootstrapAdministrator },
+      headers: { Origin: origin },
+    });
+    expect(response.status()).toBe(200);
+    return response;
+  }
   expect(response.status()).toBe(200);
   const payload = await response.json() as { data?: { user?: { passwordChangeRequired?: boolean } } };
   if (!payload.data?.user?.passwordChangeRequired) return response;
