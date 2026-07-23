@@ -1,7 +1,12 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+# The build runs against the public npm registry. Retry transient connection resets rather than
+# treating a short external-network interruption as a deterministic build failure.
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 2000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 

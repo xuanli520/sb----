@@ -12,9 +12,16 @@
 Internet / TLS ingress -> nginx -> web -> backend
                                       -> redis
 backend -> mysql
+backend -> SMTP provider (outbound only)
 nginx -> MinIO private object-storage network -> novel-covers bucket
 backend -> MinIO private object-storage network
 ```
+
+为保持数据库、Redis 和 MinIO 的隔离，后端默认只接入内部 Docker 网络；但 SMTP 验证邮件
+需要后端主动连接公网邮件服务。因此 `smtp-egress` 是仅连接 `backend` 的非内部出站网络，
+不发布任何宿主机端口，也不会让公网直接访问后端。云安全组、防火墙或企业网络策略仍须允许
+该服务器出站访问 SMTP 服务商的 DNS 和 SMTP 端口（通常为 TCP `465` 或 `587`）；请按服务商
+要求最小化放行目标地址与端口。不要通过暴露后端端口来解决 SMTP 连通性。
 
 Nginx 的 HTTP 监听端口由 `HTTP_PORT` 控制，默认 `80`。它不提供仓库内置的虚假
 证书或自签名 TLS。生产环境必须让受管理的 HTTPS 入口或已配置证书的 Nginx TLS

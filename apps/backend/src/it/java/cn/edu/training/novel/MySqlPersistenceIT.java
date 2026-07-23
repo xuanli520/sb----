@@ -3,6 +3,7 @@ package cn.edu.training.novel;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.edu.training.novel.service.AdminOperationsService;
+import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.EmailVerificationService;
 import cn.edu.training.novel.service.NovelStore;
@@ -92,7 +93,8 @@ class MySqlPersistenceIT {
                 session.user().id());
         assertThat(storedHash).hasSize(64).isNotEqualTo(session.bffSessionId());
 
-        AuthService reloadedService = new AuthService(jdbc, 4, Duration.ofHours(8), emailVerificationService);
+        AuthService reloadedService = new AuthService(
+                jdbc, 4, Duration.ofHours(8), emailVerificationService, new AuditTrail(jdbc));
         assertThat(reloadedService.resolveBffSession(session.bffSessionId()))
                 .hasValueSatisfying(user -> assertThat(user.id()).isEqualTo(session.user().id()));
 

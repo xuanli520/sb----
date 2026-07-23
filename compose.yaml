@@ -88,6 +88,9 @@ services:
       - application
       - mysql
       - object-storage
+      # SMTP delivery is an outbound backend-only dependency. This network has no published
+      # ports and is intentionally the sole non-internal network attached to the backend.
+      - smtp-egress
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health/readiness > /dev/null"]
       interval: 15s
@@ -244,3 +247,4 @@ networks:
     internal: true
   object-storage:
     internal: true
+  smtp-egress:
