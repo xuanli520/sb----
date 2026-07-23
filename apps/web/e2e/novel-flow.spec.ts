@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 type ApiEnvelope<T> = { data: T };
 type AccountProfile = { id: number; name: string; roles: string[] };
 type AuthorBook = { id: number; title: string; author: string; status: string };
+type AuthorBookPage = { items: AuthorBook[] };
 type PublicBookList = { items: Array<{ id: number; title: string }> };
 
 const bootstrapAdministrator = {
@@ -345,8 +346,8 @@ test('a real reader is approved as an author and drafts stay out of another read
 
   const authorBooksResponse = await page.request.get('/api/novel/author/books');
   expect(authorBooksResponse.status()).toBe(200);
-  const authorBooks = (await authorBooksResponse.json() as ApiEnvelope<AuthorBook[]>).data;
-  expect(authorBooks).toEqual(expect.arrayContaining([
+  const authorBooks = (await authorBooksResponse.json() as ApiEnvelope<AuthorBookPage>).data;
+  expect(authorBooks.items).toEqual(expect.arrayContaining([
     expect.objectContaining({ title, author: penName, status: 'DRAFT' }),
   ]));
 
