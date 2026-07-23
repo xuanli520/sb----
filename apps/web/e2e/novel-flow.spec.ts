@@ -9,6 +9,10 @@ const bootstrapAdministrator = {
   username: 'e2e.admin@example.test',
   password: 'e2e-bootstrap-admin-password',
 };
+const activatedBootstrapAdministrator = {
+  username: bootstrapAdministrator.username,
+  password: 'e2e-bootstrap-admin-password-updated',
+};
 const smtpMailboxUrl = `http://127.0.0.1:${process.env.E2E_SMTP_MAILBOX_PORT ?? '18025'}`;
 
 type SmtpMailboxMessage = {
@@ -81,6 +85,31 @@ async function registerReader(
   });
 }
 
+async function loginAdministrator(page: import('@playwright/test').Page, origin: string) {
+  let response = await page.request.post('/api/novel/session', {
+    data: { action: 'login', ...bootstrapAdministrator },
+    headers: { Origin: origin },
+  });
+  expect(response.status()).toBe(200);
+  const payload = await response.json() as { data?: { user?: { passwordChangeRequired?: boolean } } };
+  if (!payload.data?.user?.passwordChangeRequired) return response;
+
+  const passwordChange = await page.request.put('/api/novel/account/password', {
+    data: {
+      currentPassword: bootstrapAdministrator.password,
+      newPassword: activatedBootstrapAdministrator.password,
+    },
+    headers: { Origin: origin },
+  });
+  expect(passwordChange.status()).toBe(200);
+  response = await page.request.post('/api/novel/session', {
+    data: { action: 'login', ...activatedBootstrapAdministrator },
+    headers: { Origin: origin },
+  });
+  expect(response.status()).toBe(200);
+  return response;
+}
+
 test('reader and administrator journeys render through real BFF accounts', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
@@ -115,11 +144,7 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByText('浏览器端的阅读反馈').last()).toBeVisible();
   await page.goto('/novel-admin');
   await expect(page.getByRole('heading', { name: 'SMTP 邮件服务' })).toHaveCount(0);
-  const adminSession = await page.request.post('/api/novel/session', {
-    data: { action: 'login', ...bootstrapAdministrator },
-    headers: { Origin: origin },
-  });
-  expect(adminSession.status()).toBe(200);
+  await loginAdministrator(page, origin);
   await page.goto('/novel-admin');
   await expect(page.getByRole('heading',{name:'工作台'})).toBeVisible();
   await expect(page.getByRole('link', { name: '站长中心' })).toBeVisible();
@@ -138,11 +163,7 @@ test('the super administrator saves SMTP settings and receives a real verificati
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
   const recipient = `smtp-verification-${suffix}@example.test`;
   const smtpPort = process.env.E2E_SMTP_PORT ?? '11025';
-  const session = await page.request.post('/api/novel/session', {
-    data: { action: 'login', ...bootstrapAdministrator },
-    headers: { Origin: origin },
-  });
-  expect(session.status()).toBe(200);
+  await loginAdministrator(page, origin);
 
   await page.goto('/novel-admin/settings/email');
   await expect(page.getByRole('heading', { name: 'SMTP 邮件服务' })).toBeVisible();
@@ -279,11 +300,7 @@ test('a real reader is approved as an author and drafts stay out of another read
   await expect(page.getByRole('status').filter({ hasText: '作者申请已提交' })).toBeVisible();
   await expect(page.getByText(`笔名「${penName}」的申请已提交`)).toBeVisible();
 
-  const adminSession = await page.request.post('/api/novel/session', {
-    data: { action: 'login', ...bootstrapAdministrator },
-    headers: { Origin: origin },
-  });
-  expect(adminSession.status()).toBe(200);
+  await loginAdministrator(page, origin);
   await page.goto('/novel-admin/accounts/applications');
   await expect(page.getByRole('heading', { name: '创作者准入' })).toBeVisible();
   const application = page.locator('article').filter({
