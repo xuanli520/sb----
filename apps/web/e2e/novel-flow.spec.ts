@@ -237,6 +237,38 @@ test('public discovery applies catalog facets through the BFF and highlights the
   await expect(catalog.locator('mark', { hasText: '星海' }).first()).toBeVisible();
 });
 
+test('bookstore stays within narrow viewports and keeps carousel controls clear of reading actions', async ({ page }, testInfo) => {
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '首页精选' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '发现作品' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    const carousel = page.getByRole('region', { name: '书城精选' });
+    await expect(carousel).toBeVisible();
+    const readAction = carousel.getByRole('link', { name: /开始阅读/ }).first();
+    const next = carousel.getByRole('button', { name: '下一张幻灯片' });
+    const [readBox, nextBox] = await Promise.all([readAction.boundingBox(), next.boundingBox()]);
+    expect(readBox).not.toBeNull();
+    expect(nextBox).not.toBeNull();
+    if (readBox && nextBox) {
+      const overlaps = readBox.x < nextBox.x + nextBox.width
+        && readBox.x + readBox.width > nextBox.x
+        && readBox.y < nextBox.y + nextBox.height
+        && readBox.y + readBox.height > nextBox.y;
+      expect(overlaps).toBe(false);
+    }
+
+    await page.screenshot({ path: testInfo.outputPath(`bookstore-${viewport.width}.png`), fullPage: true });
+  }
+});
+
 test('mobile navigation and reader chapter directory sheets work through the BFF', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;

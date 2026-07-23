@@ -101,6 +101,7 @@ function filterCatalog(url: string) {
 
 function mockBookstoreApi(options: {
   homeResponse?: Promise<Response>;
+  homeHandler?: () => Promise<Response>;
   catalogResponse?: Promise<Response>;
   catalogHandler?: (endpoint: string) => unknown;
   taxonomyResponse?: Promise<Response>;
@@ -109,7 +110,7 @@ function mockBookstoreApi(options: {
     const endpoint = String(input).replace('/api/novel/', '');
 
     if (endpoint === 'account/profile') return Promise.resolve(response({ roles: ['READER'] }));
-    if (endpoint === 'public/home') return options.homeResponse ?? Promise.resolve(response(home));
+    if (endpoint === 'public/home') return options.homeHandler?.() ?? options.homeResponse ?? Promise.resolve(response(home));
     if (endpoint === 'public/taxonomy/categories') return options.taxonomyResponse ?? Promise.resolve(response(taxonomyCategories));
     if (endpoint.startsWith('public/books')) return options.catalogResponse ?? Promise.resolve(response(options.catalogHandler?.(endpoint) ?? filterCatalog(endpoint)));
 
@@ -182,6 +183,25 @@ describe('bookstore home page', () => {
     expect(screen.getByText('01')).toBeTruthy();
     expect(screen.getByText('9,820 热度')).toBeTruthy();
     expect(screen.getByRole('link', { name: '开始阅读《星海拾光》' }).getAttribute('href')).toBe('/reader/9');
+  });
+
+  it('shows a specific home error and retries the failed discovery request', async () => {
+    let attempts = 0;
+    mockBookstoreApi({
+      homeHandler: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error('backend failed'))
+          : Promise.resolve(response(home));
+      },
+    });
+    render(<BookstorePage />);
+
+    expect(await screen.findByText('首页精选暂时无法加载，请刷新后重试。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByRole('region', { name: '书城精选' })).toBeTruthy();
+    expect(attempts).toBe(2);
   });
 
   it('passes category, word count and serial filters to the server and highlights literal keyword matches', async () => {

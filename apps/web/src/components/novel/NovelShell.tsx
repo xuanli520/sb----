@@ -149,22 +149,22 @@ export function NovelPageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-col gap-5 border-b border-stone-200 pb-7 sm:flex-row sm:items-end sm:justify-between">
-      <div className="max-w-2xl">
+    <header className="flex min-w-0 flex-col gap-5 border-b border-stone-200 pb-7 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0 max-w-2xl">
         <p className="text-xs font-semibold text-emerald-700">{eyebrow}</p>
-        <h1 className="mt-2 text-3xl font-semibold leading-tight text-stone-950 sm:text-4xl">{title}</h1>
-        <p className="mt-3 text-sm leading-6 text-stone-600 sm:text-base">{description}</p>
+        <h1 className="mt-2 break-words text-3xl font-semibold leading-tight text-stone-950 sm:text-4xl">{title}</h1>
+        <p className="mt-3 break-words text-sm leading-6 text-stone-600 sm:text-base">{description}</p>
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
   );
 }
 
 export function NovelShell({ children, workspace }: { children: ReactNode; workspace: Workspace }) {
   return (
-    <div className="min-h-screen bg-[#f3f5f1] text-stone-900">
+    <div className="min-h-screen overflow-x-clip bg-[#f3f5f1] text-stone-900">
       <NovelTopbar workspace={workspace} />
-      <main className="mx-auto w-full max-w-[1200px] px-4 py-7 sm:px-6 lg:px-8 lg:py-9">{children}</main>
+      <main className="mx-auto min-w-0 w-full max-w-[1200px] px-4 py-7 sm:px-6 lg:px-8 lg:py-9">{children}</main>
     </div>
   );
 }
@@ -231,8 +231,8 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
     <header className={isBookstoreHome
       ? 'sticky top-0 z-30 border-b border-emerald-950/25 bg-[#f3f5f1]/45 shadow-[0_8px_24px_rgba(6,61,46,.06)] backdrop-blur-xl'
       : 'sticky top-0 z-30 border-b border-stone-200 bg-[#f3f5f1]/95 backdrop-blur'}>
-      <div className="mx-auto flex min-h-16 max-w-[1200px] items-center gap-3 px-4 py-3 sm:gap-5 sm:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-2 text-stone-950" aria-label="阅界书城">
+      <div className="mx-auto flex min-h-16 min-w-0 max-w-[1200px] items-center gap-3 px-4 py-3 sm:gap-5 sm:px-6 lg:px-8">
+        <Link href="/" className="flex shrink-0 items-center gap-2 text-stone-950" aria-label="阅界书城">
           <span className="grid size-8 place-items-center bg-emerald-700 text-white">
             <BookOpenText size={18} aria-hidden="true" />
           </span>
@@ -243,7 +243,7 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
           <NovelNavigationLinks pathname={pathname} workspace={activeWorkspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} />
         </nav>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 items-center gap-1.5">
           <MobileNavigation pathname={pathname} workspace={activeWorkspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} accountName={account?.name} />
           {sessionStatus !== 'checking' ? <Separator orientation="vertical" className="hidden h-7 bg-stone-200 md:block" /> : null}
           {sessionStatus === 'anonymous' ? <AuthenticationActions /> : null}
@@ -251,7 +251,7 @@ function NovelTopbar({ workspace }: { workspace: Workspace }) {
         </div>
       </div>
       {loggingOut ? <p className="sr-only" role="status">正在退出登录</p> : null}
-      {error ? <p className="mx-auto max-w-[1200px] px-4 pb-3 text-xs text-rose-700 sm:px-6 lg:px-8" role="status">{error}</p> : null}
+      {error ? <p className="mx-auto max-w-[1200px] break-words px-4 pb-3 text-xs text-rose-700 sm:px-6 lg:px-8" role="status">{error}</p> : null}
     </header>
   );
 }

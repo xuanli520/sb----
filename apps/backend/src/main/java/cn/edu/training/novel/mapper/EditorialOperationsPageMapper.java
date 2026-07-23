@@ -21,7 +21,7 @@ public interface EditorialOperationsPageMapper {
                    author_id AS bookAuthorId,
                    heat AS bookHeat,
                    purchase_price AS bookPurchasePrice,
-                   editorial_rank AS rank
+                   editorial_rank AS `rank`
             FROM novel_book
             WHERE editorial_rank IS NOT NULL
             ORDER BY editorial_rank ASC, id ASC
@@ -33,7 +33,7 @@ public interface EditorialOperationsPageMapper {
                    book_id AS bookId,
                    action,
                    previous_rank AS previousRank,
-                   new_rank AS rank,
+                   new_rank AS `rank`,
                    details,
                    operator_user_id AS operatorUserId,
                    created_at AS createdAt
@@ -47,7 +47,7 @@ public interface EditorialOperationsPageMapper {
             SELECT id,
                    term,
                    enabled,
-                   display_rank AS rank,
+                   display_rank AS `rank`,
                    created_by_user_id AS createdByUserId,
                    updated_by_user_id AS updatedByUserId,
                    created_at AS createdAt,
@@ -61,7 +61,7 @@ public interface EditorialOperationsPageMapper {
             SELECT id,
                    term,
                    enabled,
-                   display_rank AS rank,
+                   display_rank AS `rank`,
                    created_by_user_id AS createdByUserId,
                    updated_by_user_id AS updatedByUserId,
                    created_at AS createdAt,
@@ -78,7 +78,7 @@ public interface EditorialOperationsPageMapper {
                    term,
                    action,
                    previous_rank AS previousRank,
-                   new_rank AS rank,
+                   new_rank AS `rank`,
                    details,
                    operator_user_id AS operatorUserId,
                    created_at AS createdAt

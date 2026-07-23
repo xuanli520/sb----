@@ -115,6 +115,7 @@ cp .env.example .env
 docker compose up --build --detach
 docker compose ps
 curl --fail http://127.0.0.1:${HTTP_PORT:-8080}/api/healthz
+scripts/verify-public-home.sh
 ```
 
 首次站长初始化：在 `.env` 中同时设置 `NOVEL_BOOTSTRAP_ADMIN_USERNAME` 与

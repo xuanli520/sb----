@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import cn.edu.training.novel.service.AdminOperationsService;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.AuthService;
+import cn.edu.training.novel.service.CatalogDiscoveryService;
+import cn.edu.training.novel.service.EditorialOperationsRepository;
 import cn.edu.training.novel.service.EmailVerificationService;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Duration;
@@ -51,6 +53,8 @@ class MySqlPersistenceIT {
     @Autowired AuthService authService;
     @Autowired EmailVerificationService emailVerificationService;
     @Autowired AdminOperationsService adminOperationsService;
+    @Autowired CatalogDiscoveryService discoveryService;
+    @Autowired EditorialOperationsRepository editorialOperationsRepository;
 
     @DynamicPropertySource
     static void mysqlProperties(DynamicPropertyRegistry registry) {
@@ -75,6 +79,20 @@ class MySqlPersistenceIT {
                         + "WHERE table_schema = DATABASE() AND table_name = 'novel_reward_record' "
                         + "AND index_name = 'uk_novel_reward_record_rewarder_idempotency'",
                 Long.class)).isEqualTo(1L);
+    }
+
+    @Test
+    void runsEveryRankAliasedEditorialQueryAndBuildsThePublicHomeOnMysql() {
+        assertThat(editorialOperationsRepository.findRecommendationPage(0, 20).items()).isNotEmpty();
+        assertThat(editorialOperationsRepository.findRecommendationAuditPage(0, 20).meta().total()).isGreaterThanOrEqualTo(0);
+        assertThat(editorialOperationsRepository.findHotSearchTermPage(0, 20).items()).isNotEmpty();
+        assertThat(editorialOperationsRepository.findEnabledHotSearchTerms(20)).isNotEmpty();
+        assertThat(editorialOperationsRepository.findHotSearchTermAuditPage(0, 20).meta().total()).isGreaterThanOrEqualTo(0);
+
+        CatalogDiscoveryService.DiscoveryHome home = discoveryService.home();
+        assertThat(home.carousel()).isNotEmpty();
+        assertThat(home.hot()).isNotEmpty();
+        assertThat(home.hotSearchTerms()).isNotEmpty();
     }
 
     @Test
