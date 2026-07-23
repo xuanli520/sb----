@@ -9,7 +9,7 @@
 宿主机端口映射，并按实际调用关系加入内部网络：
 
 ```text
-Internet / TLS ingress -> nginx -> web -> backend
+Internet / Caddy TLS ingress -> nginx (loopback HTTP) -> web -> backend
                                       -> redis
 backend -> mysql
 backend -> SMTP provider (outbound only)
@@ -23,15 +23,28 @@ backend -> MinIO private object-storage network
 该服务器出站访问 SMTP 服务商的 DNS 和 SMTP 端口（通常为 TCP `465` 或 `587`）；请按服务商
 要求最小化放行目标地址与端口。不要通过暴露后端端口来解决 SMTP 连通性。
 
-Nginx 的 HTTP 监听端口由 `HTTP_PORT` 控制，默认 `80`。它不提供仓库内置的虚假
-证书或自签名 TLS。生产环境必须让受管理的 HTTPS 入口或已配置证书的 Nginx TLS
-配置终止 TLS，再把请求转给这个 Compose Nginx 服务；`NOVEL_PUBLIC_ORIGIN` 必须是
-用户实际访问的 HTTPS origin。例如：
+Nginx 的 HTTP 监听端口由 `HTTP_PORT` 控制，默认 `8080`，并且 Compose 仅绑定到
+`127.0.0.1`。云服务器上的 Caddy 是唯一的 HTTPS 入口和证书管理者，必须将站点反代到
+该本地端口；`NOVEL_PUBLIC_ORIGIN` 必须是用户实际访问的 HTTPS origin。例如：
 
 ```dotenv
-HTTP_PORT=80
+HTTP_PORT=8080
 NOVEL_PUBLIC_ORIGIN=https://novel.example.com
 ```
+
+对应的 Caddyfile 保持最小化即可：
+
+```caddyfile
+novel.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+仓库同时提供 [Caddyfile.example](../infra/caddy/Caddyfile.example) 作为同一拓扑的模板；替换域名后由
+宿主机 Caddy 加载，不要把证书或私钥挂载进 Compose。
+
+不要把 Compose 的 Nginx、`backend`、`web` 或 MinIO 端口公开到公网。Nginx 会保留 Caddy
+写入的 `X-Forwarded-Proto=https`，避免内部 HTTP hop 影响 Secure Cookie、跳转或 Origin 校验。
 
 不要把 `backend`、`web`、MinIO `9000` 或 MinIO console 端口重新映射到公网，也不要把
 `NOVEL_INTERNAL_API_KEY`、Redis URL、对象存储凭据或数据库密码写入 `NEXT_PUBLIC_*` 变量。
@@ -72,24 +85,27 @@ NOVEL_EMAIL_VERIFICATION_HASH_SECRET=replace-with-a-separate-long-random-secret
 封面上传默认关闭：`NOVEL_COVER_STORAGE_ENABLED=false`。打开前，`.env` 必须包含
 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_COVER_ACCESS_KEY` 和
 `MINIO_COVER_SECRET_KEY`。根凭据仅由 Compose 的一次性 `minio-init` 服务使用；后端拿到
-的是只允许 `novel-covers/covers/*` 写入和删除的独立服务账户，Web 容器不接收任何 MinIO
+的是只允许 `novel-covers/staging/*`、`covers/*`、`banners/*` 写入和删除的独立服务账户，Web 容器不接收任何 MinIO
 变量。
 
-`minio-init` 幂等创建 `novel-covers` 桶、设置该桶匿名下载，并绑定写入账户的最小策略。
+`minio-init` 幂等创建 `novel-covers` 桶，并仅允许 `covers/*` 与 `banners/*` 匿名下载；草稿
+素材保留在私有 `staging/*`。写入账户绑定最小策略。
 它只将“写入账户已存在”视为可重试状态；随后会用部署中提供的账户和密钥实际写入并删除
 受限前缀下的探针对象。因此，错误的根凭据、已有账户的错误密钥或策略绑定失败都会让初始化
 失败，而不会让后端带着不可用的写入凭据启动。这并不将 MinIO 公开：服务只在
 `object-storage` 内部网络，Nginx 是唯一的公开入口，且只允许
-`GET /media/covers/<uuid>.png|jpg`，会移除浏览器携带的 `Authorization`、Cookie 和转发身份头。
+`GET /media/covers/<uuid>.png|jpg` 或 `GET /media/banners/<uuid>.png|jpg`，会移除浏览器携带的
+`Authorization`、Cookie 和转发身份头。
 所有其他 `/media` 路径及非 GET 方法都会被 Nginx 拒绝；不要把 MinIO endpoint 或桶名改写进
 `Book.cover`。
 
-后端端点只允许作者上传自己处于草稿或驳回状态作品的单个 `file` multipart 字段。它不会
+后端端点只允许作者上传封面、站长上传首页横幅；它不会
 信任 filename 或请求 MIME，而是以 ImageIO 解码验证 PNG/JPEG、5 MiB 字节上限、4096x4096
-尺寸和像素上限。Nginx 也以 `client_max_body_size 5m` 在 BFF 前拒绝超过该传输边界的请求。
+尺寸和像素上限。Nginx 以 `client_max_body_size 6m` 为 multipart 边界留出余量，后端仍将实际
+图片限制为 5 MiB。
 配置关闭、不完整或存储不可用时会返回明确的 `503`，不会降级为本地磁盘。
-每次上传使用随机对象键；数据库更新回滚会补偿删除新对象，旧对象只在事务提交后删除，且
-只会删除本系统生成的 `/media/covers/<uuid>` URL。旧的 CSS 颜色封面保持兼容。
+每次上传使用随机对象键；替换会建立新资产绑定，旧对象只有零引用且经过回收宽限期后才会删除。
+旧的 CSS 颜色封面保持兼容。
 
 ## 启动与健康检查
 
@@ -98,7 +114,7 @@ cp .env.example .env
 # 在 .env 中替换所有 replace-with-* 值，并设置真实 HTTPS origin。
 docker compose up --build --detach
 docker compose ps
-curl --fail http://127.0.0.1:${HTTP_PORT:-80}/api/healthz
+curl --fail http://127.0.0.1:${HTTP_PORT:-8080}/api/healthz
 ```
 
 首次站长初始化：在 `.env` 中同时设置 `NOVEL_BOOTSTRAP_ADMIN_USERNAME` 与

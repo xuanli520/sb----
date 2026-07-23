@@ -21,16 +21,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /** Exercises the administrator API and the persisted redemption/entitlement invariants together. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:redemption_admin_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class RedemptionCodeAdministrationIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -41,7 +40,7 @@ class RedemptionCodeAdministrationIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 
@@ -51,7 +50,7 @@ class RedemptionCodeAdministrationIntegrationTest {
                 .andExpect(status().isForbidden());
 
         String generated = mvc.perform(post("/api/v1/admin/redemption-codes/generate")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"quantity\":2,\"batchNo\":\"summer-2026\",\"codePrefix\":\"SUM\",\"tokenAmount\":60,\"expiresAt\":\"2030-01-01T00:00:00Z\"}"))
                 .andExpect(status().isOk())
@@ -69,7 +68,7 @@ class RedemptionCodeAdministrationIntegrationTest {
                 Long.class)).isEqualTo(2L);
 
         mvc.perform(get("/api/v1/admin/redemption-codes")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("batchNo", "summer-2026")
                         .param("benefitType", "token")
                         .param("status", "active")
@@ -87,7 +86,7 @@ class RedemptionCodeAdministrationIntegrationTest {
     @Test
     void importedCompositeCodeGrantsAllBenefitsOnceAndWritesIndependentLedgers() throws Exception {
         mvc.perform(post("/api/v1/admin/redemption-codes/import")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\" member-book-25 \",\"batchNo\":\"import-2026\",\"tokenAmount\":25,\"membershipDays\":7,\"bookId\":1,\"expiresAt\":\"2030-01-01T00:00:00Z\"}"))
                 .andExpect(status().isOk())
@@ -124,35 +123,35 @@ class RedemptionCodeAdministrationIntegrationTest {
     void validationDuplicateAndDisableStateTransitionsAreExplicit() throws Exception {
         String endpoint = "/api/v1/admin/redemption-codes/import";
         mvc.perform(post(endpoint)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"BAD!\",\"batchNo\":\"TEST-2026\",\"tokenAmount\":10}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post(endpoint)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"NO-BENEFIT-2026\",\"batchNo\":\"TEST-2026\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/v1/admin/redemption-codes/generate")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"quantity\":0,\"tokenAmount\":10}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post(endpoint)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"PAST-2026\",\"batchNo\":\"TEST-2026\",\"tokenAmount\":10,\"expiresAt\":\"2020-01-01T00:00:00Z\"}"))
                 .andExpect(status().isBadRequest());
 
         String activeCode = "DISABLE-2026";
         String activePayload = "{\"code\":\"" + activeCode + "\",\"batchNo\":\"TEST-2026\",\"tokenAmount\":10}";
-        mvc.perform(post(endpoint).header(DEVELOPMENT_PRINCIPAL, "admin").contentType(MediaType.APPLICATION_JSON).content(activePayload))
+        mvc.perform(post(endpoint).header(TestBffSessions.HEADER, TestBffSessions.ADMIN).contentType(MediaType.APPLICATION_JSON).content(activePayload))
                 .andExpect(status().isOk());
-        mvc.perform(post(endpoint).header(DEVELOPMENT_PRINCIPAL, "admin").contentType(MediaType.APPLICATION_JSON).content(activePayload))
+        mvc.perform(post(endpoint).header(TestBffSessions.HEADER, TestBffSessions.ADMIN).contentType(MediaType.APPLICATION_JSON).content(activePayload))
                 .andExpect(status().isConflict());
 
         mvc.perform(post("/api/v1/admin/redemption-codes/{code}/disable", activeCode)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"campaign recalled\"}"))
                 .andExpect(status().isOk())
@@ -160,14 +159,14 @@ class RedemptionCodeAdministrationIntegrationTest {
         mvc.perform(post("/api/v1/account/redeem").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"" + activeCode + "\"}"))
                 .andExpect(status().isConflict());
         mvc.perform(post("/api/v1/admin/redemption-codes/{code}/disable", activeCode)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isConflict());
 
         String redeemedCode = "REDEEMED-2026";
         mvc.perform(post(endpoint)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"" + redeemedCode + "\",\"batchNo\":\"TEST-2026\",\"tokenAmount\":5}"))
                 .andExpect(status().isOk());
@@ -176,7 +175,7 @@ class RedemptionCodeAdministrationIntegrationTest {
                         .content("{\"code\":\"" + redeemedCode + "\"}"))
                 .andExpect(status().isOk());
         mvc.perform(post("/api/v1/admin/redemption-codes/{code}/disable", redeemedCode)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isConflict());

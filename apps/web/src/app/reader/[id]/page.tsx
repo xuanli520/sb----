@@ -13,13 +13,14 @@ import {
   Highlighter,
   MessageSquare,
   Moon,
+  Plus,
   SlidersHorizontal,
   Star,
   Sun,
   Ticket,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -45,6 +46,7 @@ import { InlineNotice, NovelShell, formatWordCount } from '@/components/novel/No
 import {
   AccountEntitlements,
   Book,
+  BookSubscription,
   InteractionStats,
   NovelComment,
   NovelCommentPage,
@@ -67,10 +69,18 @@ type Chapter = {
 };
 type BookmarkItem = { id: number; chapterId: number; offset: number; note: string; createdAt: string };
 type ReaderAccess = { fullBookAccess: boolean; source: Exclude<ChapterAccess, 'ENTITLEMENT_REQUIRED'> };
-type Detail = { book: Book; chapters: Chapter[]; comments?: NovelComment[]; access?: ReaderAccess };
+type Detail = {
+  book: Book;
+  chapters: Chapter[];
+  comments?: NovelComment[];
+  access?: ReaderAccess;
+  /** Returned by the protected reading projection so a refresh preserves the reader's stars. */
+  currentUserRating?: number | null;
+};
 type ReaderFont = 'serif' | 'sans';
 type Preference = { theme: 'paper' | 'sepia' | 'night'; font: ReaderFont; fontSize: number; lineHeight: number; brightness: number; pageMode: 'slide' | 'cover' | 'simulation' };
 type ReadingProgress = { bookId: number; chapterId: number; offset: number; updatedAt: string };
+type BookshelfState = { saved: boolean };
 type Notice = { message: string; tone: 'success' | 'error' };
 type RewardResult = { bookId: number; amount: number; balance: number };
 type PurchaseResult = { bookId: number; purchased: boolean; balance: number };
@@ -222,6 +232,10 @@ function isInteractionStats(value: unknown): value is InteractionStats {
     && typeof (value as InteractionStats).averageRating === 'number'
     && typeof (value as InteractionStats).recommendationVoteCount === 'number'
     && typeof (value as InteractionStats).monthlyVoteCount === 'number';
+}
+
+function currentUserRating(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5 ? value : 0;
 }
 
 function annotationHighlightClass(annotation: HighlightAnnotation) {
@@ -559,6 +573,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [preference, setPreference] = useState<Preference>(defaultPreference);
   const [activeChapterId, setActiveChapterId] = useState<number>();
   const [saved, setSaved] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [paragraphAnnotations, setParagraphAnnotations] = useState<ParagraphAnnotation[]>([]);
   const [publicParagraphAnnotations, setPublicParagraphAnnotations] = useState<PublicParagraphAnnotation[]>([]);
@@ -576,6 +591,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [interactionStats, setInteractionStats] = useState<InteractionStats>();
   const [interactionStatsReloadVersion, setInteractionStatsReloadVersion] = useState(0);
   const [rating, setRating] = useState(0);
+  const [hasReaderSession, setHasReaderSession] = useState(false);
   const [rewardAmount, setRewardAmount] = useState('');
   const [rewardState, setRewardState] = useState<RewardState>('idle');
   const [rewardMessage, setRewardMessage] = useState('');
@@ -600,6 +616,28 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const activeChapterRef = useRef<number>();
   const rewardAttempt = useRef<RewardAttempt>();
   const rewardRequestInFlight = useRef(false);
+  const readingProgressHeartbeat = useRef<{ key: string; sentAt: number }>();
+
+  const persistReadingProgress = useCallback((force = false) => {
+    const bookId = detail?.book.id;
+    const chapterId = activeChapterRef.current ?? activeChapterId;
+    const activeChapter = detail?.chapters.find((item) => item.id === chapterId);
+    if (!hasReaderSession || !bookId || !chapterId || !isReadableChapter(activeChapter)) return;
+
+    const key = `${bookId}:${chapterId}:0`;
+    const now = Date.now();
+    const previous = readingProgressHeartbeat.current;
+    if (!force && previous?.key === key && now - previous.sentAt < 55_000) return;
+    readingProgressHeartbeat.current = { key, sentAt: now };
+
+    void novelApi<ReadingProgress>('account/progress', 'reader', {
+      method: 'PUT',
+      body: JSON.stringify({ bookId, chapterId, offset: 0 }),
+      keepalive: force,
+    }).catch(() => {
+      // Reading stays usable if an expired session or a transient network error rejects telemetry.
+    });
+  }, [activeChapterId, detail?.book.id, detail?.chapters, hasReaderSession]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -625,6 +663,25 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   }, []);
 
   useEffect(() => {
+    if (!hasReaderSession || !detail?.book.id || !activeChapterId) return;
+
+    persistReadingProgress();
+    const heartbeat = window.setInterval(() => persistReadingProgress(), 60_000);
+    const persistWhenHidden = () => {
+      if (document.visibilityState === 'hidden') persistReadingProgress(true);
+    };
+    const persistOnPageHide = () => persistReadingProgress(true);
+
+    document.addEventListener('visibilitychange', persistWhenHidden);
+    window.addEventListener('pagehide', persistOnPageHide);
+    return () => {
+      window.clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', persistWhenHidden);
+      window.removeEventListener('pagehide', persistOnPageHide);
+    };
+  }, [activeChapterId, detail?.book.id, hasReaderSession, persistReadingProgress]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
@@ -632,7 +689,11 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       setLoadError('');
       setTokenBalance(undefined);
       setHasBookEntitlement(undefined);
+      setHasReaderSession(false);
+      setSaved(false);
+      setSubscribed(false);
       setInteractionStats(undefined);
+      setRating(0);
       setChapterComments([]);
       setCommentsLoading(true);
       setCommentsError('');
@@ -645,24 +706,33 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         const { id } = await params;
         const publicDetail = await novelApi<Detail>(`public/books/${id}`);
         let bookDetail = publicDetail;
+        let readerSessionAvailable = false;
         try {
           const accountDetail = await novelApi<Detail>(`account/books/${id}/reading`);
-          if (isDetail(accountDetail)) bookDetail = accountDetail;
+          if (isDetail(accountDetail)) {
+            bookDetail = accountDetail;
+            readerSessionAvailable = true;
+          }
         } catch {
           // Anonymous readers intentionally keep the public preview projection.
         }
         if (cancelled) return;
 
         setDetail(bookDetail);
+        setHasReaderSession(readerSessionAvailable);
+        setRating(currentUserRating(bookDetail.currentUserRating));
 
         const firstChapter = bookDetail.chapters.find(isReadableChapter);
         if (!firstChapter) return;
 
-        const [preferencesResult, shelfResult, bookmarksResult, progressResult, annotationsResult, walletResult, entitlementsResult, statsResult] = await Promise.allSettled([
+        const [preferencesResult, shelfResult, subscriptionResult, bookmarksResult, progressResult, annotationsResult, walletResult, entitlementsResult, statsResult] = await Promise.allSettled([
           novelApi<Preference>('account/preferences/reading'),
-          novelApi<Book[]>('account/bookshelf'),
+          novelApi<BookshelfState>(`account/bookshelf/${bookDetail.book.id}`),
+          readerSessionAvailable
+            ? novelApi<BookSubscription>(`account/subscriptions/${bookDetail.book.id}`)
+            : Promise.resolve(null),
           novelApi<BookmarkItem[]>(`account/books/${bookDetail.book.id}/bookmarks`),
-          novelApi<ReadingProgress[]>('account/progress'),
+          novelApi<ReadingProgress | null>(`account/books/${bookDetail.book.id}/progress`),
           novelApi<ParagraphAnnotationPage>(`account/annotations?bookId=${bookDetail.book.id}&size=100`),
           novelApi<{ tokens: number }>('account/wallet'),
           novelApi<AccountEntitlements>('account/entitlements'),
@@ -671,7 +741,12 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         if (cancelled) return;
 
         if (preferencesResult.status === 'fulfilled') setPreference(normalizePreference(preferencesResult.value));
-        if (shelfResult.status === 'fulfilled') setSaved(shelfResult.value.some((book) => book.id === bookDetail.book.id));
+        if (shelfResult.status === 'fulfilled' && typeof shelfResult.value.saved === 'boolean') setSaved(shelfResult.value.saved);
+        if (subscriptionResult.status === 'fulfilled'
+          && subscriptionResult.value?.bookId === bookDetail.book.id
+          && typeof subscriptionResult.value.subscribed === 'boolean') {
+          setSubscribed(subscriptionResult.value.subscribed);
+        }
         if (bookmarksResult.status === 'fulfilled') setBookmarks(bookmarksResult.value);
         if (annotationsResult.status === 'fulfilled' && Array.isArray(annotationsResult.value.items)) {
           setParagraphAnnotations(annotationsResult.value.items);
@@ -684,8 +759,10 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           setInteractionStats(statsResult.value);
         }
 
-        const savedProgress = progressResult.status === 'fulfilled' && Array.isArray(progressResult.value)
-          ? progressResult.value.find((item) => item.bookId === bookDetail.book.id)
+        const savedProgress = progressResult.status === 'fulfilled'
+          && progressResult.value !== null
+          && progressResult.value.bookId === bookDetail.book.id
+          ? progressResult.value
           : undefined;
         const restoredChapter = savedProgress
           ? bookDetail.chapters.find((item) => item.id === savedProgress.chapterId && isReadableChapter(item))
@@ -700,12 +777,6 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         activeChapterRef.current = initialChapter.id;
         setActiveChapterId(initialChapter.id);
 
-        if (!restoredChapter) {
-          void novelApi('account/progress', 'reader', {
-            method: 'PUT',
-            body: JSON.stringify({ bookId: bookDetail.book.id, chapterId: initialChapter.id, offset: 0 }),
-          }).catch(() => undefined);
-        }
       } catch (reason) {
         if (!cancelled) {
           setLoadError(reason instanceof Error ? reason.message : '章节暂时无法打开。');
@@ -873,6 +944,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       return;
     }
 
+    persistReadingProgress(true);
     const currentIndex = detail.chapters.findIndex((item) => item.id === chapter?.id);
     const nextIndex = detail.chapters.findIndex((item) => item.id === nextChapter.id);
     const direction: PageTurnDirection = nextIndex > currentIndex ? 'forward' : 'backward';
@@ -906,14 +978,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     setParagraphAnnotationShareIntent(false);
     clearBrowserSelection();
     setChapterAnnouncement(`已切换至第 ${nextChapter.orderNo} 章《${nextChapter.title}》，${preferenceLabel(preference.pageMode)}${reducedMotion ? '，已减少动态效果。' : '。'}`);
-    try {
-      await novelApi('account/progress', 'reader', {
-        method: 'PUT',
-        body: JSON.stringify({ bookId: detail.book.id, chapterId: nextChapter.id, offset: 0 }),
-      });
-    } catch {
-      // Public reading remains available when the current visitor has no reader session.
-    }
+    persistReadingProgress(true);
   };
 
   const moveChapter = (offset: number) => {
@@ -943,6 +1008,24 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       announce(result.saved ? '已加入书架，可以在登录后继续阅读。' : '已从书架移除。');
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '加入书架失败，请先登录读者账户。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const toggleSubscription = async () => {
+    if (!detail) return;
+    setPendingAction('subscription');
+    try {
+      const result = await novelApi<BookSubscription>(
+        `account/subscriptions/${detail.book.id}`,
+        'reader',
+        { method: subscribed ? 'DELETE' : 'PUT' },
+      );
+      setSubscribed(result.subscribed);
+      announce(result.subscribed ? '已免费订阅本作品。' : '已取消订阅本作品。');
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '订阅操作失败，请先登录读者账户。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -1189,6 +1272,14 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <Bookmark size={16} aria-hidden="true" />添加书签
             </Button>
           </div>
+
+          <section aria-labelledby="reader-subscription-title" className="mt-5 border-t border-stone-200 pt-4">
+            <h2 id="reader-subscription-title" className="text-sm font-semibold text-stone-950">免费订阅</h2>
+            <Button type="button" variant="outline" size="sm" aria-pressed={subscribed} onClick={() => void toggleSubscription()} disabled={pendingAction === 'subscription'} className="mt-3 h-auto w-full justify-center rounded-none border-stone-300 px-3 py-2 text-stone-800 hover:border-emerald-700 hover:text-emerald-800">
+              {subscribed ? <Check size={16} aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}
+              {subscribed ? '取消订阅' : '订阅作品'}
+            </Button>
+          </section>
 
           <section aria-labelledby="reader-entitlement-title" className="mt-5 border-t border-stone-200 pt-4">
             <div className="flex items-start gap-2">

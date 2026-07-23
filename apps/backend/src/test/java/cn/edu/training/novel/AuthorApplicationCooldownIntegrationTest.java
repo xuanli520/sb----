@@ -24,9 +24,9 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Covers the D-05 rejection boundary through the deployed controller and persisted application rows. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=author-cooldown-test-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "novel.author-application.rejection-cooldown=PT48H",
         "spring.datasource.url=jdbc:h2:mem:author_cooldown_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
@@ -52,7 +52,7 @@ class AuthorApplicationCooldownIntegrationTest {
         Instant beforeDecision = Instant.now();
         mvc.perform(post("/api/v1/admin/author-applications/{id}", pending.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Development-Principal", "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":false,\"reason\":\"请先补充完整创作计划\"}"))
                 .andExpect(status().isOk())
@@ -121,7 +121,7 @@ class AuthorApplicationCooldownIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/author-applications/{id}", pending.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Development-Principal", "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"材料完整，审核通过\"}"))
                 .andExpect(status().isOk())

@@ -88,7 +88,9 @@ class NovelApiIntegrationTest {
     }
     @Test void readerCanManageShelfAndOneTimeRedemptionIsAudited() throws Exception {
         mvc.perform(post("/api/v1/account/bookshelf/1")).andExpect(status().isOk()).andExpect(jsonPath("$.data.saved").value(true));
-        mvc.perform(get("/api/v1/account/bookshelf")).andExpect(jsonPath("$.data[0].id").value(1));
+        mvc.perform(get("/api/v1/account/bookshelf"))
+                .andExpect(jsonPath("$.data.items[0].id").value(1))
+                .andExpect(jsonPath("$.data.meta.total").value(1));
         mvc.perform(post("/api/v1/account/checkin"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.data.points").value(10)).andExpect(jsonPath("$.data.awarded").value(10));
         mvc.perform(post("/api/v1/account/checkin")).andExpect(status().isConflict());
@@ -143,7 +145,10 @@ class NovelApiIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING_REVIEW"));
         mvc.perform(post("/api/v1/author/books/1/chapters").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"风险章节\",\"content\":\"包含敏感词\",\"submit\":true}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.published").value(false));
-        mvc.perform(get("/api/v1/admin/reviews").header("X-Novel-Development-Principal","admin")).andExpect(jsonPath("$.data[0].status").value("NEEDS_REVIEW"));
+        mvc.perform(get("/api/v1/admin/reviews/queue")
+                        .param("scope", "NEW_CHAPTER")
+                        .header("X-Novel-Development-Principal","admin"))
+                .andExpect(jsonPath("$.data.items[0].book.id").value(1));
     }
 
     @Test void adminCanInspectAuthorApplicationAndDisableUser() throws Exception {

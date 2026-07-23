@@ -1,6 +1,9 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.ManagedRedemptionCode;
+import cn.edu.training.novel.mapper.WalletPageMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
@@ -8,7 +11,6 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,9 +30,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class WalletRepository {
     private final JdbcTemplate jdbc;
+    private final WalletPageMapper pageMapper;
 
-    public WalletRepository(JdbcTemplate jdbc) {
+    public WalletRepository(JdbcTemplate jdbc, WalletPageMapper pageMapper) {
         this.jdbc = jdbc;
+        this.pageMapper = pageMapper;
     }
 
     /** Acquires the code row lock before its state is inspected or moved to REDEEMED. */
@@ -210,28 +214,17 @@ public class WalletRepository {
         return validUntil;
     }
 
-    public List<ManagedRedemptionCode> findManagedRedemptionCodes(ManagedCodeFilter filter) {
-        QueryParts filters = managedCodeFilters(filter);
-        List<Object> parameters = new ArrayList<>(filters.parameters());
-        parameters.add(filter.limit());
-        parameters.add(filter.offset());
-        return jdbc.query(
-                "SELECT code, batch_no, benefit_type, token_amount, book_id, membership_days, status, expires_at, "
-                        + "redeemed_by_user_id, redeemed_at, created_by_user_id, created_at, disabled_by_user_id, disabled_at "
-                        + "FROM novel_redemption_code"
-                        + filters.where()
-                        + " ORDER BY created_at DESC, code ASC LIMIT ? OFFSET ?",
-                (resultSet, rowNumber) -> managedCode(resultSet),
-                parameters.toArray());
-    }
-
-    public long countManagedRedemptionCodes(ManagedCodeFilter filter) {
-        QueryParts filters = managedCodeFilters(filter);
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM novel_redemption_code" + filters.where(),
-                Long.class,
-                filters.parameters().toArray());
-        return total == null ? 0 : total;
+    public ManagedCodeQueryResult findManagedRedemptionCodes(ManagedCodeFilter filter) {
+        String status = supportedManagedCodeStatus(filter.status());
+        IPage<WalletPageMapper.ManagedRedemptionCodeRow> result = pageMapper.selectManagedRedemptionCodePage(
+                pageRequest(filter.page(), filter.size()),
+                codePattern(filter.codeQuery()),
+                blankToNull(filter.batchNo()),
+                blankToNull(filter.benefitType()),
+                status);
+        return new ManagedCodeQueryResult(
+                result.getRecords().stream().map(WalletRepository::managedCode).toList(),
+                result.getTotal());
     }
 
     public Optional<ManagedRedemptionCode> findManagedRedemptionCode(String code) {
@@ -419,33 +412,49 @@ public class WalletRepository {
                 toInstant(resultSet.getTimestamp("disabled_at")));
     }
 
-    private static QueryParts managedCodeFilters(ManagedCodeFilter filter) {
-        StringBuilder where = new StringBuilder(" WHERE 1 = 1");
-        List<Object> parameters = new ArrayList<>();
-        if (filter.codeQuery() != null && !filter.codeQuery().isBlank()) {
-            where.append(" AND code LIKE ?");
-            parameters.add("%" + filter.codeQuery() + "%");
+    private static ManagedRedemptionCode managedCode(WalletPageMapper.ManagedRedemptionCodeRow row) {
+        return new ManagedRedemptionCode(
+                row.getCode(),
+                row.getBatchNo(),
+                row.getBenefitType(),
+                row.getTokenAmount(),
+                row.getBookId(),
+                row.getMembershipDays(),
+                row.getStatus(),
+                toInstant(row.getExpiresAt()),
+                row.getRedeemedByUserId(),
+                toInstant(row.getRedeemedAt()),
+                row.getCreatedByUserId(),
+                toInstant(row.getCreatedAt()),
+                row.getDisabledByUserId(),
+                toInstant(row.getDisabledAt()));
+    }
+
+    private static String codePattern(String query) {
+        String normalized = blankToNull(query);
+        return normalized == null ? null : "%" + normalized + "%";
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private static String supportedManagedCodeStatus(String status) {
+        String normalized = blankToNull(status);
+        if (normalized == null) {
+            return null;
         }
-        if (filter.batchNo() != null && !filter.batchNo().isBlank()) {
-            where.append(" AND batch_no = ?");
-            parameters.add(filter.batchNo());
+        return switch (normalized) {
+            case "ACTIVE", "EXPIRED", "REDEEMED", "DISABLED" -> normalized;
+            default -> throw new IllegalArgumentException("unsupported redemption-code status");
+        };
+    }
+
+    private static <T> Page<T> pageRequest(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw new IllegalArgumentException("page or size is out of range");
         }
-        if (filter.benefitType() != null && !filter.benefitType().isBlank()) {
-            where.append(" AND benefit_type = ?");
-            parameters.add(filter.benefitType());
-        }
-        if (filter.status() != null && !filter.status().isBlank()) {
-            switch (filter.status()) {
-                case "ACTIVE" -> where.append(" AND status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)");
-                case "EXPIRED" -> where.append(" AND status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP");
-                case "REDEEMED", "DISABLED" -> {
-                    where.append(" AND status = ?");
-                    parameters.add(filter.status());
-                }
-                default -> throw new IllegalArgumentException("unsupported redemption-code status");
-            }
-        }
-        return new QueryParts(where.toString(), List.copyOf(parameters));
+        return new Page<>(Math.addExact((long) page, 1L), size, true);
     }
 
     private long lockedBalance(long userId) {
@@ -584,8 +593,12 @@ public class WalletRepository {
             String batchNo,
             String benefitType,
             String status,
-            int limit,
-            int offset) {}
+            int page,
+            int size) {}
 
-    private record QueryParts(String where, List<Object> parameters) {}
+    public record ManagedCodeQueryResult(List<ManagedRedemptionCode> items, long total) {
+        public ManagedCodeQueryResult {
+            items = List.copyOf(items);
+        }
+    }
 }

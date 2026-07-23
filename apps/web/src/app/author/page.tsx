@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, ImageUp, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, ShoppingBag, SquarePen, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookCopy, BookOpen, CalendarClock, FileText, FolderOpen, FolderPlus, Gift, Heart, Highlighter, ImageUp, Layers3, MessageSquareText, PenLine, Plus, RefreshCw, Save, Send, SquarePen, Star, Trash2 } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/app/components/ui/alert-dialog';
 import { Badge } from '@/app/components/ui/badge';
@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/ta
 import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
-import { AuthorAnalyticsReport, AuthorCommentPage, AuthorModerationAdvice, Book, BookStatusAudit, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
+import { AuthorAnalyticsReport, AuthorBookPage, AuthorCommentPage, AuthorCoverUploadResult, AuthorModerationAdvice, Book, BookCoverCandidate, BookStatusAuditPage, ChapterCandidate, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
 type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
 type VolumeDeleteResult = { id: number; deleted: boolean; detachedChapterCount: number };
@@ -51,9 +51,15 @@ const bookCategories = ['科幻', '悬疑', '古言'];
 const serialStatuses = ['连载中', '已完结'];
 const rewardPageSize = 10;
 const feedbackPageSize = 20;
+const authorBooksPageSize = 12;
+const bookStatusAuditPageSize = 12;
 
 function canEditBook(book: Book) {
   return book.status === 'DRAFT' || book.status === 'REJECTED';
+}
+
+function canManageBookCover(book: Book) {
+  return ['DRAFT', 'REJECTED', 'PUBLISHED'].includes(book.status);
 }
 
 function canEditChapter(chapter: AuthorChapter) {
@@ -85,6 +91,16 @@ function feedbackPath(bookId: number, resource: 'comments' | 'annotations', page
   if (page > 0) parameters.set('page', page.toString());
   parameters.set('size', feedbackPageSize.toString());
   return `author/books/${bookId}/${resource}?${parameters.toString()}`;
+}
+
+function authorBooksPath(page: number) {
+  const parameters = new URLSearchParams({ page: page.toString(), size: authorBooksPageSize.toString() });
+  return `author/books?${parameters.toString()}`;
+}
+
+function bookStatusAuditsPath(bookId: number, page: number) {
+  const parameters = new URLSearchParams({ page: page.toString(), size: bookStatusAuditPageSize.toString() });
+  return `author/books/${bookId}/status-audits?${parameters.toString()}`;
 }
 
 function InteractionStatusBadge({ status }: { status: string }) {
@@ -248,12 +264,26 @@ function formatRetentionPercent(value: number | null) {
   return value === null ? '待观察' : formatAnalyticsPercent(value);
 }
 
+function formatAnalyticsRating(value: number, count: number) {
+  if (!Number.isFinite(value) || count <= 0) return '暂无评分';
+  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)} 分`;
+}
+
+function AnalyticsAvailabilityNotice({ label, available, reason }: { label: string; available: boolean; reason: string }) {
+  if (available) return null;
+  return (
+    <p className="border-l-2 border-amber-500 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950" role="status">
+      <strong>历史不可观测：</strong>{label}。{reason}
+    </p>
+  );
+}
+
 function ChapterStatusBadge({ status }: { status: string }) {
   const meta = {
     DRAFT: { label: '草稿', className: 'border-stone-300 bg-stone-100 text-stone-700' },
     SCHEDULED: { label: '已排期', className: 'border-sky-200 bg-sky-50 text-sky-800' },
     PUBLISHED: { label: '已发布', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
-    NEEDS_REVIEW: { label: '需复核', className: 'border-rose-200 bg-rose-50 text-rose-800' },
+    NEEDS_REVIEW: { label: '候选待审核', className: 'border-amber-300 bg-amber-50 text-amber-900' },
   }[status] ?? { label: status, className: 'border-stone-300 bg-stone-100 text-stone-700' };
 
   return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
@@ -261,9 +291,12 @@ function ChapterStatusBadge({ status }: { status: string }) {
 
 export default function AuthorPage() {
   const [books, setBooks] = useState<Book[]>([]);
+  const [booksMeta, setBooksMeta] = useState<AuthorBookPage['meta']>();
+  const [booksPageIndex, setBooksPageIndex] = useState(0);
   const [selectedBookId, setSelectedBookId] = useState<number>();
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [chapters, setChapters] = useState<AuthorChapter[]>([]);
+  const [chapterCandidates, setChapterCandidates] = useState<ChapterCandidate[]>([]);
   const [selectedVolumeId, setSelectedVolumeId] = useState<number>();
   const [selectedDraftId, setSelectedDraftId] = useState<number>();
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>('comments');
@@ -300,6 +333,7 @@ export default function AuthorPage() {
   const [bookEditSynopsis, setBookEditSynopsis] = useState('');
   const [bookEditSerialStatus, setBookEditSerialStatus] = useState(serialStatuses[0]);
   const [bookCoverFile, setBookCoverFile] = useState<File>();
+  const [coverUploadCandidate, setCoverUploadCandidate] = useState<BookCoverCandidate>();
   const [editingChapter, setEditingChapter] = useState<AuthorChapter>();
   const [chapterEditTitle, setChapterEditTitle] = useState('');
   const [chapterEditContent, setChapterEditContent] = useState('');
@@ -312,7 +346,8 @@ export default function AuthorPage() {
   const [loading, setLoading] = useState(true);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
-  const [bookStatusAudits, setBookStatusAudits] = useState<BookStatusAudit[]>([]);
+  const [bookStatusAuditPage, setBookStatusAuditPage] = useState<BookStatusAuditPage>();
+  const [bookStatusAuditPageIndex, setBookStatusAuditPageIndex] = useState(0);
   const [bookStatusAuditsLoading, setBookStatusAuditsLoading] = useState(false);
   const [bookStatusAuditsError, setBookStatusAuditsError] = useState('');
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -321,6 +356,7 @@ export default function AuthorPage() {
   const [moderationAdviceReasons, setModerationAdviceReasons] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice>();
   const workspaceRequestId = useRef(0);
+  const booksRequestId = useRef(0);
   const bookStatusAuditRequestId = useRef(0);
   const commentRequestId = useRef(0);
   const annotationRequestId = useRef(0);
@@ -328,19 +364,27 @@ export default function AuthorPage() {
   const analyticsRequestId = useRef(0);
   const bookCoverInputRef = useRef<HTMLInputElement>(null);
 
-  const loadBooks = useCallback(async () => {
+  const loadBooks = useCallback(async (page: number) => {
+    const requestId = ++booksRequestId.current;
     setLoading(true);
     try {
-      const items = await novelApi<Book[]>('author/books', 'author');
-      setBooks(items);
+      const result = await novelApi<AuthorBookPage>(authorBooksPath(page), 'author');
+      if (requestId !== booksRequestId.current) return;
+      setBooks(result.items);
+      setBooksMeta(result.meta);
+      if (result.meta.page !== page) setBooksPageIndex(result.meta.page);
     } catch (reason) {
-      setNotice({ message: reason instanceof Error ? reason.message : '作品库暂时无法加载。', tone: 'error' });
+      if (requestId === booksRequestId.current) {
+        setBooks([]);
+        setBooksMeta(undefined);
+        setNotice({ message: reason instanceof Error ? reason.message : '作品库暂时无法加载。', tone: 'error' });
+      }
     } finally {
-      setLoading(false);
+      if (requestId === booksRequestId.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void loadBooks(); }, [loadBooks]);
+  useEffect(() => { void loadBooks(booksPageIndex); }, [booksPageIndex, loadBooks]);
 
   const loadRewardReport = useCallback(async (query: RewardQuery) => {
     const requestId = ++rewardRequestId.current;
@@ -389,19 +433,22 @@ export default function AuthorPage() {
     setWorkspaceLoading(true);
     setWorkspaceError('');
     try {
-      const [volumeItems, chapterItems] = await Promise.all([
+      const [volumeItems, chapterItems, candidateItems] = await Promise.all([
         novelApi<Volume[]>(`author/books/${bookId}/volumes`, 'author'),
         novelApi<AuthorChapter[]>(`author/books/${bookId}/chapters`, 'author'),
+        novelApi<ChapterCandidate[]>(`author/books/${bookId}/chapter-candidates`, 'author'),
       ]);
       if (requestId === workspaceRequestId.current) {
         setVolumes(volumeItems);
         setChapters(chapterItems);
+        setChapterCandidates(candidateItems);
       }
     } catch (reason) {
       if (requestId === workspaceRequestId.current) {
         const message = reason instanceof Error ? reason.message : '卷册和章节暂时无法加载。';
         setVolumes([]);
         setChapters([]);
+        setChapterCandidates([]);
         setWorkspaceError(message);
       }
     } finally {
@@ -409,16 +456,19 @@ export default function AuthorPage() {
     }
   }, []);
 
-  const loadBookStatusAudits = useCallback(async (bookId: number) => {
+  const loadBookStatusAudits = useCallback(async (bookId: number, page: number) => {
     const requestId = ++bookStatusAuditRequestId.current;
     setBookStatusAuditsLoading(true);
     setBookStatusAuditsError('');
     try {
-      const audits = await novelApi<BookStatusAudit[]>(`author/books/${bookId}/status-audits?limit=20`, 'author');
-      if (requestId === bookStatusAuditRequestId.current) setBookStatusAudits(audits);
+      const result = await novelApi<BookStatusAuditPage>(bookStatusAuditsPath(bookId, page), 'author');
+      if (requestId === bookStatusAuditRequestId.current) {
+        setBookStatusAuditPage(result);
+        if (result.meta.page !== page) setBookStatusAuditPageIndex(result.meta.page);
+      }
     } catch (reason) {
       if (requestId === bookStatusAuditRequestId.current) {
-        setBookStatusAudits([]);
+        setBookStatusAuditPage(undefined);
         setBookStatusAuditsError(failureMessage(reason, '作品处置反馈暂时无法加载。'));
       }
     } finally {
@@ -431,6 +481,7 @@ export default function AuthorPage() {
       workspaceRequestId.current += 1;
       setVolumes([]);
       setChapters([]);
+      setChapterCandidates([]);
       setSelectedVolumeId(undefined);
       setSelectedDraftId(undefined);
       setWorkspaceLoading(false);
@@ -445,19 +496,29 @@ export default function AuthorPage() {
   useEffect(() => {
     if (!selectedBookId) {
       bookStatusAuditRequestId.current += 1;
-      setBookStatusAudits([]);
+      setBookStatusAuditPage(undefined);
+      setBookStatusAuditPageIndex(0);
       setBookStatusAuditsError('');
       setBookStatusAuditsLoading(false);
       return;
     }
-    void loadBookStatusAudits(selectedBookId);
-  }, [loadBookStatusAudits, selectedBookId]);
+    void loadBookStatusAudits(selectedBookId, bookStatusAuditPageIndex);
+  }, [bookStatusAuditPageIndex, loadBookStatusAudits, selectedBookId]);
+
+  useEffect(() => {
+    setBookStatusAuditPageIndex(0);
+  }, [selectedBookId]);
 
   useEffect(() => {
     setSelectedVolumeId((current) => volumes.some((volume) => volume.id === current) ? current : volumes[0]?.id);
   }, [volumes]);
 
   const draftChapters = useMemo(() => chapters.filter((chapter) => chapter.status === 'DRAFT'), [chapters]);
+  const pendingCandidateByTargetChapterId = useMemo(() => new Map(
+    chapterCandidates
+      .filter((candidate) => candidate.status === 'PENDING_REVIEW')
+      .map((candidate) => [candidate.targetChapterId, candidate]),
+  ), [chapterCandidates]);
 
   useEffect(() => {
     setSelectedDraftId((current) => draftChapters.some((chapter) => chapter.id === current) ? current : draftChapters[0]?.id);
@@ -534,6 +595,14 @@ export default function AuthorPage() {
   );
   const totalWords = useMemo(() => books.reduce((sum, book) => sum + book.words, 0), [books]);
   const pendingBooks = useMemo(() => books.filter((book) => ['PENDING_REVIEW', 'NEEDS_REVIEW'].includes(book.status)).length, [books]);
+  const bookStatusAudits = bookStatusAuditPage?.items ?? [];
+  const analyticsHasTrendActivity = useMemo(() => (analyticsReport?.dailyTrend ?? []).some((point) => (
+    point.favoriteAddCount > 0
+    || point.favoriteRemoveCount > 0
+    || point.subscriptionAddCount > 0
+    || point.subscriptionRemoveCount > 0
+    || point.purchaseCount > 0
+  )), [analyticsReport]);
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -618,8 +687,8 @@ export default function AuthorPage() {
   };
 
   const openBookEditor = (book: Book) => {
-    if (!canEditBook(book)) {
-      announce('该作品已进入审核或发布流程，当前状态不能修改作品信息。', 'error');
+    if (!canEditBook(book) && !canManageBookCover(book)) {
+      announce('该作品当前状态不能修改作品信息或管理封面。', 'error');
       return;
     }
     setEditingBook(book);
@@ -628,6 +697,7 @@ export default function AuthorPage() {
     setBookEditSynopsis(book.synopsis);
     setBookEditSerialStatus(normalizedSerialStatus(book.serialStatus));
     setBookCoverFile(undefined);
+    setCoverUploadCandidate(undefined);
     if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
     setEditError('');
   };
@@ -636,6 +706,7 @@ export default function AuthorPage() {
     if (pendingAction === 'update-book' || pendingAction === 'upload-cover') return;
     setEditingBook(undefined);
     setBookCoverFile(undefined);
+    setCoverUploadCandidate(undefined);
     if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
     setEditError('');
   };
@@ -643,6 +714,10 @@ export default function AuthorPage() {
   const updateBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editingBook) return;
+    if (!canEditBook(editingBook)) {
+      setEditError('已发布作品不能在此修改文字信息；可单独提交封面候选审核。');
+      return;
+    }
     const nextTitle = bookEditTitle.trim();
     const nextSynopsis = bookEditSynopsis.trim();
     if (!nextTitle || !nextSynopsis) {
@@ -679,20 +754,28 @@ export default function AuthorPage() {
       setEditError('请先选择 PNG 或 JPEG 封面文件。');
       return;
     }
+    if (!canManageBookCover(editingBook)) {
+      setEditError('当前作品状态不能管理封面。');
+      return;
+    }
     setPendingAction('upload-cover');
     setEditError('');
     try {
       const form = new FormData();
       form.append('file', bookCoverFile);
-      const updated = await novelApi<Book>(`author/books/${editingBook.id}/cover`, 'author', {
+      const result = await novelApi<AuthorCoverUploadResult>(`author/books/${editingBook.id}/cover`, 'author', {
         method: 'POST',
         body: form,
       });
+      const updated = result.book;
       setBooks((current) => current.map((book) => book.id === updated.id ? updated : book));
       setEditingBook(updated);
       setBookCoverFile(undefined);
+      setCoverUploadCandidate(result.candidate ?? undefined);
       if (bookCoverInputRef.current) bookCoverInputRef.current.value = '';
-      announce(`《${updated.title}》的新封面已上传`);
+      announce(result.candidate
+        ? `《${updated.title}》的封面候选已提交审核；当前公开封面保持不变。`
+        : `《${updated.title}》的新封面已上传`);
     } catch (reason) {
       const message = failureMessage(reason, '服务暂时无法上传封面。');
       setEditError(`封面未上传：${message}`);
@@ -703,8 +786,14 @@ export default function AuthorPage() {
   };
 
   const openChapterEditor = (chapter: AuthorChapter) => {
-    if (!canEditChapter(chapter)) {
-      announce('该章节正在复核，当前状态不能继续修改。', 'error');
+    const pendingCandidate = pendingCandidateByTargetChapterId.get(chapter.id);
+    if (!canEditChapter(chapter) || pendingCandidate) {
+      announce(
+        pendingCandidate?.type === 'NEW_CHAPTER'
+          ? '该新章节候选正在审核，通过前不会向读者公开。'
+          : '该章节已有候选修改待审核；当前已发布正文仍可阅读，审核结束后才能继续修改。',
+        'error',
+      );
       return;
     }
     setSelectedBookId(chapter.bookId);
@@ -731,6 +820,7 @@ export default function AuthorPage() {
       return;
     }
 
+    const isPublishedRevision = editingChapter.status === 'PUBLISHED';
     setPendingAction('update-chapter');
     setEditError('');
     try {
@@ -742,14 +832,16 @@ export default function AuthorPage() {
           ...(chapterEditVolumeId !== undefined ? { volumeId: chapterEditVolumeId } : {}),
         }),
       });
-      setChapters((current) => current.map((chapter) => chapter.id === updated.id ? updated : chapter));
+      if (!isPublishedRevision) {
+        setChapters((current) => current.map((chapter) => chapter.id === updated.id ? updated : chapter));
+      }
       setEditingChapter(undefined);
       announce(
-        updated.status === 'NEEDS_REVIEW'
-          ? `《${updated.title}》已保存，已发布章节的修改已送入整书复核。`
+        isPublishedRevision
+          ? `《${nextTitle}》的修订候选已提交审核；当前已发布正文保持可读。`
           : `《${updated.title}》已保存`,
       );
-      await Promise.all([loadBooks(), loadBookWorkspace(updated.bookId)]);
+      await Promise.all([loadBooks(booksPageIndex), loadBookWorkspace(updated.bookId)]);
     } catch (reason) {
       const message = failureMessage(reason, '服务暂时无法保存章节。');
       setEditError(`章节未保存：${message}`);
@@ -842,11 +934,11 @@ export default function AuthorPage() {
     try {
       if (isBook) {
         await novelApi(`author/books/${bookId}`, 'author', { method: 'DELETE' });
-        setBooks((current) => current.filter((book) => book.id !== bookId));
         setSelectedBookId((current) => current === bookId ? undefined : current);
         setRewardBookId((current) => current === bookId ? undefined : current);
         setRewardQuery((current) => current.bookId === bookId ? { ...current, bookId: undefined, page: 0 } : current);
         announce(`《${target.item.title}》及其未发布内容已删除`);
+        await loadBooks(booksPageIndex);
       } else if (isVolume) {
         const result = await novelApi<VolumeDeleteResult>(`author/books/${bookId}/volumes/${target.item.id}`, 'author', { method: 'DELETE' });
         setVolumes((current) => current.filter((volume) => volume.id !== target.item.id));
@@ -859,7 +951,7 @@ export default function AuthorPage() {
         setChapters((current) => current.filter((chapter) => chapter.id !== target.item.id));
         setSelectedDraftId((current) => current === target.item.id ? undefined : current);
         announce(`《${target.item.title}》已删除`);
-        await Promise.all([loadBooks(), loadBookWorkspace(bookId)]);
+        await Promise.all([loadBooks(booksPageIndex), loadBookWorkspace(bookId)]);
       }
       setDeleteTarget(undefined);
     } catch (reason) {
@@ -883,7 +975,8 @@ export default function AuthorPage() {
       setSynopsis('');
       setSelectedBookId(book.id);
       announce(`《${book.title}》已保存为草稿`);
-      await loadBooks();
+      if (booksPageIndex === 0) await loadBooks(0);
+      else setBooksPageIndex(0);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '新建作品失败，请检查必填内容。', 'error');
     } finally {
@@ -945,8 +1038,14 @@ export default function AuthorPage() {
       });
       setChapterTitle('');
       setChapterContent('');
-      announce(submit ? (result.published ? '章节已通过自动筛查并发布' : '章节已拦截，作品进入人工复核') : '章节草稿已保存');
-      await loadBooks();
+      announce(submit
+        ? (result.published
+          ? '章节已通过自动筛查并发布'
+          : selectedBook?.status === 'PUBLISHED'
+            ? '章节候选已提交人工审核；已发布作品保持可读。'
+            : '章节候选已提交人工审核')
+        : '章节草稿已保存');
+      await loadBooks(booksPageIndex);
       await loadBookWorkspace(selectedBookId);
       if (!submit) setSelectedDraftId(result.id);
     } catch (reason) {
@@ -992,7 +1091,7 @@ export default function AuthorPage() {
     try {
       await novelApi(`author/books/${selectedBookId}/submit`, 'author', { method: 'POST' });
       announce('已提交完整作品审核');
-      await loadBooks();
+      await loadBooks(booksPageIndex);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '提交审核失败，请稍后重试。', 'error');
     } finally {
@@ -1013,9 +1112,9 @@ export default function AuthorPage() {
 
       <section className="mt-7 grid gap-px overflow-hidden border border-stone-200 bg-stone-200 sm:grid-cols-3" aria-label="作者概览" aria-busy={loading}>
         {[
-          { label: '我的作品', value: books.length.toLocaleString('zh-CN'), icon: BookCopy },
-          { label: '累计字数', value: formatWordCount(totalWords), icon: FileText },
-          { label: '待审核作品', value: pendingBooks.toLocaleString('zh-CN'), icon: Send },
+          { label: '我的作品', value: (booksMeta?.total ?? 0).toLocaleString('zh-CN'), icon: BookCopy },
+          { label: '本页字数', value: formatWordCount(totalWords), icon: FileText },
+          { label: '本页待审核', value: pendingBooks.toLocaleString('zh-CN'), icon: Send },
         ].map((metric) => {
           const Icon = metric.icon;
           return <div key={metric.label} className="bg-white px-5 py-5"><Icon size={18} className="text-emerald-700" aria-hidden="true" />{loading ? <Skeleton className="mt-3 h-8 w-16 rounded-none bg-stone-100" /> : <strong className="mt-3 block text-2xl font-semibold text-stone-950">{metric.value}</strong>}<span className="mt-1 block text-sm text-stone-600">{metric.label}</span></div>;
@@ -1026,7 +1125,7 @@ export default function AuthorPage() {
         <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold text-emerald-700">作品数据</p>
-            <h2 id="author-analytics-heading" className="mt-1 text-xl font-semibold text-stone-950">收藏、订阅与阅读数据</h2>
+            <h2 id="author-analytics-heading" className="mt-1 text-xl font-semibold text-stone-950">收藏、订阅、评分与阅读数据</h2>
           </div>
           <span className="text-sm text-stone-500" aria-live="polite">
             {analyticsLoading ? '正在加载' : analyticsReport ? `${analyticsReport.meta.from} 至 ${analyticsReport.meta.to}` : '暂未加载'}
@@ -1065,6 +1164,13 @@ export default function AuthorPage() {
         {analyticsLoading && !analyticsReport ? <div className="grid gap-px bg-stone-100 p-px sm:grid-cols-4" aria-live="polite">{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-32 rounded-none bg-white" />)}</div> : null}
         {!analyticsError && analyticsReport ? (
           <>
+            {!analyticsReport.availability.favorite.available || !analyticsReport.availability.subscription.available || !analyticsReport.availability.retention.available ? (
+              <div className="space-y-2 border-b border-stone-100 px-5 py-4">
+                <AnalyticsAvailabilityNotice label="收藏历史" {...analyticsReport.availability.favorite} />
+                <AnalyticsAvailabilityNotice label="免费作品订阅历史" {...analyticsReport.availability.subscription} />
+                <AnalyticsAvailabilityNotice label="阅读留存历史" {...analyticsReport.availability.retention} />
+              </div>
+            ) : null}
             <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-2 xl:grid-cols-4">
               <div className="bg-white px-5 py-5">
                 <Heart className="text-emerald-700" size={18} aria-hidden="true" />
@@ -1072,28 +1178,40 @@ export default function AuthorPage() {
                 <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.currentFavoriteCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">本</span></dd>
               </div>
               <div className="bg-white px-5 py-5">
-                <ShoppingBag className="text-emerald-700" size={18} aria-hidden="true" />
-                <dt className="mt-3 text-sm text-stone-600">付费购书</dt>
-                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.purchaseCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">笔</span></dd>
+                <BookCopy className="text-emerald-700" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">当前免费订阅</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.currentSubscriptionCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">本</span></dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.currentSubscriberCount.toLocaleString('zh-CN')} 位订阅读者</p>
               </div>
               <div className="bg-white px-5 py-5">
-                <Gift className="text-emerald-700" size={18} aria-hidden="true" />
-                <dt className="mt-3 text-sm text-stone-600">购书代币</dt>
-                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.purchaseTokenAmount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">代币</span></dd>
+                <Star className="text-amber-600" size={18} aria-hidden="true" />
+                <dt className="mt-3 text-sm text-stone-600">读者评分</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{formatAnalyticsRating(analyticsReport.summary.averageRating, analyticsReport.summary.ratingCount)}</dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.ratingCount.toLocaleString('zh-CN')} 人评分</p>
               </div>
               <div className="bg-white px-5 py-5">
                 <BookOpen className="text-emerald-700" size={18} aria-hidden="true" />
                 <dt className="mt-3 text-sm text-stone-600">当前阅读完成度</dt>
                 <dd className="mt-1 text-2xl font-semibold text-stone-950">{formatAnalyticsPercent(analyticsReport.summary.averageReadThroughPercent)}</dd>
-                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.activeReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.summary.completedReaderBookCount.toLocaleString('zh-CN')} 本读完</p>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.currentReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.summary.completedReaderBookCount.toLocaleString('zh-CN')} 本读完</p>
               </div>
             </dl>
 
-            <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-3">
+            <dl className="grid gap-px border-b border-stone-100 bg-stone-100 sm:grid-cols-2 xl:grid-cols-5">
               <div className="bg-white px-5 py-4">
-                <dt className="text-sm font-medium text-stone-900">作品归因订阅</dt>
-                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.subscriptionMetrics.attributedGrantCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">次</span></dd>
-                <p className="mt-1 text-xs text-stone-500">{analyticsReport.subscriptionMetrics.attributedReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.subscriptionMetrics.membershipDayCount.toLocaleString('zh-CN')} 会员天</p>
+                <dt className="text-sm font-medium text-stone-900">期间活跃阅读</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.activeReaderCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">位读者</span></dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.activeReaderBookCount.toLocaleString('zh-CN')} 条读者-作品活动</p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <dt className="text-sm font-medium text-stone-900">付费购书</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.summary.purchaseCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">笔</span></dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.summary.purchaseTokenAmount.toLocaleString('zh-CN')} 代币</p>
+              </div>
+              <div className="bg-white px-5 py-4">
+                <dt className="text-sm font-medium text-stone-900">作品归因会员兑换</dt>
+                <dd className="mt-1 text-2xl font-semibold text-stone-950">{analyticsReport.membershipAttributionMetrics.attributedGrantCount.toLocaleString('zh-CN')}<span className="ml-1 text-sm font-medium text-stone-500">次</span></dd>
+                <p className="mt-1 text-xs text-stone-500">{analyticsReport.membershipAttributionMetrics.attributedReaderCount.toLocaleString('zh-CN')} 位读者 · {analyticsReport.membershipAttributionMetrics.membershipDayCount.toLocaleString('zh-CN')} 会员天</p>
               </div>
               <div className="bg-white px-5 py-4">
                 <dt className="text-sm font-medium text-stone-900">D1 追读</dt>
@@ -1110,16 +1228,20 @@ export default function AuthorPage() {
             <div className="grid gap-7 px-5 py-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
               <section aria-labelledby="author-analytics-trend-heading">
                 <div className="flex items-baseline justify-between gap-3">
-                  <h3 id="author-analytics-trend-heading" className="text-base font-semibold text-stone-950">收藏与购书趋势</h3>
+                  <h3 id="author-analytics-trend-heading" className="text-base font-semibold text-stone-950">互动与订阅趋势</h3>
                   <span className="text-xs text-stone-500">{analyticsReport.meta.timeZone} 自然日</span>
                 </div>
-                <div className="mt-3 max-h-80 overflow-y-auto border border-stone-100">
-                  <Table className="min-w-[470px]">
-                    <TableCaption className="sr-only">所选统计区间内的收藏和成功购书趋势。</TableCaption>
+                {!analyticsHasTrendActivity ? <p className="mt-3 border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-600" role="status">所选区间暂无互动、订阅或购书事件。</p> : (
+                  <div className="mt-3 max-h-80 overflow-y-auto border border-stone-100">
+                  <Table className="min-w-[700px]">
+                    <TableCaption className="sr-only">所选统计区间内的收藏、订阅和成功购书趋势。</TableCaption>
                     <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
                       <TableRow className="border-0 hover:bg-transparent">
                         <TableHead className="px-4 py-3">日期</TableHead>
                         <TableHead className="px-4 py-3 text-right">新增收藏</TableHead>
+                        <TableHead className="px-4 py-3 text-right">取消收藏</TableHead>
+                        <TableHead className="px-4 py-3 text-right">新增订阅</TableHead>
+                        <TableHead className="px-4 py-3 text-right">取消订阅</TableHead>
                         <TableHead className="px-4 py-3 text-right">付费购书</TableHead>
                         <TableHead className="px-4 py-3 text-right">代币</TableHead>
                       </TableRow>
@@ -1129,6 +1251,9 @@ export default function AuthorPage() {
                         <TableRow key={point.date} className="border-stone-100 hover:bg-stone-50">
                           <TableCell className="whitespace-nowrap px-4 py-3 text-stone-700">{point.date}</TableCell>
                           <TableCell className="px-4 py-3 text-right font-medium text-stone-900">{point.favoriteAddCount.toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="px-4 py-3 text-right text-stone-700">{point.favoriteRemoveCount.toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="px-4 py-3 text-right font-medium text-stone-900">{point.subscriptionAddCount.toLocaleString('zh-CN')}</TableCell>
+                          <TableCell className="px-4 py-3 text-right text-stone-700">{point.subscriptionRemoveCount.toLocaleString('zh-CN')}</TableCell>
                           <TableCell className="px-4 py-3 text-right font-medium text-stone-900">{point.purchaseCount.toLocaleString('zh-CN')}</TableCell>
                           <TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{point.purchaseTokenAmount.toLocaleString('zh-CN')}</TableCell>
                         </TableRow>
@@ -1136,6 +1261,7 @@ export default function AuthorPage() {
                     </TableBody>
                   </Table>
                 </div>
+                )}
               </section>
 
               <section aria-labelledby="author-analytics-books-heading">
@@ -1145,14 +1271,16 @@ export default function AuthorPage() {
                 </div>
                 {analyticsReport.bookMetrics.length === 0 ? <p className="mt-3 border border-dashed border-stone-200 px-4 py-8 text-center text-sm text-stone-600">当前筛选范围内还没有作品数据。</p> : (
                   <div className="mt-3 max-h-80 overflow-y-auto border border-stone-100">
-                    <Table className="min-w-[570px]">
-                      <TableCaption className="sr-only">按作者作品拆分的收藏、购书和阅读完成度。</TableCaption>
+                    <Table className="min-w-[690px]">
+                      <TableCaption className="sr-only">按作者作品拆分的收藏、免费订阅、评分、期间活跃阅读和当前完成度。</TableCaption>
                       <TableHeader className="border-stone-100 bg-stone-50 text-stone-600">
                         <TableRow className="border-0 hover:bg-transparent">
                           <TableHead className="px-4 py-3">作品</TableHead>
                           <TableHead className="px-4 py-3 text-right">收藏</TableHead>
-                          <TableHead className="px-4 py-3 text-right">购书</TableHead>
-                          <TableHead className="px-4 py-3 text-right">完成度</TableHead>
+                          <TableHead className="px-4 py-3 text-right">订阅</TableHead>
+                          <TableHead className="px-4 py-3 text-right">评分</TableHead>
+                          <TableHead className="px-4 py-3 text-right">期间活跃</TableHead>
+                          <TableHead className="px-4 py-3 text-right">当前完成度</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1160,7 +1288,9 @@ export default function AuthorPage() {
                           <TableRow key={metric.bookId} className="border-stone-100 hover:bg-stone-50">
                             <TableCell className="max-w-48 px-4 py-3 font-medium text-stone-900"><span className="block truncate">{metric.bookTitle}</span></TableCell>
                             <TableCell className="px-4 py-3 text-right text-stone-700">{metric.currentFavoriteCount.toLocaleString('zh-CN')}</TableCell>
-                            <TableCell className="px-4 py-3 text-right text-stone-700">{metric.purchaseCount.toLocaleString('zh-CN')}</TableCell>
+                            <TableCell className="px-4 py-3 text-right text-stone-700">{metric.currentSubscriptionCount.toLocaleString('zh-CN')}</TableCell>
+                            <TableCell className="px-4 py-3 text-right text-stone-700">{formatAnalyticsRating(metric.averageRating, metric.ratingCount)}{metric.ratingCount > 0 ? ` · ${metric.ratingCount.toLocaleString('zh-CN')} 人` : ''}</TableCell>
+                            <TableCell className="px-4 py-3 text-right text-stone-700">{metric.activeReaderBookCount.toLocaleString('zh-CN')}</TableCell>
                             <TableCell className="px-4 py-3 text-right font-medium text-emerald-800">{formatAnalyticsPercent(metric.averageReadThroughPercent)}</TableCell>
                           </TableRow>
                         ))}
@@ -1171,7 +1301,7 @@ export default function AuthorPage() {
               </section>
             </div>
 
-            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">收藏趋势仅统计当前仍保存在书架中的新增记录；购书仅统计有对应代币扣减账本的整本购买；订阅只统计与作品一同兑换的会员权益；D1/D7 以读者首次阅读该作品后的第 1/7 个上海自然日是否再次阅读计算，观测截止至 {analyticsReport.retentionMetrics.observedThrough}。代币不是法币收入。</p>
+            <p className="border-t border-stone-100 px-5 py-4 text-xs leading-5 text-stone-500">收藏和免费订阅趋势来自不可变事件；当前收藏、订阅、评分与完成度是查询时快照。免费作品订阅不影响阅读权限、代币、支付或通知。作品归因会员兑换为旧权益账本，不等同于读者订阅。D1/D7 以读者首次阅读后第 1/7 个上海自然日是否再次阅读计算，观测截止至 {analyticsReport.retentionMetrics.observedThrough}；历史观测边界以服务端返回口径为准。代币不是法币收入。</p>
           </>
         ) : null}
       </section>
@@ -1255,23 +1385,24 @@ export default function AuthorPage() {
             <div className="divide-y divide-stone-100" aria-label="章节列表">
               {chapters.map((chapter) => {
                 const volume = volumes.find((item) => item.id === chapter.volumeId);
+                const pendingCandidate = pendingCandidateByTargetChapterId.get(chapter.id);
                 const schedule = formatPublishTime(chapter.scheduledPublishAt);
                 const canSchedule = chapter.status === 'DRAFT';
-                const editable = canEditChapter(chapter);
-                const deletable = canDeleteChapter(chapter);
+                const editable = canEditChapter(chapter) && !pendingCandidate;
+                const deletable = canDeleteChapter(chapter) && !pendingCandidate;
                 return (
                   <article key={chapter.id} className="px-5 py-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">第 {chapter.orderNo} 章 · {chapter.title}</h3><ChapterStatusBadge status={chapter.status} /></div>
                         <p className="mt-1 text-xs text-stone-500">{volume ? `第 ${volume.orderNo} 卷 · ${volume.title}` : '未归入卷册'}{schedule ? ` · 计划 ${schedule} 发布` : ''}</p>
-                        {chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
+                        {pendingCandidate ? <p className="mt-2 text-xs leading-5 text-amber-800">{pendingCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${pendingCandidate.title}》待审核：当前已发布正文保持不变且对读者可读。` : `新章节候选《${pendingCandidate.title}》待审核：通过前不会向读者公开。`}{pendingCandidate.reviewReason ? ` ${pendingCandidate.reviewReason}` : ''}</p> : chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         {canSchedule ? <Button type="button" variant="outline" onClick={() => setSelectedDraftId(chapter.id)} aria-pressed={selectedDraftId === chapter.id} className={`h-auto rounded-none px-3 py-2 text-sm ${selectedDraftId === chapter.id ? 'border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'}`}>{selectedDraftId === chapter.id ? '待排期草稿' : '选择草稿'}</Button> : null}
                         {editable ? <Button type="button" variant="outline" onClick={() => openChapterEditor(chapter)} aria-label={`编辑章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />编辑</Button> : null}
                         {deletable ? <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'chapter', item: chapter })} aria-label={`删除章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button> : null}
-                        {!editable && !deletable ? <p className="text-xs leading-5 text-stone-500">章节正在复核，当前不可修改或删除。</p> : null}
+                        {!editable && !deletable ? <p className="text-xs leading-5 text-stone-500">{pendingCandidate?.type === 'NEW_CHAPTER' ? '新章节候选待审核，通过前不可编辑或删除。' : '已有候选修改待审核；当前已发布正文保持不变且对读者可读。'}</p> : null}
                       </div>
                     </div>
                   </article>
@@ -1287,9 +1418,9 @@ export default function AuthorPage() {
           <div className="flex flex-col gap-3 border-b border-stone-200 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs font-semibold text-emerald-700">作品库</p>
-              <h2 className="mt-1 text-xl font-semibold text-stone-950">正在创作的故事</h2>
+              <h2 id="author-books-heading" className="mt-1 text-xl font-semibold text-stone-950">正在创作的故事</h2>
             </div>
-            <span className="text-sm text-stone-500">选择作品后即可继续编辑章节</span>
+            <span className="text-sm text-stone-500">{booksMeta ? `共 ${booksMeta.total.toLocaleString('zh-CN')} 部 · ` : ''}选择作品后即可继续编辑章节</span>
           </div>
 
           {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
@@ -1305,6 +1436,7 @@ export default function AuthorPage() {
               {books.map((book) => {
                 const active = book.id === selectedBookId;
                 const editable = canEditBook(book);
+                const coverManageable = canManageBookCover(book);
                 return (
                   <article key={book.id} className={active ? 'bg-emerald-50' : ''}>
                     <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1314,18 +1446,19 @@ export default function AuthorPage() {
                         <span><NovelStatusBadge status={book.status} /></span>
                         <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-800">{active ? '正在编辑' : '继续编辑'}<SquarePen size={15} aria-hidden="true" /></span>
                       </Button>
-                      {editable ? (
+                      {editable || coverManageable ? (
                         <div className="flex shrink-0 flex-wrap gap-2 border-t border-stone-100 pt-3 sm:border-t-0 sm:pt-0">
-                          <Button type="button" variant="outline" onClick={() => openBookEditor(book)} aria-label={`编辑作品《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />编辑</Button>
-                          <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'book', item: book })} aria-label={`删除作品《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button>
+                          {coverManageable ? <Button type="button" variant="outline" onClick={() => openBookEditor(book)} aria-label={`${editable ? '编辑作品' : '管理封面'}《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />{editable ? '编辑' : '管理封面'}</Button> : null}
+                          {editable ? <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'book', item: book })} aria-label={`删除作品《${book.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button> : null}
                         </div>
-                      ) : <p className="shrink-0 text-xs leading-5 text-stone-500">已进入审核或发布流程，当前仅可查看。</p>}
+                      ) : <p className="shrink-0 text-xs leading-5 text-stone-500">已进入审核流程，当前仅可查看。</p>}
                     </div>
                   </article>
                 );
               })}
             </div>
           ) : null}
+          {!loading && booksMeta ? <FeedbackPagination label="作品库" meta={booksMeta} loading={loading} onPageChange={setBooksPageIndex} /> : null}
         </div>
 
         <form onSubmit={createBook} className="border border-stone-200 bg-white p-5">
@@ -1404,9 +1537,19 @@ export default function AuthorPage() {
               <div className="mt-5 border-l-2 border-emerald-700 bg-white/70 px-4 py-3" aria-labelledby="book-status-feedback-heading">
                 <p id="book-status-feedback-heading" className="text-xs font-semibold text-emerald-700">站长处置反馈</p>
                 {bookStatusAuditsLoading ? <Skeleton className="mt-3 h-12 rounded-none bg-stone-100" /> : null}
-                {bookStatusAuditsError ? <p className="mt-2 text-sm leading-6 text-rose-800">处置反馈暂时无法显示：{bookStatusAuditsError}</p> : null}
+                {bookStatusAuditsError ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="text-sm leading-6 text-rose-800">处置反馈暂时无法显示：{bookStatusAuditsError}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void loadBookStatusAudits(selectedBook.id, bookStatusAuditPageIndex)} className="h-auto rounded-none border-rose-200 bg-white px-2.5 py-1.5 text-rose-800 hover:border-rose-500 hover:text-rose-900"><RefreshCw size={14} aria-hidden="true" />重试</Button>
+                  </div>
+                ) : null}
                 {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length === 0 ? <p className="mt-2 text-sm leading-6 text-stone-600">当前没有下线或恢复处置记录。</p> : null}
-                {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length > 0 ? <ol className="mt-3 space-y-3">{bookStatusAudits.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '作品已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatCommentTime(audit.createdAt) || '时间未知'}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol> : null}
+                {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length > 0 ? (
+                  <>
+                    <ol className="mt-3 space-y-3">{bookStatusAudits.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '作品已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatCommentTime(audit.createdAt) || '时间未知'}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol>
+                  </>
+                ) : null}
+                {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAuditPage ? <FeedbackPagination label="作品处置反馈" meta={bookStatusAuditPage.meta} loading={bookStatusAuditsLoading} onPageChange={setBookStatusAuditPageIndex} /> : null}
               </div>
               {['DRAFT', 'REJECTED'].includes(selectedBook.status) ? <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</Button> : <p className="mt-5 text-xs leading-5 text-stone-600">{selectedBook.status === 'OFFLINE' ? '该作品已下线，等待站长根据处置反馈决定是否重新进入审核。' : '该作品已进入审核或发布流程，当前仅可查看审核与处置反馈。'}</p>}
 
@@ -1712,19 +1855,19 @@ export default function AuthorPage() {
       <Dialog open={Boolean(editingBook)} onOpenChange={(open) => { if (!open) closeBookEditor(); }}>
         <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-300 bg-white text-stone-900 sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>修改作品信息</DialogTitle>
-            <DialogDescription>仅草稿或已驳回的作品可以修改信息。保存后仍需按当前审核状态继续处理。</DialogDescription>
+            <DialogTitle>{editingBook && canEditBook(editingBook) ? '修改作品信息' : '管理作品封面'}</DialogTitle>
+            <DialogDescription>{editingBook?.status === 'PUBLISHED' ? '已发布作品的文字信息保持不变。上传新封面会创建候选，当前公开封面会保留到站长批准。' : '仅草稿或已驳回的作品可以修改信息。保存后仍需按当前审核状态继续处理。'}</DialogDescription>
           </DialogHeader>
           {editError ? <div role="alert"><InlineNotice tone="error">{editError}</InlineNotice></div> : null}
           <form onSubmit={updateBook}>
             <div>
               <Label htmlFor="edit-book-title" className="text-stone-700">作品名称</Label>
-              <Input id="edit-book-title" aria-label="编辑作品名称" required value={bookEditTitle} onChange={(event) => setBookEditTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+              <Input id="edit-book-title" aria-label="编辑作品名称" required disabled={!editingBook || !canEditBook(editingBook)} value={bookEditTitle} onChange={(event) => setBookEditTitle(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
                 <Label id="edit-book-category-label" className="text-stone-700">作品分类</Label>
-                <Select value={bookEditCategory} onValueChange={setBookEditCategory}>
+                <Select value={bookEditCategory} onValueChange={setBookEditCategory} disabled={!editingBook || !canEditBook(editingBook)}>
                   <SelectTrigger aria-labelledby="edit-book-category-label" aria-label="编辑作品分类" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
                   <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
                     {bookCategories.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
@@ -1733,7 +1876,7 @@ export default function AuthorPage() {
               </div>
               <div>
                 <Label id="edit-book-serial-status-label" className="text-stone-700">连载状态</Label>
-                <Select value={bookEditSerialStatus} onValueChange={setBookEditSerialStatus}>
+                <Select value={bookEditSerialStatus} onValueChange={setBookEditSerialStatus} disabled={!editingBook || !canEditBook(editingBook)}>
                   <SelectTrigger aria-labelledby="edit-book-serial-status-label" aria-label="编辑连载状态" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
                   <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
                     {serialStatuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
@@ -1743,23 +1886,24 @@ export default function AuthorPage() {
             </div>
             <div className="mt-4">
               <Label htmlFor="edit-book-synopsis" className="text-stone-700">作品简介</Label>
-              <Textarea id="edit-book-synopsis" aria-label="编辑作品简介" required value={bookEditSynopsis} onChange={(event) => setBookEditSynopsis(event.target.value)} className="mt-2 h-32 resize-y rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+              <Textarea id="edit-book-synopsis" aria-label="编辑作品简介" required disabled={!editingBook || !canEditBook(editingBook)} value={bookEditSynopsis} onChange={(event) => setBookEditSynopsis(event.target.value)} className="mt-2 h-32 resize-y rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
             </div>
             <div className="mt-5 border-t border-stone-200 pt-5">
               <div className="flex gap-4">
                 <BookCover cover={editingBook?.cover} title={editingBook?.title ?? '作品'} category={editingBook?.category} showLabel={false} className="h-24 w-16 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <Label htmlFor="edit-book-cover" className="text-stone-700">作品封面</Label>
-                  <Input ref={bookCoverInputRef} id="edit-book-cover" aria-label="上传作品封面" type="file" accept="image/png,image/jpeg" onChange={(event) => setBookCoverFile(event.target.files?.[0])} disabled={pendingAction !== undefined} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
+                  <Input ref={bookCoverInputRef} id="edit-book-cover" aria-label="上传作品封面" type="file" accept="image/png,image/jpeg" onChange={(event) => setBookCoverFile(event.target.files?.[0])} disabled={!editingBook || !canManageBookCover(editingBook) || pendingAction !== undefined} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
                   <p className="mt-2 text-xs leading-5 text-stone-500">仅 PNG 或 JPEG，最大 5 MB；上传后由服务端验证图片内容。</p>
                   {bookCoverFile ? <p className="mt-1 truncate text-xs text-stone-600">已选择：{bookCoverFile.name}</p> : null}
-                  <Button type="button" variant="outline" onClick={() => void uploadBookCover()} disabled={!bookCoverFile || pendingAction !== undefined} className="mt-3 h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><ImageUp size={16} aria-hidden="true" />{pendingAction === 'upload-cover' ? '上传中' : '上传新封面'}</Button>
+                  {coverUploadCandidate ? <p className="mt-2 text-xs leading-5 text-amber-800" role="status">封面候选 #{coverUploadCandidate.id} 待审核：当前公开封面保持不变。</p> : null}
+                  <Button type="button" variant="outline" onClick={() => void uploadBookCover()} disabled={!bookCoverFile || !editingBook || !canManageBookCover(editingBook) || pendingAction !== undefined} className="mt-3 h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><ImageUp size={16} aria-hidden="true" />{pendingAction === 'upload-cover' ? '上传中' : '上传新封面'}</Button>
                 </div>
               </div>
             </div>
             <DialogFooter className="mt-6">
               <Button type="button" variant="outline" onClick={closeBookEditor} disabled={pendingAction === 'update-book' || pendingAction === 'upload-cover'} className="rounded-none border-stone-300 bg-white text-stone-700">取消</Button>
-              <Button type="submit" disabled={pendingAction === 'update-book' || pendingAction === 'upload-cover'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-book' ? '保存中' : '保存作品信息'}</Button>
+              {editingBook && canEditBook(editingBook) ? <Button type="submit" disabled={pendingAction === 'update-book' || pendingAction === 'upload-cover'} className="rounded-none bg-emerald-700 hover:bg-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />{pendingAction === 'update-book' ? '保存中' : '保存作品信息'}</Button> : null}
             </DialogFooter>
           </form>
         </DialogContent>
@@ -1769,7 +1913,7 @@ export default function AuthorPage() {
         <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-300 bg-white text-stone-900 sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>修改章节</DialogTitle>
-            <DialogDescription>{editingChapter?.status === 'PUBLISHED' ? '修改已发布章节后，服务端会将章节和整部作品转入复核，修改不会立即公开。' : '草稿和已排期章节会保留现有的发布状态与发布时间。'}</DialogDescription>
+            <DialogDescription>{editingChapter?.status === 'PUBLISHED' ? '修改已发布章节会创建修订候选等待审核；当前已发布正文持续对读者可读，批准后才会原子替换。' : '草稿和已排期章节会保留现有的发布状态与发布时间。'}</DialogDescription>
           </DialogHeader>
           {editError ? <div role="alert"><InlineNotice tone="error">{editError}</InlineNotice></div> : null}
           <form onSubmit={updateChapter}>

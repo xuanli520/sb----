@@ -1,0 +1,5 @@
+# Replace the hostname before enabling this site. Caddy obtains and renews the
+# certificate; Compose Nginx stays a loopback-only HTTP upstream.
+novel.example.com {
+    reverse_proxy 127.0.0.1:8080
+}

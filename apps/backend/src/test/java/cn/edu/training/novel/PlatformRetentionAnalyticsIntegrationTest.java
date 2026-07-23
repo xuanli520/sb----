@@ -18,16 +18,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:platform_retention_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class PlatformRetentionAnalyticsIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -38,7 +37,7 @@ class PlatformRetentionAnalyticsIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .build();
     }
 
@@ -93,7 +92,7 @@ class PlatformRetentionAnalyticsIntegrationTest {
     @Test
     void deniesReadersAndRejectsInvalidReportWindows() throws Exception {
         mvc.perform(get("/api/v1/admin/analytics/retention")
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .param("from", "2026-07-01")
                         .param("to", "2026-07-02")
                         .param("asOf", "2026-07-10"))

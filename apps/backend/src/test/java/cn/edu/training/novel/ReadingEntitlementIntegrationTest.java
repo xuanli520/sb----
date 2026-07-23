@@ -31,9 +31,9 @@ import org.springframework.web.context.WebApplicationContext;
  * browser-provided role header for reader entitlements, then proves the development author/admin
  * identities retain their management access.
  */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=reader-entitlement-test-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "novel.auth.bcrypt-strength=4",
         "spring.datasource.url=jdbc:h2:mem:reading_entitlement_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
@@ -168,7 +168,7 @@ class ReadingEntitlementIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         long annotationId = ((Number) com.jayway.jsonpath.JsonPath.read(annotationBody, "$.data.id")).longValue();
         mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", annotationId)
-                        .header("X-Novel-Development-Principal", "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"审核通过\"}"))
                 .andExpect(status().isOk());
@@ -217,12 +217,12 @@ class ReadingEntitlementIntegrationTest {
                 .andExpect(jsonPath("$.data.chapters[1].content").value(nullValue()));
 
         mvc.perform(get("/api/v1/account/books/{bookId}/reading", BOOK_ID)
-                        .header("X-Novel-Development-Principal", "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.access.source").value("AUTHOR"))
                 .andExpect(jsonPath("$.data.chapters[1].content").value(LOCKED_BODY));
         mvc.perform(get("/api/v1/account/books/{bookId}/reading", BOOK_ID)
-                        .header("X-Novel-Development-Principal", "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.access.source").value("ADMIN"))
                 .andExpect(jsonPath("$.data.chapters[1].content").value(LOCKED_BODY));

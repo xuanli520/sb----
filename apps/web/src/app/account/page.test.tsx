@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AnchorHTMLAttributes } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,6 +34,13 @@ function mockAccountApi(
     ],
     meta: { total: 2, page: 0, size: 20 },
   }),
+  bookshelfResponse: (page: number, endpoint: string) => Response = () => response({
+    items: [
+      { id: 7, title: '北岸灯塔', author: '林见川', category: '悬疑', words: 32_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'SERIALIZING', cover: '' },
+      { id: 9, title: '星海拾光', author: '周以南', category: '科幻', words: 80_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'COMPLETED', cover: '' },
+    ],
+    meta: { total: 2, page: 0, size: 8 },
+  }),
 ) {
   let authorApplicationRequestCount = 0;
   let profileUpdateRequestCount = 0;
@@ -45,11 +52,9 @@ function mockAccountApi(
     if (method === 'GET' && endpoint === 'account/profile') {
       return Promise.resolve(response({ id: 47, name: '阅界读者', roles: ['READER'] }));
     }
-    if (method === 'GET' && endpoint === 'account/bookshelf') {
-      return Promise.resolve(response([
-        { id: 7, title: '北岸灯塔', author: '林见川', category: '悬疑', words: 32_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'SERIALIZING', cover: '' },
-        { id: 9, title: '星海拾光', author: '周以南', category: '科幻', words: 80_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'COMPLETED', cover: '' },
-      ]));
+    if (method === 'GET' && endpoint.startsWith('account/bookshelf?')) {
+      const page = Number(new URLSearchParams(endpoint.split('?')[1]).get('page') ?? '0');
+      return Promise.resolve(bookshelfResponse(page, endpoint));
     }
     if (method === 'GET' && endpoint === 'account/progress') {
       return Promise.resolve(response([
@@ -82,7 +87,7 @@ function mockAccountApi(
           : authorApplication,
       ));
     }
-    if (method === 'GET' && (endpoint === 'account/comments?size=20' || endpoint === 'account/comments?size=20&page=1')) {
+    if (method === 'GET' && (endpoint === 'account/comments?page=0&size=20' || endpoint === 'account/comments?page=1&size=20')) {
       commentsRequestCount += 1;
       return Promise.resolve(commentsResponse(commentsRequestCount, endpoint));
     }
@@ -138,7 +143,7 @@ describe('reader account center', () => {
     expect(screen.getByRole('link', { name: '开始阅读《星海拾光》' }).getAttribute('href')).toBe('/reader/9');
     expect(screen.getByRole('link', { name: '阅读《北岸灯塔》' }).getAttribute('href')).toBe('/reader/7');
 
-    for (const endpoint of ['account/profile', 'account/bookshelf', 'account/progress', 'account/wallet', 'account/entitlements', 'account/author-applications', 'account/comments?size=20']) {
+    for (const endpoint of ['account/profile', 'account/bookshelf?page=0&size=8', 'account/progress', 'account/wallet', 'account/entitlements', 'account/author-applications', 'account/comments?page=0&size=20']) {
       expect(fetchMock).toHaveBeenCalledWith(`/api/novel/${endpoint}`, expect.anything());
     }
   });
@@ -174,11 +179,11 @@ describe('reader account center', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
 
     expect(await screen.findByText('重试后可见的书评。')).toBeTruthy();
-    expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/novel/account/comments?size=20')).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/novel/account/comments?page=0&size=20')).toHaveLength(2);
   });
 
   it('loads the next page of the current reader comments', async () => {
-    const fetchMock = mockAccountApi(null, undefined, (_requestCount, endpoint) => endpoint.endsWith('page=1')
+    const fetchMock = mockAccountApi(null, undefined, (_requestCount, endpoint) => endpoint.includes('page=1')
       ? response({
         items: [{ id: 75, bookId: 9, chapterId: 4, userId: 47, authorName: '阅界读者', content: '第二页的评论。', status: 'VISIBLE', createdAt: '2026-07-21T10:30:00Z' }],
         meta: { total: 2, page: 1, size: 1 },
@@ -190,11 +195,29 @@ describe('reader account center', () => {
     render(<AccountPage />);
 
     expect(await screen.findByText('第一页的评论。')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '下一页评论' }));
+    fireEvent.click(screen.getByRole('link', { name: '下一页' }));
 
     expect(await screen.findByText('第二页的评论。')).toBeTruthy();
     expect(screen.getByText('第 2 / 2 页')).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/comments?size=20&page=1', expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/comments?page=1&size=20', expect.anything());
+  });
+
+  it('uses the strict server bookshelf page envelope and shared pagination controls', async () => {
+    const fetchMock = mockAccountApi(null, undefined, undefined, (page) => response({
+      items: page === 1
+        ? [{ id: 29, title: '第二页书架作品', author: '周以南', category: '科幻', words: 80_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'COMPLETED', cover: '' }]
+        : [{ id: 7, title: '第一页书架作品', author: '林见川', category: '悬疑', words: 32_000, synopsis: '', status: 'PUBLISHED', serialStatus: 'SERIALIZING', cover: '' }],
+      meta: { total: 9, page, size: 8 },
+    }));
+    render(<AccountPage />);
+
+    const bookshelf = await screen.findByRole('region', { name: '我的书架' });
+    expect(within(bookshelf).getByText('第一页书架作品')).toBeTruthy();
+    const pagination = within(bookshelf).getByRole('navigation', { name: '书架分页' });
+    fireEvent.click(within(pagination).getByRole('link', { name: '下一页' }));
+
+    expect(await within(bookshelf).findByText('第二页书架作品')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/bookshelf?page=1&size=8', expect.anything());
   });
 
   it('shows current membership and book entitlements without making payment claims', async () => {

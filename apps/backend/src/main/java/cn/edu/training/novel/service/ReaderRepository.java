@@ -1,8 +1,8 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.Bookmark;
-import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatus;
+import cn.edu.training.novel.domain.BookSubscription;
 import cn.edu.training.novel.domain.ReadingPreference;
 import cn.edu.training.novel.domain.ReadingProgress;
 import java.sql.Date;
@@ -53,20 +53,6 @@ public class ReaderRepository {
             resultSet.getInt("character_offset"),
             resultSet.getString("note"),
             instant(resultSet.getTimestamp("created_at")));
-    private static final RowMapper<Book> SHELF_BOOK_MAPPER = (resultSet, rowNumber) -> new Book(
-            resultSet.getLong("id"),
-            resultSet.getString("title"),
-            resultSet.getString("author_name"),
-            resultSet.getString("category"),
-            resultSet.getInt("word_count"),
-            resultSet.getString("serial_status"),
-            resultSet.getString("synopsis"),
-            resultSet.getString("cover"),
-            BookStatus.valueOf(resultSet.getString("status")),
-            resultSet.getLong("author_id"),
-            resultSet.getLong("heat"),
-            resultSet.getLong("purchase_price"));
-
     private final JdbcTemplate jdbc;
 
     public ReaderRepository(JdbcTemplate jdbc) {
@@ -83,6 +69,7 @@ public class ReaderRepository {
                 "DELETE FROM novel_reader_bookshelf WHERE user_id = ? AND book_id = ?",
                 userId,
                 bookId) == 1) {
+            recordFavoriteEvent(userId, bookId, "UNFAVORITED");
             return false;
         }
         try {
@@ -95,16 +82,74 @@ public class ReaderRepository {
             if (inserted != 1) {
                 throw new java.util.NoSuchElementException("book not published");
             }
+            recordFavoriteEvent(userId, bookId, "FAVORITED");
             return true;
         } catch (DuplicateKeyException exception) {
             // A concurrent toggle inserted the same row after our DELETE. Applying this toggle
             // removes that durable row, which preserves two sequential toggle operations.
-            jdbc.update(
+            int removed = jdbc.update(
                     "DELETE FROM novel_reader_bookshelf WHERE user_id = ? AND book_id = ?",
                     userId,
                     bookId);
+            if (removed == 1) {
+                recordFavoriteEvent(userId, bookId, "UNFAVORITED");
+            }
             return false;
         }
+    }
+
+    /**
+     * A subscription is an idempotent, free reader-follow operation. The current-state primary
+     * key is the idempotency boundary; only a state transition creates an immutable event.
+     */
+    @Transactional
+    public BookSubscription subscribe(long userId, long bookId) {
+        try {
+            int inserted = jdbc.update(
+                    "INSERT INTO novel_book_subscription(user_id, book_id, subscribed_at) "
+                            + "SELECT ?, id, CURRENT_TIMESTAMP FROM novel_book WHERE id = ? AND status = ?",
+                    userId,
+                    bookId,
+                    BookStatus.PUBLISHED.name());
+            if (inserted != 1) {
+                throw new java.util.NoSuchElementException("book not published");
+            }
+            recordSubscriptionEvent(userId, bookId, "SUBSCRIBED");
+        } catch (DuplicateKeyException ignored) {
+            // The existing state is the successful result of a retried or concurrent subscribe.
+        }
+        return subscriptionFor(userId, bookId)
+                .orElseThrow(() -> new IllegalStateException("book subscription was not saved"));
+    }
+
+    /** Removing an absent subscription is intentionally idempotent and never emits a fake event. */
+    @Transactional
+    public BookSubscription unsubscribe(long userId, long bookId) {
+        if (jdbc.update(
+                "DELETE FROM novel_book_subscription WHERE user_id = ? AND book_id = ?",
+                userId,
+                bookId) == 1) {
+            recordSubscriptionEvent(userId, bookId, "UNSUBSCRIBED");
+        }
+        return new BookSubscription(bookId, false, null);
+    }
+
+    public List<BookSubscription> subscriptions(long userId) {
+        return jdbc.query(
+                "SELECT subscription.book_id, subscription.subscribed_at "
+                        + "FROM novel_book_subscription subscription "
+                        + "JOIN novel_book book ON book.id = subscription.book_id "
+                        + "WHERE subscription.user_id = ? AND book.status = ? "
+                        + "ORDER BY subscription.subscribed_at DESC, subscription.book_id ASC",
+                (resultSet, rowNumber) -> new BookSubscription(
+                        resultSet.getLong("book_id"), true, instant(resultSet.getTimestamp("subscribed_at"))),
+                userId,
+                BookStatus.PUBLISHED.name());
+    }
+
+    public BookSubscription subscription(long userId, long bookId) {
+        return subscriptionFor(userId, bookId)
+                .orElseGet(() -> new BookSubscription(bookId, false, null));
     }
 
     public Set<Long> shelf(long userId) {
@@ -116,22 +161,6 @@ public class ReaderRepository {
                 userId,
                 BookStatus.PUBLISHED.name());
         return Collections.unmodifiableSet(new LinkedHashSet<>(books));
-    }
-
-    /**
-     * Returns visible shelf entries and their catalog data from one statement. Keeping visibility
-     * and projection together means a concurrent takedown can only omit a row; it cannot turn the
-     * account endpoint into a later per-book 404.
-     */
-    public List<Book> shelfBooks(long userId) {
-        return jdbc.query(
-                "SELECT book.id, book.title, book.author_name, book.category, book.word_count, book.serial_status, "
-                        + "book.synopsis, book.cover, book.status, book.author_id, book.heat, book.purchase_price "
-                        + "FROM novel_reader_bookshelf shelf JOIN novel_book book ON book.id = shelf.book_id "
-                        + "WHERE shelf.user_id = ? AND book.status = ? ORDER BY shelf.added_at DESC, shelf.book_id ASC",
-                SHELF_BOOK_MAPPER,
-                userId,
-                BookStatus.PUBLISHED.name());
     }
 
     /**
@@ -235,6 +264,24 @@ public class ReaderRepository {
         }
     }
 
+    private void recordFavoriteEvent(long userId, long bookId, String eventType) {
+        jdbc.update(
+                "INSERT INTO novel_reader_favorite_event(user_id, book_id, event_type, occurred_at) "
+                        + "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                userId,
+                bookId,
+                eventType);
+    }
+
+    private void recordSubscriptionEvent(long userId, long bookId, String eventType) {
+        jdbc.update(
+                "INSERT INTO novel_book_subscription_event(user_id, book_id, event_type, occurred_at) "
+                        + "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                userId,
+                bookId,
+                eventType);
+    }
+
     public List<ReadingProgress> progress(long userId) {
         return jdbc.query(
                 "SELECT book_id, chapter_id, character_offset, updated_at FROM novel_reader_progress "
@@ -248,6 +295,16 @@ public class ReaderRepository {
                 "SELECT book_id, chapter_id, character_offset, updated_at FROM novel_reader_progress "
                         + "WHERE user_id = ? AND book_id = ?",
                 PROGRESS_MAPPER,
+                userId,
+                bookId);
+        return values.stream().findFirst();
+    }
+
+    private Optional<BookSubscription> subscriptionFor(long userId, long bookId) {
+        List<BookSubscription> values = jdbc.query(
+                "SELECT book_id, subscribed_at FROM novel_book_subscription WHERE user_id = ? AND book_id = ?",
+                (resultSet, rowNumber) -> new BookSubscription(
+                        resultSet.getLong("book_id"), true, instant(resultSet.getTimestamp("subscribed_at"))),
                 userId,
                 bookId);
         return values.stream().findFirst();

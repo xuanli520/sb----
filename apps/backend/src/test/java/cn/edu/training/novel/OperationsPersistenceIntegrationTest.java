@@ -13,9 +13,12 @@ import cn.edu.training.novel.domain.Chapter;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.Comment;
 import cn.edu.training.novel.domain.Role;
+import cn.edu.training.novel.mapper.InteractionPageMapper;
+import cn.edu.training.novel.mapper.WalletPageMapper;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
+import cn.edu.training.novel.service.BookPageService;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.CommercialRuleService;
 import cn.edu.training.novel.service.ContentModerationService;
@@ -61,12 +64,15 @@ class OperationsPersistenceIntegrationTest {
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
+    @Autowired BookPageService bookPageService;
     @Autowired AuditTrail auditTrail;
     @Autowired CommercialRuleService commercialRuleService;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired MockMvc mvc;
     @Autowired OperationsRepository operationsRepository;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired InteractionPageMapper interactionPageMapper;
+    @Autowired WalletPageMapper walletPageMapper;
 
     @Test
     void authorApplicationsSurviveRecreationBlockSecondPendingAndPersistDecisions() throws Exception {
@@ -276,15 +282,16 @@ class OperationsPersistenceIntegrationTest {
         return new NovelStore(
                 auditTrail,
                 new CatalogRepository(jdbcTemplate),
-                new WalletRepository(jdbcTemplate),
+                new WalletRepository(jdbcTemplate, walletPageMapper),
                 commercialRuleService,
                 new ReaderRepository(jdbcTemplate),
-                new InteractionRepository(jdbcTemplate),
+                new InteractionRepository(jdbcTemplate, interactionPageMapper),
                 new OperationsRepository(jdbcTemplate),
                 authService,
                 contentModerationService,
                 contentModerationReviewService,
-                bookModerationSnapshotService);
+                bookModerationSnapshotService,
+                bookPageService);
     }
 
     private static void awaitLatch(CountDownLatch latch) {

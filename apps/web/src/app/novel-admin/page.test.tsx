@@ -405,6 +405,14 @@ describe('admin comment review queue', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/comments?status=PENDING_REVIEW&size=20', expect.anything()));
   });
 
+  it('keeps standalone carousel resources out of the aggregate workspace', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    await screen.findByText('这条评论命中了内容规则。');
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/admin/home-carousel') || String(input).includes('/admin/media/banners'))).toBe(false);
+  });
+
   it('submits the default approval reason and an operator-supplied rejection reason', async () => {
     const fetchMock = mockAdminApi();
     render(<NovelAdminPage />);
@@ -701,7 +709,7 @@ describe('admin account and taxonomy operations', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-summary', expect.anything()));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-events?page=0&size=20', expect.anything()));
 
-    fireEvent.click(screen.getByRole('button', { name: '下一页用户行为' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: '用户行为分页' })).getByRole('link', { name: '下一页' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/behavior-events?page=1&size=20', expect.anything()));
     expect(screen.getByText('第 2 / 2 页')).toBeTruthy();
   });

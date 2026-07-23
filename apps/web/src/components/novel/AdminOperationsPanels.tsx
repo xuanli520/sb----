@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, ChevronLeft, ChevronRight, History, Plus, Search, ShieldOff, Tags, UserCheck, UsersRound } from 'lucide-react';
+import { Activity, History, Plus, Search, ShieldOff, Tags, UserCheck, UsersRound } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -13,6 +13,7 @@ import {
 } from '@/app/components/ui/dialog';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Switch } from '@/app/components/ui/switch';
@@ -78,10 +79,65 @@ type TaxonomyDraft = { name: string; sortOrder: string };
 
 const initialFilters: AccountFilters = { query: '', status: 'ALL', role: 'ALL' };
 
-function accountRoute(filters: AccountFilters) {
-  const params = new URLSearchParams({ status: filters.status, role: filters.role, page: '0', size: '20' });
+function accountRoute(filters: AccountFilters, page: number) {
+  const params = new URLSearchParams({ status: filters.status, role: filters.role, page: page.toString(), size: '20' });
   if (filters.query.trim()) params.set('query', filters.query.trim());
   return `admin/accounts?${params.toString()}`;
+}
+
+function PageControls({
+  label,
+  page,
+  size,
+  total,
+  loading,
+  onPageChange,
+}: {
+  label: string;
+  page: number;
+  size: number;
+  total: number;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / Math.max(1, size)));
+  if (pageCount <= 1) return null;
+  const previousDisabled = loading || page <= 0;
+  const nextDisabled = loading || page >= pageCount - 1;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-stone-100 px-5 py-3 text-xs text-stone-500 sm:flex-row sm:items-center sm:justify-between">
+      <span>第 {page + 1} / {pageCount} 页</span>
+      <Pagination aria-label={`${label}分页`} className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#"
+              aria-disabled={previousDisabled}
+              tabIndex={previousDisabled ? -1 : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!previousDisabled) onPageChange(page - 1);
+              }}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              href="#"
+              aria-disabled={nextDisabled}
+              tabIndex={nextDisabled ? -1 : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!nextDisabled) onPageChange(page + 1);
+              }}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
 }
 
 function displayTime(value: string) {
@@ -242,10 +298,10 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
   const includesAccounts = mode === 'all' || mode === 'accounts';
   const includesCatalog = mode === 'all' || mode === 'catalog';
 
-  const loadAccounts = useCallback(async (activeFilters: AccountFilters, showLoading = true) => {
+  const loadAccounts = useCallback(async (activeFilters: AccountFilters, page = 0, showLoading = true) => {
     if (showLoading) setAccountsLoading(true);
     try {
-      const next = await novelApi<AccountPage>(accountRoute(activeFilters), 'admin');
+      const next = await novelApi<AccountPage>(accountRoute(activeFilters, page), 'admin');
       setAccounts(next);
       setAccountsLoaded(true);
     } finally {
@@ -269,7 +325,7 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
   const load = useCallback(async () => {
     try {
       await Promise.all([
-        ...(includesAccounts ? [loadAccounts(initialFilters)] : []),
+        ...(includesAccounts ? [loadAccounts(initialFilters, 0)] : []),
         ...(includesCatalog ? [loadTaxonomy()] : []),
       ]);
     } catch (reason) {
@@ -296,7 +352,7 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
       setNotice({ tone: 'success', message: change.changed
         ? `${account.displayName}已${enabled ? '恢复' : '暂停'}，会话状态已同步更新。`
         : `${account.displayName}已经处于该状态。` });
-      await loadAccounts(filters);
+      await loadAccounts(filters, accounts?.page ?? 0);
     } catch (reason) {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '更新账号状态失败。' });
     } finally {
@@ -395,7 +451,7 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
 
   const submitAccountSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void loadAccounts(filters).catch((reason) => {
+    void loadAccounts(filters, 0).catch((reason) => {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '账号检索失败。' });
     });
   };
@@ -483,7 +539,17 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
             </Table>
           </div>
         ) : null}
-        {accountsLoaded && accounts ? <p className="border-t border-stone-100 px-5 py-3 text-xs text-stone-500">共 {accounts.total.toLocaleString('zh-CN')} 个账号，当前显示 {accounts.items.length} 个。</p> : null}
+        {accountsLoaded && accounts ? <>
+          <p className="border-t border-stone-100 px-5 py-3 text-xs text-stone-500">共 {accounts.total.toLocaleString('zh-CN')} 个账号，当前显示 {accounts.items.length} 个。</p>
+          <PageControls
+            label="账号列表"
+            page={accounts.page}
+            size={accounts.size}
+            total={accounts.total}
+            loading={accountsLoading}
+            onPageChange={(page) => void loadAccounts(filters, page)}
+          />
+        </> : null}
       </section> : null}
 
       {includesCatalog ? <div className="mt-5 grid gap-6 xl:grid-cols-2">
@@ -528,7 +594,14 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
               {behaviorEvents?.items.length === 0 ? <p className="py-7 text-center text-sm text-stone-500">暂无可查询的行为记录。</p> : null}
               {behaviorEvents?.items.map((event, index) => <article key={`${event.eventType}-${event.occurredAt}-${index}`} className="grid gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-4"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium text-stone-900">{behaviorEventLabels[event.eventType] ?? event.eventType}</span>{event.status ? <Badge variant="outline" className="rounded-none border-stone-200 bg-stone-50 text-xs text-stone-700">{event.status}</Badge> : null}</div><p className="mt-1 truncate text-xs text-stone-600" title={behaviorResource(event)}>{behaviorResource(event)}</p></div><time className="whitespace-nowrap text-xs text-stone-500">{displayTime(event.occurredAt)}</time></article>)}
             </div>
-            {behaviorEvents && behaviorPageCount > 1 ? <div className="flex items-center justify-end gap-2 border-t border-stone-100 py-3"><span className="mr-auto text-xs text-stone-500">第 {behaviorEvents.page + 1} / {behaviorPageCount} 页</span><Button type="button" variant="outline" size="icon" title="上一页用户行为" aria-label="上一页用户行为" onClick={() => void loadBehaviorPage(behaviorEvents.page - 1)} disabled={behaviorEvents.page === 0 || pendingAction === `account-behavior-page-${behaviorAccount?.id}-${behaviorEvents.page - 1}`} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ChevronLeft size={16} aria-hidden="true" /></Button><Button type="button" variant="outline" size="icon" title="下一页用户行为" aria-label="下一页用户行为" onClick={() => void loadBehaviorPage(behaviorEvents.page + 1)} disabled={behaviorEvents.page + 1 >= behaviorPageCount || pendingAction === `account-behavior-page-${behaviorAccount?.id}-${behaviorEvents.page + 1}`} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ChevronRight size={16} aria-hidden="true" /></Button></div> : null}
+            {behaviorEvents && behaviorPageCount > 1 ? <PageControls
+              label="用户行为"
+              page={behaviorEvents.page}
+              size={behaviorEvents.size}
+              total={behaviorEvents.total}
+              loading={Boolean(pendingAction?.startsWith(`account-behavior-page-${behaviorAccount?.id}-`))}
+              onPageChange={(page) => void loadBehaviorPage(page)}
+            /> : null}
           </section>
         </DialogContent>
       </Dialog>

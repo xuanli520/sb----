@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -28,6 +29,20 @@ public class AuthorAnalyticsRepository {
                 authorId,
                 bookId);
         return count != null && count > 0;
+    }
+
+    /**
+     * The event tables cannot truthfully describe a calendar range before the migration that
+     * introduced them. Flyway's successful-install timestamp is the durable observation
+     * boundary, rather than an arbitrary application release date.
+     */
+    public Optional<Instant> migrationInstalledAt(String version) {
+        List<Instant> values = jdbc.query(
+                "SELECT installed_on FROM flyway_schema_history "
+                        + "WHERE version = ? AND success = TRUE ORDER BY installed_rank DESC",
+                (resultSet, rowNumber) -> resultSet.getTimestamp("installed_on").toInstant(),
+                version);
+        return values.stream().findFirst();
     }
 
     public long countOwnedBooks(AnalyticsFilter filter) {
@@ -60,15 +75,18 @@ public class AuthorAnalyticsRepository {
         return count == null ? 0 : count;
     }
 
-    public List<TimedBookRow> findShelfAdds(AnalyticsFilter filter) {
-        QueryParts filters = ownerFilter(filter, "shelf.added_at");
+    /** Immutable favorite changes, including a conservative V33 backfill of current shelf rows. */
+    public List<EngagementEventRow> findFavoriteEvents(AnalyticsFilter filter) {
+        QueryParts filters = ownerFilter(filter, "favorite_event.occurred_at");
         return jdbc.query(
-                "SELECT shelf.book_id, shelf.added_at FROM novel_reader_bookshelf shelf "
-                        + "JOIN novel_book b ON b.id = shelf.book_id"
+                "SELECT favorite_event.book_id, favorite_event.event_type, favorite_event.occurred_at "
+                        + "FROM novel_reader_favorite_event favorite_event "
+                        + "JOIN novel_book b ON b.id = favorite_event.book_id"
                         + filters.where(),
-                (resultSet, rowNumber) -> new TimedBookRow(
+                (resultSet, rowNumber) -> new EngagementEventRow(
                         resultSet.getLong("book_id"),
-                        resultSet.getTimestamp("added_at").toInstant()),
+                        resultSet.getString("event_type"),
+                        resultSet.getTimestamp("occurred_at").toInstant()),
                 filters.parameters().toArray());
     }
 
@@ -130,6 +148,48 @@ public class AuthorAnalyticsRepository {
                 filters.parameters().toArray());
     }
 
+    /** Current free follow state is independent of membership attribution and selected dates. */
+    public List<CurrentSubscriptionRow> findCurrentSubscriptions(AnalyticsFilter filter) {
+        QueryParts filters = ownerFilter(filter, null);
+        return jdbc.query(
+                "SELECT subscription.user_id, subscription.book_id FROM novel_book_subscription subscription "
+                        + "JOIN novel_book b ON b.id = subscription.book_id"
+                        + filters.where(),
+                (resultSet, rowNumber) -> new CurrentSubscriptionRow(
+                        resultSet.getLong("user_id"), resultSet.getLong("book_id")),
+                filters.parameters().toArray());
+    }
+
+    /** Free-follow event changes in the selected report window. */
+    public List<EngagementEventRow> findSubscriptionEvents(AnalyticsFilter filter) {
+        QueryParts filters = ownerFilter(filter, "subscription_event.occurred_at");
+        return jdbc.query(
+                "SELECT subscription_event.book_id, subscription_event.event_type, subscription_event.occurred_at "
+                        + "FROM novel_book_subscription_event subscription_event "
+                        + "JOIN novel_book b ON b.id = subscription_event.book_id"
+                        + filters.where(),
+                (resultSet, rowNumber) -> new EngagementEventRow(
+                        resultSet.getLong("book_id"),
+                        resultSet.getString("event_type"),
+                        resultSet.getTimestamp("occurred_at").toInstant()),
+                filters.parameters().toArray());
+    }
+
+    /** Rating stats are transactional interaction read-model rows and may be absent for zeroes. */
+    public List<InteractionStatRow> findInteractionStats(AnalyticsFilter filter) {
+        QueryParts filters = ownedBooks(filter);
+        return jdbc.query(
+                "SELECT b.id AS book_id, COALESCE(stats.rating_count, 0) AS rating_count, "
+                        + "COALESCE(stats.rating_total, 0) AS rating_total "
+                        + "FROM novel_book b LEFT JOIN novel_book_interaction_stat stats ON stats.book_id = b.id"
+                        + filters.where(),
+                (resultSet, rowNumber) -> new InteractionStatRow(
+                        resultSet.getLong("book_id"),
+                        resultSet.getLong("rating_count"),
+                        resultSet.getLong("rating_total")),
+                filters.parameters().toArray());
+    }
+
     /**
      * Returns a bounded, immutable activity history for reader-work cohorts whose first event is
      * in the report window. Activity dates are already persisted in Asia/Shanghai by the writer,
@@ -164,11 +224,11 @@ public class AuthorAnalyticsRepository {
     }
 
     /**
-     * Progress is an overwrite-only reader state. This query intentionally selects only records
-     * updated in the requested window and only where the saved chapter remains published.
+     * Current completion is an overwrite-only reader state, intentionally independent of the
+     * selected activity window. A saved chapter must remain published to contribute a fraction.
      */
     public List<ProgressRow> findCurrentProgress(AnalyticsFilter filter) {
-        QueryParts filters = ownerFilter(filter, "progress.updated_at");
+        QueryParts filters = ownerFilter(filter, null);
         return jdbc.query(
                 "SELECT progress.user_id, progress.book_id, progress.character_offset, progress.updated_at, "
                         + "CHAR_LENGTH(chapter.content) AS chapter_character_count, "
@@ -195,6 +255,20 @@ public class AuthorAnalyticsRepository {
                         resultSet.getLong("chapter_position"),
                         resultSet.getLong("published_chapter_count"),
                         resultSet.getTimestamp("updated_at").toInstant()),
+                filters.parameters().toArray());
+    }
+
+    /** Distinct reader-work activity pairs in the selected Shanghai-window instants. */
+    public List<ReaderActivityRow> findActiveReadingRows(AnalyticsFilter filter) {
+        QueryParts filters = ownerFilter(filter, "activity.occurred_at");
+        return jdbc.query(
+                "SELECT DISTINCT activity.user_id, activity.book_id "
+                        + "FROM novel_reader_activity_event activity "
+                        + "JOIN novel_book b ON b.id = activity.book_id"
+                        + filters.where()
+                        + " AND activity.event_type = 'READING_PROGRESS'",
+                (resultSet, rowNumber) -> new ReaderActivityRow(
+                        resultSet.getLong("user_id"), resultSet.getLong("book_id")),
                 filters.parameters().toArray());
     }
 
@@ -229,11 +303,17 @@ public class AuthorAnalyticsRepository {
 
     public record BookRef(long id, String title) {}
 
-    public record TimedBookRow(long bookId, Instant recordedAt) {}
+    public record EngagementEventRow(long bookId, String eventType, Instant occurredAt) {}
+
+    public record CurrentSubscriptionRow(long userId, long bookId) {}
 
     public record PurchaseRow(long bookId, long tokenAmount, Instant acquiredAt) {}
 
     public record SubscriptionRow(long readerUserId, long bookId, int membershipDays, Instant occurredAt) {}
+
+    public record InteractionStatRow(long bookId, long ratingCount, long ratingTotal) {}
+
+    public record ReaderActivityRow(long userId, long bookId) {}
 
     public record RetentionActivityRow(long userId, long bookId, LocalDate cohortDate, LocalDate activityDate) {}
 

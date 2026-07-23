@@ -23,10 +23,10 @@ vi.mock('next/navigation', () => ({
 import BookstorePage from './page';
 
 const books = [
-  { id: 9, title: '星海拾光', author: '周以南', category: '科幻', words: 80_000, synopsis: '在失落星图与旧航线之间，寻找一束回家的光。', status: 'PUBLISHED', serialStatus: '连载中', cover: '#2563eb', heat: 9_820 },
-  { id: 7, title: '北岸灯塔', author: '林见川', category: '悬疑', words: 32_000, synopsis: '潮汐退去以后，灯塔仍守着一封没有寄出的信。', status: 'PUBLISHED', serialStatus: '连载中', cover: '#475569', heat: 7_600 },
-  { id: 11, title: '长安雨歇', author: '沈知微', category: '古言', words: 120_000, synopsis: '一场夜雨过后，旧案与故人都回到了长安。', status: 'PUBLISHED', serialStatus: '已完结', cover: '#9f1239', heat: 6_350 },
-  { id: 15, title: '雾港来信', author: '顾清遥', category: '悬疑', words: 460_000, synopsis: '雾港的每一封来信，都指向同一段被隐去的往事。', status: 'PUBLISHED', serialStatus: '连载中', cover: '#0f766e', heat: 5_000 },
+  { id: 9, title: '星海拾光', author: '周以南', category: '科幻', words: 80_000, synopsis: '在失落星图与旧航线之间，寻找一束回家的光。', status: 'PUBLISHED', serialStatus: '连载中', cover: null, heat: 9_820, metrics: { visibleCommentCount: 5, ratingCount: 12, averageRating: 4.8, recommendationVoteCount: 9, monthlyVoteCount: 2 } },
+  { id: 7, title: '北岸灯塔', author: '林见川', category: '悬疑', words: 32_000, synopsis: '潮汐退去以后，灯塔仍守着一封没有寄出的信。', status: 'PUBLISHED', serialStatus: '连载中', cover: null, heat: 7_600, metrics: { visibleCommentCount: 2, ratingCount: 3, averageRating: 4.3, recommendationVoteCount: 5, monthlyVoteCount: 1 } },
+  { id: 11, title: '长安雨歇', author: '沈知微', category: '古言', words: 120_000, synopsis: '一场夜雨过后，旧案与故人都回到了长安。', status: 'PUBLISHED', serialStatus: '已完结', cover: null, heat: 6_350, metrics: { visibleCommentCount: 0, ratingCount: 0, averageRating: 0, recommendationVoteCount: 0, monthlyVoteCount: 0 } },
+  { id: 15, title: '雾港来信', author: '顾清遥', category: '悬疑', words: 460_000, synopsis: '雾港的每一封来信，都指向同一段被隐去的往事。', status: 'PUBLISHED', serialStatus: '连载中', cover: null, heat: 5_000, metrics: { visibleCommentCount: 1, ratingCount: 1, averageRating: 5, recommendationVoteCount: 1, monthlyVoteCount: 0 } },
 ];
 
 const facets = {
@@ -41,7 +41,11 @@ const facets = {
 };
 
 const home = {
-  carousel: [books[0], books[2], books[1]],
+  carousel: [
+    { slideId: 31, book: books[0], bannerAssetId: '11111111-1111-1111-1111-111111111111', bannerUrl: '/media/banners/11111111-1111-1111-1111-111111111111.png', headline: '星海归航', copy: '从一页星图开始，回到仍有人等待的地方。', enabled: true, rank: 1, version: 1, createdAt: '2026-07-23T08:00:00Z', updatedAt: '2026-07-23T08:00:00Z' },
+    { slideId: 32, book: books[2], bannerAssetId: null, bannerUrl: null, headline: null, copy: null, enabled: true, rank: 2, version: 1, createdAt: '2026-07-23T08:00:00Z', updatedAt: '2026-07-23T08:00:00Z' },
+    { slideId: 33, book: books[1], bannerAssetId: null, bannerUrl: null, headline: null, copy: null, enabled: true, rank: 3, version: 1, createdAt: '2026-07-23T08:00:00Z', updatedAt: '2026-07-23T08:00:00Z' },
+  ],
   recommendations: [books[0], books[2], books[1]],
   hot: [books[0], books[1], books[2]],
   hotSearchTerms: [
@@ -72,6 +76,8 @@ function filterCatalog(url: string) {
   const q = params.get('q') ?? '';
   const category = params.get('category');
   const status = params.get('status');
+  const page = Math.max(0, Number(params.get('page') ?? 0));
+  const size = Math.max(1, Number(params.get('size') ?? 12));
   const minWords = Number(params.get('minWords') ?? 0);
   const maxWords = params.has('maxWords') ? Number(params.get('maxWords')) : Number.POSITIVE_INFINITY;
   const items = books.filter((book) => (
@@ -81,17 +87,31 @@ function filterCatalog(url: string) {
     && book.words >= minWords
     && book.words <= maxWords
   ));
-  return { items, meta: { total: items.length, facets, query: { query: q, category: category ?? '', serialStatus: status ?? '', minWords: params.get('minWords'), maxWords: params.get('maxWords') } } };
+  return {
+    items: items.slice(page * size, (page + 1) * size),
+    meta: {
+      total: items.length,
+      page,
+      size,
+      facets,
+      query: { query: q, category: category ?? '', serialStatus: status ?? '', minWords: params.get('minWords'), maxWords: params.get('maxWords') },
+    },
+  };
 }
 
-function mockBookstoreApi(options: { homeResponse?: Promise<Response>; catalogResponse?: Promise<Response>; taxonomyResponse?: Promise<Response> } = {}) {
+function mockBookstoreApi(options: {
+  homeResponse?: Promise<Response>;
+  catalogResponse?: Promise<Response>;
+  catalogHandler?: (endpoint: string) => unknown;
+  taxonomyResponse?: Promise<Response>;
+} = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const endpoint = String(input).replace('/api/novel/', '');
 
     if (endpoint === 'account/profile') return Promise.resolve(response({ roles: ['READER'] }));
     if (endpoint === 'public/home') return options.homeResponse ?? Promise.resolve(response(home));
     if (endpoint === 'public/taxonomy/categories') return options.taxonomyResponse ?? Promise.resolve(response(taxonomyCategories));
-    if (endpoint.startsWith('public/books')) return options.catalogResponse ?? Promise.resolve(response(filterCatalog(endpoint)));
+    if (endpoint.startsWith('public/books')) return options.catalogResponse ?? Promise.resolve(response(options.catalogHandler?.(endpoint) ?? filterCatalog(endpoint)));
 
     return Promise.reject(new Error(`Unexpected request: ${endpoint}`));
   });
@@ -143,7 +163,7 @@ describe('bookstore home page', () => {
     mockBookstoreApi({ homeResponse: homeRequest.promise, catalogResponse: catalogRequest.promise });
     render(<BookstorePage />);
 
-    expect(screen.getByLabelText('正在加载编辑推荐')).toBeTruthy();
+    expect(screen.getByLabelText('正在加载首页精选')).toBeTruthy();
     expect(screen.getByLabelText('正在加载作品')).toBeTruthy();
 
     await act(async () => {
@@ -155,6 +175,9 @@ describe('bookstore home page', () => {
     expect(carousel.getAttribute('aria-roledescription')).toBe('轮播');
     expect(within(carousel).getAllByRole('group')).toHaveLength(3);
     expect(within(carousel).getByRole('group', { name: '第 2 张，长安雨歇' })).toBeTruthy();
+    expect(within(carousel).getByRole('group', { name: '第 1 张，星海归航' })).toBeTruthy();
+    expect(carousel.querySelector('img')?.getAttribute('src')).toBe('/media/banners/11111111-1111-1111-1111-111111111111.png');
+    expect(screen.getAllByText('4.8 分 · 12 人评分').length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: '热读榜' })).toBeTruthy();
     expect(screen.getByText('01')).toBeTruthy();
     expect(screen.getByText('9,820 热度')).toBeTruthy();
@@ -187,6 +210,47 @@ describe('bookstore home page', () => {
     expect(screen.queryByRole('heading', { level: 3, name: '雾港来信' })).toBeNull();
   });
 
+  it('uses server paging metadata and preserves active filters when changing pages', async () => {
+    const fetchMock = mockBookstoreApi({
+      catalogHandler: (endpoint) => {
+        const params = new URLSearchParams(endpoint.split('?')[1]);
+        const page = Number(params.get('page') ?? 0);
+        const size = Number(params.get('size') ?? 12);
+        return {
+          items: [page === 0 ? books[1] : books[3]],
+          meta: {
+            total: 24,
+            page,
+            size,
+            facets,
+            query: {
+              query: params.get('q') ?? '',
+              category: params.get('category') ?? '',
+              serialStatus: params.get('status') ?? '',
+              minWords: params.get('minWords'),
+              maxWords: params.get('maxWords'),
+            },
+          },
+        };
+      },
+    });
+    render(<BookstorePage />);
+
+    await screen.findByRole('navigation', { name: '作品目录分页' });
+    fireEvent.click(screen.getByRole('radio', { name: '悬疑' }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('public/books?category=%E6%82%AC%E7%96%91&page=0&size=12'))).toBe(true);
+    });
+    expect(screen.getByText('第 1 / 2 页')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('link', { name: '下一页' }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('public/books?category=%E6%82%AC%E7%96%91&page=1&size=12'))).toBe(true);
+    });
+    expect(screen.getByText('第 2 / 2 页')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '雾港来信' })).toBeTruthy();
+  });
+
   it('runs an enabled hot-search chip through the same bounded catalog search path', async () => {
     const fetchMock = mockBookstoreApi();
     render(<BookstorePage />);
@@ -201,7 +265,7 @@ describe('bookstore home page', () => {
     expect(await screen.findByText('星海', { selector: 'mark' })).toBeTruthy();
   });
 
-  it('uses enabled taxonomy categories even when a category has no published work, then falls back when taxonomy is unavailable', async () => {
+  it('uses enabled taxonomy categories even when a category has no published work, then uses discovery facets when taxonomy is unavailable', async () => {
     const fetchMock = mockBookstoreApi();
     const view = render(<BookstorePage />);
 
@@ -216,14 +280,5 @@ describe('bookstore home page', () => {
     mockBookstoreApi({ taxonomyResponse: Promise.reject(new Error('taxonomy unavailable')) });
     render(<BookstorePage />);
     expect(await screen.findByRole('radio', { name: '悬疑' })).toBeTruthy();
-  });
-
-  it('keeps discovery usable while a rolling deployment has not supplied home facets yet', async () => {
-    mockBookstoreApi({ homeResponse: Promise.resolve(response({ ...home, facets: undefined })) });
-    render(<BookstorePage />);
-
-    await screen.findByRole('region', { name: '书城精选' });
-    expect(screen.getByRole('radio', { name: '10 万字以下' })).toBeTruthy();
-    expect(screen.getByRole('radio', { name: '连载中' })).toBeTruthy();
   });
 });

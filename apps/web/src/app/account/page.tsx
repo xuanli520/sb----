@@ -6,8 +6,6 @@ import {
   BookOpen,
   CalendarCheck2,
   Check,
-  ChevronLeft,
-  ChevronRight,
   CircleAlert,
   Clock3,
   Coins,
@@ -28,6 +26,7 @@ import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Textarea } from '@/app/components/ui/textarea';
 import { NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
@@ -52,6 +51,11 @@ type ReadingProgress = {
   chapterId: number;
   offset: number;
   updatedAt: string;
+};
+
+type AccountBookshelfPage = {
+  items: Book[];
+  meta: { total: number; page: number; size: number };
 };
 
 type CheckinResult = {
@@ -79,6 +83,9 @@ type Notice = {
   tone: 'success' | 'error';
   message: string;
 };
+
+const bookshelfPageSize = 8;
+const commentsPageSize = 20;
 
 function formatAmount(value: number) {
   return value.toLocaleString('zh-CN');
@@ -121,6 +128,74 @@ function validateDisplayName(value: string) {
 
 function messageFrom(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : fallback;
+}
+
+function bookshelfPath(page: number) {
+  const query = new URLSearchParams({ page: page.toString(), size: bookshelfPageSize.toString() });
+  return `account/bookshelf?${query.toString()}`;
+}
+
+function commentsPath(page: number) {
+  const query = new URLSearchParams({ page: page.toString(), size: commentsPageSize.toString() });
+  return `account/comments?${query.toString()}`;
+}
+
+function AccountPagePagination({
+  label,
+  anchor,
+  meta,
+  loading,
+  onPageChange,
+  totalUnit = '条',
+}: {
+  label: string;
+  anchor: string;
+  meta: { total: number; page: number; size: number };
+  loading: boolean;
+  onPageChange: (page: number) => void;
+  totalUnit?: string;
+}) {
+  const totalPages = Math.max(1, Math.ceil(meta.total / Math.max(1, meta.size)));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || meta.page <= 0;
+  const nextDisabled = loading || meta.page >= totalPages - 1;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-stone-200 pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-stone-500">共 {formatAmount(meta.total)} {totalUnit}</p>
+      <Pagination aria-label={`${label}分页`} className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href={anchor}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!previousDisabled) onPageChange(meta.page - 1);
+              }}
+              aria-disabled={previousDisabled}
+              tabIndex={previousDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+          <PaginationItem>
+            <span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-stone-600" aria-live="polite">第 {meta.page + 1} / {totalPages} 页</span>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              href={anchor}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!nextDisabled) onPageChange(meta.page + 1);
+              }}
+              aria-disabled={nextDisabled}
+              tabIndex={nextDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
 }
 
 function CommentStatusBadge({ status }: { status: NovelCommentStatus }) {
@@ -219,6 +294,10 @@ function AccountCommentsLoadingSkeleton() {
 export default function AccountPage() {
   const [profile, setProfile] = useState<AccountProfile>();
   const [bookshelf, setBookshelf] = useState<Book[]>([]);
+  const [bookshelfMeta, setBookshelfMeta] = useState<AccountBookshelfPage['meta']>();
+  const [bookshelfPageIndex, setBookshelfPageIndex] = useState(0);
+  const [bookshelfLoading, setBookshelfLoading] = useState(true);
+  const [bookshelfError, setBookshelfError] = useState('');
   const [progress, setProgress] = useState<ReadingProgress[]>([]);
   const [wallet, setWallet] = useState<Wallet>();
   const [entitlements, setEntitlements] = useState<AccountEntitlements>();
@@ -238,15 +317,15 @@ export default function AccountPage() {
   const [checkedIn, setCheckedIn] = useState(false);
   const [pendingAction, setPendingAction] = useState<'checkin' | 'redeem' | 'profile-update' | 'author-application' | 'author-status-refresh'>();
   const [notice, setNotice] = useState<Notice>();
+  const bookshelfRequestId = useRef(0);
   const commentsRequestId = useRef(0);
 
   const loadAccount = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
-      const [nextProfile, nextBookshelf, nextProgress, nextWallet, nextEntitlements, nextAuthorApplication] = await Promise.all([
+      const [nextProfile, nextProgress, nextWallet, nextEntitlements, nextAuthorApplication] = await Promise.all([
         novelApi<AccountProfile>('account/profile'),
-        novelApi<Book[]>('account/bookshelf'),
         novelApi<ReadingProgress[]>('account/progress'),
         novelApi<Wallet>('account/wallet'),
         novelApi<AccountEntitlements>('account/entitlements'),
@@ -254,7 +333,6 @@ export default function AccountPage() {
       ]);
       setProfile(nextProfile);
       setDisplayName(nextProfile.name);
-      setBookshelf(nextBookshelf);
       setProgress(nextProgress);
       setWallet(nextWallet);
       setEntitlements(nextEntitlements);
@@ -273,14 +351,37 @@ export default function AccountPage() {
     void loadAccount();
   }, [loadAccount]);
 
+  const loadBookshelf = useCallback(async (page: number) => {
+    const requestId = ++bookshelfRequestId.current;
+    setBookshelfLoading(true);
+    setBookshelfError('');
+    try {
+      const nextPage = await novelApi<AccountBookshelfPage>(bookshelfPath(page));
+      if (requestId !== bookshelfRequestId.current) return;
+      setBookshelf(nextPage.items);
+      setBookshelfMeta(nextPage.meta);
+      if (nextPage.meta.page !== page) setBookshelfPageIndex(nextPage.meta.page);
+    } catch (reason) {
+      if (requestId === bookshelfRequestId.current) {
+        setBookshelf([]);
+        setBookshelfMeta(undefined);
+        setBookshelfError(messageFrom(reason, '书架暂时无法加载，请稍后重试。'));
+      }
+    } finally {
+      if (requestId === bookshelfRequestId.current) setBookshelfLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBookshelf(bookshelfPageIndex);
+  }, [bookshelfPageIndex, loadBookshelf]);
+
   const loadComments = useCallback(async (page: number) => {
     const requestId = ++commentsRequestId.current;
     setCommentsLoading(true);
     setCommentsError('');
     try {
-      const query = new URLSearchParams({ size: '20' });
-      if (page > 0) query.set('page', page.toString());
-      const nextComments = await novelApi<NovelCommentPage>(`account/comments?${query.toString()}`);
+      const nextComments = await novelApi<NovelCommentPage>(commentsPath(page));
       if (requestId === commentsRequestId.current) setCommentsPage(nextComments);
     } catch (reason) {
       if (requestId === commentsRequestId.current) {
@@ -304,9 +405,6 @@ export default function AccountPage() {
       .slice(0, 5),
     [progress],
   );
-  const commentTotalPages = commentsPage
-    ? Math.max(1, Math.ceil(commentsPage.meta.total / Math.max(1, commentsPage.meta.size)))
-    : 1;
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -837,11 +935,18 @@ export default function AccountPage() {
                 <BookOpen className="mt-0.5 text-stone-700" size={20} aria-hidden="true" />
                 <div>
                   <h2 id="bookshelf-title" className="text-lg font-semibold text-stone-950">我的书架</h2>
-                  <p className="mt-1 text-sm leading-6 text-stone-600">已收藏 {formatAmount(bookshelf.length)} 本作品。</p>
+                  <p className="mt-1 text-sm leading-6 text-stone-600">{bookshelfLoading ? '正在加载收藏作品...' : `已收藏 ${formatAmount(bookshelfMeta?.total ?? 0)} 本作品。`}</p>
                 </div>
               </div>
 
-              {bookshelf.length > 0 ? (
+              {bookshelfLoading ? <div className="mt-5 space-y-3" aria-live="polite" aria-busy="true"><Skeleton className="h-36 rounded-none bg-stone-100" /><Skeleton className="h-36 rounded-none bg-stone-100" /></div> : null}
+              {!bookshelfLoading && bookshelfError ? (
+                <div className="mt-5 flex flex-col gap-3 border-l-4 border-rose-500 bg-rose-50 px-4 py-4 text-sm text-rose-950 sm:flex-row sm:items-center sm:justify-between" role="alert">
+                  <p>书架暂时无法显示：{bookshelfError}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void loadBookshelf(bookshelfPageIndex)} className="shrink-0 rounded-none border-rose-300 bg-white text-rose-900 hover:bg-rose-100"><RefreshCw size={15} aria-hidden="true" />重试</Button>
+                </div>
+              ) : null}
+              {!bookshelfLoading && !bookshelfError && bookshelf.length > 0 ? (
                 <div className="mt-5 space-y-3">
                   {bookshelf.map((book) => {
                     const bookProgress = progressByBook.get(book.id);
@@ -871,11 +976,13 @@ export default function AccountPage() {
                     );
                   })}
                 </div>
-              ) : (
+              ) : null}
+              {!bookshelfLoading && !bookshelfError && bookshelf.length === 0 ? (
                 <div className="mt-5 border-y border-stone-200 bg-white px-4 py-6 text-sm leading-6 text-stone-600">
                   书架还是空的。收藏作品后，可以在这里快速回到阅读进度。
                 </div>
-              )}
+              ) : null}
+              {!bookshelfLoading && !bookshelfError && bookshelfMeta ? <div className="mt-5"><AccountPagePagination label="书架" anchor="#bookshelf-title" meta={bookshelfMeta} loading={bookshelfLoading} onPageChange={setBookshelfPageIndex} totalUnit="本" /></div> : null}
             </section>
           </div>
 
@@ -936,41 +1043,9 @@ export default function AccountPage() {
                     );
                   })}
                 </ol>
-
-                {commentTotalPages > 1 ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-1 py-4 text-sm">
-                    <p className="text-stone-500">共 {formatAmount(commentsPage.meta.total)} 条</p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        aria-label="上一页评论"
-                        title="上一页评论"
-                        disabled={commentsPage.meta.page <= 0}
-                        onClick={() => setCommentsPageIndex(commentsPage.meta.page - 1)}
-                        className="size-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"
-                      >
-                        <ChevronLeft size={16} aria-hidden="true" />
-                      </Button>
-                      <span className="min-w-20 text-center text-stone-600" aria-live="polite">第 {commentsPage.meta.page + 1} / {commentTotalPages} 页</span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        aria-label="下一页评论"
-                        title="下一页评论"
-                        disabled={commentsPage.meta.page >= commentTotalPages - 1}
-                        onClick={() => setCommentsPageIndex(commentsPage.meta.page + 1)}
-                        className="size-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"
-                      >
-                        <ChevronRight size={16} aria-hidden="true" />
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
               </>
             ) : null}
+            {!commentsLoading && !commentsError && commentsPage && (commentsPage.meta.total > commentsPage.meta.size || commentsPage.meta.page > 0) ? <div className="mt-5"><AccountPagePagination label="我的评论" anchor="#my-comments-title" meta={commentsPage.meta} loading={commentsLoading} onPageChange={setCommentsPageIndex} /></div> : null}
           </section>
         </div>
       ) : null}

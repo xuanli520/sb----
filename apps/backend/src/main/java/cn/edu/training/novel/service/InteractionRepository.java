@@ -6,16 +6,18 @@ import cn.edu.training.novel.domain.AuthorModerationAdvice;
 import cn.edu.training.novel.domain.InteractionStats;
 import cn.edu.training.novel.domain.ParagraphAnnotation;
 import cn.edu.training.novel.domain.ParagraphAnnotationPage;
+import cn.edu.training.novel.mapper.InteractionPageMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.sql.Date;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,16 +53,6 @@ public class InteractionRepository {
             resultSet.getString("status"),
             instant(resultSet.getTimestamp("created_at")),
             null);
-    private static final RowMapper<Comment> COMMENT_WITH_AUTHOR_ADVICE_MAPPER = (resultSet, rowNumber) -> new Comment(
-            resultSet.getLong("id"),
-            resultSet.getLong("book_id"),
-            nullableLong(resultSet.getObject("chapter_id")),
-            resultSet.getLong("user_id"),
-            resultSet.getString("author_name"),
-            resultSet.getString("content"),
-            resultSet.getString("status"),
-            instant(resultSet.getTimestamp("created_at")),
-            authorModerationAdvice(resultSet));
     private static final RowMapper<ParagraphAnnotation> PARAGRAPH_ANNOTATION_MAPPER = (resultSet, rowNumber) -> new ParagraphAnnotation(
             resultSet.getLong("id"),
             resultSet.getLong("book_id"),
@@ -76,26 +68,13 @@ public class InteractionRepository {
             resultSet.getString("status"),
             instant(resultSet.getTimestamp("created_at")),
             null);
-    private static final RowMapper<ParagraphAnnotation> PARAGRAPH_ANNOTATION_WITH_AUTHOR_ADVICE_MAPPER = (resultSet, rowNumber) -> new ParagraphAnnotation(
-            resultSet.getLong("id"),
-            resultSet.getLong("book_id"),
-            resultSet.getLong("chapter_id"),
-            resultSet.getLong("user_id"),
-            resultSet.getString("author_name"),
-            resultSet.getInt("paragraph_index"),
-            resultSet.getInt("selection_start"),
-            resultSet.getInt("selection_end"),
-            resultSet.getString("selected_text"),
-            resultSet.getString("note"),
-            resultSet.getBoolean("share_intent"),
-            resultSet.getString("status"),
-            instant(resultSet.getTimestamp("created_at")),
-            authorModerationAdvice(resultSet));
 
     private final JdbcTemplate jdbc;
+    private final InteractionPageMapper pageMapper;
 
-    public InteractionRepository(JdbcTemplate jdbc) {
+    public InteractionRepository(JdbcTemplate jdbc, InteractionPageMapper pageMapper) {
         this.jdbc = jdbc;
+        this.pageMapper = pageMapper;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -375,22 +354,7 @@ public class InteractionRepository {
      * comments must go through a chapter-specific access decision in NovelStore.
      */
     public CommentPage findPublicBookLevelComments(long bookId, int page, int size) {
-        PageRequest request = pageRequest(page, size);
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM novel_comment WHERE book_id = ? AND chapter_id IS NULL AND status = ?",
-                Long.class,
-                bookId,
-                VISIBLE);
-        List<Comment> items = jdbc.query(
-                "SELECT id, book_id, chapter_id, user_id, author_name, content, status, created_at FROM novel_comment "
-                        + "WHERE book_id = ? AND chapter_id IS NULL AND status = ? "
-                        + "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                COMMENT_MAPPER,
-                bookId,
-                VISIBLE,
-                request.size(),
-                request.offset());
-        return new CommentPage(items, total == null ? 0 : total, request.page(), request.size());
+        return pageComments(bookId, null, VISIBLE, null, true, false, page, size);
     }
 
     public CommentPage findCommentsForBook(long bookId, String status, int page, int size) {
@@ -493,6 +457,38 @@ public class InteractionRepository {
         return rows.getFirst().toPublic();
     }
 
+    /** Loads all requested aggregate rows in one query for catalog and author projections. */
+    public Map<Long, InteractionStats> statsByBookIds(Collection<Long> bookIds) {
+        List<Long> ids = bookIds.stream().filter(id -> id != null && id > 0).distinct().toList();
+        if (ids.isEmpty()) return Map.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        List<StatRow> rows = jdbc.query(
+                "SELECT book_id, visible_comment_count, rating_count, rating_total, recommendation_vote_count, monthly_vote_count "
+                        + "FROM novel_book_interaction_stat WHERE book_id IN (" + placeholders + ")",
+                (resultSet, rowNumber) -> new StatRow(resultSet.getLong("book_id"), new MutableStats(
+                        resultSet.getLong("visible_comment_count"),
+                        resultSet.getLong("rating_count"),
+                        resultSet.getLong("rating_total"),
+                        resultSet.getLong("recommendation_vote_count"),
+                        resultSet.getLong("monthly_vote_count")).toPublic()),
+                ids.toArray());
+        Map<Long, InteractionStats> result = new LinkedHashMap<>();
+        for (StatRow row : rows) result.put(row.bookId(), row.stats());
+        return Map.copyOf(result);
+    }
+
+    /** Nullable because a reader may not have rated the work yet. */
+    public Integer ratingForUser(long userId, long bookId) {
+        List<Integer> ratings = jdbc.query(
+                "SELECT rating FROM novel_book_rating WHERE user_id = ? AND book_id = ?",
+                (resultSet, rowNumber) -> resultSet.getInt("rating"),
+                userId,
+                bookId);
+        return ratings.isEmpty() ? null : ratings.getFirst();
+    }
+
+    private record StatRow(long bookId, InteractionStats stats) { }
+
     private CommentPage findComments(
             Long bookId,
             Long chapterId,
@@ -501,44 +497,31 @@ public class InteractionRepository {
             boolean includeAuthorAdvice,
             int page,
             int size) {
-        PageRequest request = pageRequest(page, size);
-        StringBuilder from = new StringBuilder(" FROM novel_comment c");
-        if (includeAuthorAdvice) {
-            from.append(" LEFT JOIN novel_author_comment_moderation_advice aa ON aa.comment_id = c.id");
-        }
-        StringBuilder where = new StringBuilder(" WHERE 1 = 1");
-        List<Object> parameters = new ArrayList<>();
-        if (bookId != null) {
-            where.append(" AND c.book_id = ?");
-            parameters.add(bookId);
-        }
-        if (chapterId != null) {
-            where.append(" AND c.chapter_id = ?");
-            parameters.add(chapterId);
-        }
-        if (status != null) {
-            where.append(" AND c.status = ?");
-            parameters.add(status);
-        }
-        if (userId != null) {
-            where.append(" AND c.user_id = ?");
-            parameters.add(userId);
-        }
+        return pageComments(bookId, chapterId, status, userId, false, includeAuthorAdvice, page, size);
+    }
 
-        Long total = jdbc.queryForObject("SELECT COUNT(*)" + from + where, Long.class, parameters.toArray());
-        List<Object> pageParameters = new ArrayList<>(parameters);
-        pageParameters.add(request.size());
-        pageParameters.add(request.offset());
-        String adviceColumns = includeAuthorAdvice
-                ? ", aa.recommendation AS author_advice_recommendation, aa.reason AS author_advice_reason, "
-                        + "aa.updated_at AS author_advice_updated_at"
-                : "";
-        List<Comment> items = jdbc.query(
-                "SELECT c.id, c.book_id, c.chapter_id, c.user_id, c.author_name, c.content, c.status, c.created_at"
-                        + adviceColumns + from + where + " ORDER BY c.created_at DESC, c.id DESC LIMIT ? OFFSET ?",
-                includeAuthorAdvice ? COMMENT_WITH_AUTHOR_ADVICE_MAPPER : COMMENT_MAPPER,
-                pageParameters.toArray());
-        return new CommentPage(items, total == null ? 0 : total, request.page(), request.size());
+    private CommentPage pageComments(
+            Long bookId,
+            Long chapterId,
+            String status,
+            Long userId,
+            boolean bookLevelOnly,
+            boolean includeAuthorAdvice,
+            int page,
+            int size) {
+        IPage<InteractionPageMapper.CommentRow> result = pageMapper.selectCommentPage(
+                pageRequest(page, size),
+                bookId,
+                chapterId,
+                status,
+                userId,
+                bookLevelOnly,
+                includeAuthorAdvice);
+        return new CommentPage(
+                result.getRecords().stream().map(InteractionPageMapper.CommentRow::toDomain).toList(),
+                result.getTotal(),
+                page,
+                size);
     }
 
     private ParagraphAnnotationPage findParagraphAnnotations(
@@ -551,61 +534,20 @@ public class InteractionRepository {
             boolean includeAuthorAdvice,
             int page,
             int size) {
-        PageRequest request = pageRequest(page, size);
-        StringBuilder from = new StringBuilder(" FROM novel_paragraph_annotation a");
-        if (includeAuthorAdvice) {
-            from.append(" LEFT JOIN novel_author_annotation_moderation_advice aa ON aa.annotation_id = a.id");
-        }
-        StringBuilder where = new StringBuilder(" WHERE 1 = 1");
-        List<Object> parameters = new ArrayList<>();
-        if (requirePublishedTarget) {
-            from.append(" JOIN novel_book b ON b.id = a.book_id")
-                    .append(" JOIN novel_chapter c ON c.id = a.chapter_id AND c.book_id = a.book_id");
-            where.append(" AND b.status = ? AND c.published = ? AND c.status = ?");
-            parameters.add("PUBLISHED");
-            parameters.add(true);
-            parameters.add("PUBLISHED");
-        }
-        if (bookId != null) {
-            where.append(" AND a.book_id = ?");
-            parameters.add(bookId);
-        }
-        if (chapterId != null) {
-            where.append(" AND a.chapter_id = ?");
-            parameters.add(chapterId);
-        }
-        if (status != null) {
-            where.append(" AND a.status = ?");
-            parameters.add(status);
-        }
-        if (userId != null) {
-            where.append(" AND a.user_id = ?");
-            parameters.add(userId);
-        }
-        if (shareIntent != null) {
-            where.append(" AND a.share_intent = ?");
-            parameters.add(shareIntent);
-        }
-
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*)" + from + where,
-                Long.class,
-                parameters.toArray());
-        List<Object> pageParameters = new ArrayList<>(parameters);
-        pageParameters.add(request.size());
-        pageParameters.add(request.offset());
-        String adviceColumns = includeAuthorAdvice
-                ? ", aa.recommendation AS author_advice_recommendation, aa.reason AS author_advice_reason, "
-                        + "aa.updated_at AS author_advice_updated_at"
-                : "";
-        List<ParagraphAnnotation> items = jdbc.query(
-                "SELECT a.id, a.book_id, a.chapter_id, a.user_id, a.author_name, a.paragraph_index, a.selection_start, "
-                        + "a.selection_end, a.selected_text, a.note, a.share_intent, a.status, a.created_at"
-                        + adviceColumns
-                        + from + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?",
-                includeAuthorAdvice ? PARAGRAPH_ANNOTATION_WITH_AUTHOR_ADVICE_MAPPER : PARAGRAPH_ANNOTATION_MAPPER,
-                pageParameters.toArray());
-        return new ParagraphAnnotationPage(items, total == null ? 0 : total, request.page(), request.size());
+        IPage<InteractionPageMapper.ParagraphAnnotationRow> result = pageMapper.selectParagraphAnnotationPage(
+                pageRequest(page, size),
+                bookId,
+                chapterId,
+                status,
+                userId,
+                shareIntent,
+                requirePublishedTarget,
+                includeAuthorAdvice);
+        return new ParagraphAnnotationPage(
+                result.getRecords().stream().map(InteractionPageMapper.ParagraphAnnotationRow::toDomain).toList(),
+                result.getTotal(),
+                page,
+                size);
     }
 
     private AuthorModerationAdvice upsertCommentAdvice(
@@ -844,18 +786,14 @@ public class InteractionRepository {
         return normalized;
     }
 
-    private static PageRequest pageRequest(int page, int size) {
+    private static <T> Page<T> pageRequest(int page, int size) {
         if (page < 0) {
             throw new IllegalArgumentException("page must be non-negative");
         }
         if (size < 1 || size > MAX_PAGE_SIZE) {
             throw new IllegalArgumentException("size must be between 1 and " + MAX_PAGE_SIZE);
         }
-        try {
-            return new PageRequest(page, size, Math.multiplyExact(page, size));
-        } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("page is too large", exception);
-        }
+        return new Page<>(Math.addExact((long) page, 1L), size, true);
     }
 
     private static double average(long total, long count) {
@@ -868,17 +806,6 @@ public class InteractionRepository {
 
     private static Instant instant(Timestamp timestamp) {
         return timestamp.toInstant();
-    }
-
-    private static AuthorModerationAdvice authorModerationAdvice(ResultSet resultSet) throws SQLException {
-        String recommendation = resultSet.getString("author_advice_recommendation");
-        if (recommendation == null) {
-            return null;
-        }
-        return new AuthorModerationAdvice(
-                recommendation,
-                resultSet.getString("author_advice_reason"),
-                instant(resultSet.getTimestamp("author_advice_updated_at")));
     }
 
     private static long generatedId(KeyHolder keyHolder, String resourceName) {
@@ -914,6 +841,4 @@ public class InteractionRepository {
     }
 
     public record VoteReceipt(String type, long count, int remaining, int limit) {}
-
-    private record PageRequest(int page, int size, int offset) {}
 }

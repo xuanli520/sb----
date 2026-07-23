@@ -48,20 +48,14 @@ public class AuthorRewardReportService {
         validateDates(from, to);
         requireOwnedBookWhenFiltered(actor.id(), bookId);
 
-        int offset;
-        try {
-            offset = Math.multiplyExact(page, size);
-        } catch (ArithmeticException exception) {
-            throw badRequest("page is out of range");
-        }
         AuthorRewardRepository.QueryResult records = rewardRepository.findSuccessfulRewards(
                 new AuthorRewardRepository.RewardFilter(
                         actor.id(),
                         bookId,
                         startOfDay(from),
                         startOfNextDay(to),
-                        size,
-                        offset));
+                        page,
+                        size));
         return new AuthorRewardReport(
                 records.items(),
                 new AuthorRewardSummary(records.total(), records.totalTokens(), AuthorRewardSummary.TOKEN),

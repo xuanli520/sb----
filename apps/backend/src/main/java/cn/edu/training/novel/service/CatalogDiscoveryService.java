@@ -1,6 +1,8 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.Book;
+import cn.edu.training.novel.domain.BookPresentation;
+import cn.edu.training.novel.domain.HomeCarouselSlide;
 import cn.edu.training.novel.domain.HotSearchTerm;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -14,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class CatalogDiscoveryService {
     private static final int EDITORIAL_LIMIT = 12;
-    private static final int CAROUSEL_LIMIT = 3;
     private static final int HOT_LIMIT = 10;
     private static final int MAX_PUBLIC_LIMIT = 20;
 
@@ -26,12 +27,21 @@ public class CatalogDiscoveryService {
 
     private final CatalogRepository catalogRepository;
     private final EditorialOperationsService editorialOperationsService;
+    private final CatalogPageService catalogPageService;
+    private final BookPresentationService presentationService;
+    private final HomeCarouselService homeCarouselService;
 
     public CatalogDiscoveryService(
             CatalogRepository catalogRepository,
-            EditorialOperationsService editorialOperationsService) {
+            EditorialOperationsService editorialOperationsService,
+            CatalogPageService catalogPageService,
+            BookPresentationService presentationService,
+            HomeCarouselService homeCarouselService) {
         this.catalogRepository = catalogRepository;
         this.editorialOperationsService = editorialOperationsService;
+        this.catalogPageService = catalogPageService;
+        this.presentationService = presentationService;
+        this.homeCarouselService = homeCarouselService;
     }
 
     public CatalogPage books(
@@ -39,33 +49,38 @@ public class CatalogDiscoveryService {
             String category,
             String serialStatus,
             Integer minWords,
-            Integer maxWords) {
+            Integer maxWords,
+            int page,
+            int size) {
         CatalogDiscoveryQuery criteria = new CatalogDiscoveryQuery(
                 query,
                 category,
                 serialStatus,
                 minWords,
                 maxWords);
-        List<Book> items = catalogRepository.findPublished(criteria);
-        return new CatalogPage(items, new CatalogMetadata(items.size(), facets(), criteria));
+        CatalogPageService.CatalogPage result = catalogPageService.page(criteria, page, size);
+        return new CatalogPage(
+                presentationService.present(result.items()),
+                new CatalogMetadata(result.total(), result.page(), result.size(), facets(), criteria));
     }
 
     public DiscoveryHome home() {
-        List<Book> recommendations = catalogRepository.findEditorRecommendations(EDITORIAL_LIMIT);
+        List<BookPresentation> recommendations = presentationService.present(
+                catalogRepository.findEditorRecommendations(EDITORIAL_LIMIT));
         return new DiscoveryHome(
-                recommendations.stream().limit(CAROUSEL_LIMIT).toList(),
+                homeCarouselService.publicSlides(),
                 recommendations,
-                catalogRepository.findHot(HOT_LIMIT),
+                presentationService.present(catalogRepository.findHot(HOT_LIMIT)),
                 editorialOperationsService.publicHotSearchTerms(),
                 facets());
     }
 
-    public List<Book> hot(int requestedLimit) {
-        return catalogRepository.findHot(normalizeLimit(requestedLimit));
+    public List<BookPresentation> hot(int requestedLimit) {
+        return presentationService.present(catalogRepository.findHot(normalizeLimit(requestedLimit)));
     }
 
-    public List<Book> recommendations(int requestedLimit) {
-        return catalogRepository.findEditorRecommendations(normalizeLimit(requestedLimit));
+    public List<BookPresentation> recommendations(int requestedLimit) {
+        return presentationService.present(catalogRepository.findEditorRecommendations(normalizeLimit(requestedLimit)));
     }
 
     public List<HotSearchTerm> hotSearchTerms() {
@@ -83,18 +98,18 @@ public class CatalogDiscoveryService {
         return Math.max(1, Math.min(requestedLimit, MAX_PUBLIC_LIMIT));
     }
 
-    public record CatalogPage(List<Book> items, CatalogMetadata meta) {
+    public record CatalogPage(List<BookPresentation> items, CatalogMetadata meta) {
         public CatalogPage {
             items = List.copyOf(items);
         }
     }
 
-    public record CatalogMetadata(long total, DiscoveryFacets facets, CatalogDiscoveryQuery query) { }
+    public record CatalogMetadata(long total, int page, int size, DiscoveryFacets facets, CatalogDiscoveryQuery query) { }
 
     public record DiscoveryHome(
-            List<Book> carousel,
-            List<Book> recommendations,
-            List<Book> hot,
+            List<HomeCarouselSlide> carousel,
+            List<BookPresentation> recommendations,
+            List<BookPresentation> hot,
             List<HotSearchTerm> hotSearchTerms,
             DiscoveryFacets facets) {
         public DiscoveryHome {

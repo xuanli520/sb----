@@ -2,10 +2,11 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      - "${HTTP_PORT:-443}:443"
+      # Caddy on the host is the only public TLS endpoint. Keep this HTTP upstream
+      # on loopback so it cannot be reached directly from the Internet.
+      - "127.0.0.1:${HTTP_PORT:-8080}:80"
     volumes:
       - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./infra/nginx/certs:/etc/nginx/certs:ro
     depends_on:
       web:
         condition: service_healthy
@@ -14,7 +15,7 @@ services:
       - application
       - object-storage
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/nginx-health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -209,7 +210,10 @@ services:
       - |
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing local/novel-covers
-        mc anonymous set download local/novel-covers
+        # Only activated public media is anonymously readable inside the private
+        # object-storage network. Draft uploads remain under staging/.
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*","arn:aws:s3:::novel-covers/banners/*"]}]}' > /tmp/novel-public-media-policy.json
+        mc anonymous set-json /tmp/novel-public-media-policy.json local/novel-covers
         if user_add_error="$$(mc admin user add local "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY" 2>&1)"; then
           :
         else
@@ -218,7 +222,7 @@ services:
             *) printf '%s\n' "Could not create MinIO cover writer: $$user_add_error" >&2; exit 1 ;;
           esac
         fi
-        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*"]}]}' > /tmp/novel-cover-writer-policy.json
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*","arn:aws:s3:::novel-covers/banners/*","arn:aws:s3:::novel-covers/staging/*"]}]}' > /tmp/novel-cover-writer-policy.json
         mc admin policy create local novel-cover-writer /tmp/novel-cover-writer-policy.json || mc admin policy update local novel-cover-writer /tmp/novel-cover-writer-policy.json
         mc admin policy attach local novel-cover-writer --user "$$MINIO_COVER_ACCESS_KEY"
         # A pre-existing access key can have a different secret. Verify the configured writer

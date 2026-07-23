@@ -1,4 +1,4 @@
-export type Book = { id:number; title:string; author:string; category:string; words:number; synopsis:string; status:string; serialStatus:string; cover:string; heat?:number; purchasePrice:number };
+export type Book = { id:number; title:string; author:string; category:string; words:number; synopsis:string; status:string; serialStatus:string; cover:string | null; heat?:number; purchasePrice:number };
 export type BookStatusAudit = {
   id:number;
   bookId:number;
@@ -8,6 +8,11 @@ export type BookStatusAudit = {
   reason:string;
   operatorUserId:number;
   createdAt:string;
+};
+/** Zero-based audit-history page returned to the affected author and stationmaster. */
+export type BookStatusAuditPage = {
+  items:BookStatusAudit[];
+  meta:{ total:number; page:number; size:number };
 };
 export type EditorialRecommendation = { book:Book; rank:number };
 export type EditorialRecommendationAudit = {
@@ -71,6 +76,12 @@ export type AccountBookEntitlement = {
 export type AccountEntitlements = {
   membership:AccountMembershipEntitlement | null;
   books:AccountBookEntitlement[];
+};
+/** A free reader follow for one published work. It is unrelated to bookshelf or paid access. */
+export type BookSubscription = {
+  bookId:number;
+  subscribed:boolean;
+  subscribedAt:string | null;
 };
 export type CommercialRules = {
   membershipDaysMaximumPerCode:number;
@@ -157,21 +168,155 @@ export type InteractionStats = {
   recommendationVoteCount:number;
   monthlyVoteCount:number;
 };
+/** Public and workspace read models include the durable interaction projection. */
+export type BookPresentation = Book & { metrics:InteractionStats };
+/** Shared zero-based envelope returned by author and stationmaster book listings. */
+export type BookPresentationPage = {
+  items:BookPresentation[];
+  meta:{ total:number; page:number; size:number };
+};
+export type ChapterCandidateType = 'NEW_CHAPTER' | 'CHAPTER_REVISION';
+export type ChapterCandidateStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+/** Immutable review candidate; a public chapter is not replaced until this candidate is approved. */
+export type ChapterCandidate = {
+  id:number;
+  bookId:number;
+  targetChapterId:number;
+  volumeId:number | null;
+  type:ChapterCandidateType;
+  title:string;
+  content:string;
+  orderNo:number;
+  status:ChapterCandidateStatus;
+  reviewReason:string | null;
+  moderationAuditId:number | null;
+  createdByUserId:number;
+  createdAt:string;
+  reviewedByUserId:number | null;
+  reviewedAt:string | null;
+};
+/** A staged replacement for a public cover; its private object is never exposed to public catalog readers. */
+export type BookCoverCandidate = {
+  id:number;
+  bookId:number;
+  assetId:string;
+  approvedAssetId:string | null;
+  status:'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+  reviewReason:string | null;
+  createdByUserId:number;
+  createdAt:string;
+  reviewedByUserId:number | null;
+  reviewedAt:string | null;
+};
+/** A draft cover is active immediately; a published cover returns a retained review candidate. */
+export type AuthorCoverUploadResult = {
+  book:BookPresentation;
+  candidate:BookCoverCandidate | null;
+};
+/** Exactly one field is actionable: `book` for whole-work review or `candidate` for an incremental change. */
+export type ModerationReviewQueueItem = {
+  scope:'WHOLE_BOOK' | 'NEW_CHAPTER' | 'CHAPTER_REVISION';
+  book:Book | null;
+  candidate:ChapterCandidate | null;
+};
+export type ModerationReviewQueuePage = {
+  items:ModerationReviewQueueItem[];
+  meta:{ total:number; page:number; size:number };
+};
+export type HomeCarouselSlide = {
+  slideId:number;
+  book:BookPresentation;
+  bannerAssetId:string | null;
+  bannerUrl:string | null;
+  headline:string | null;
+  copy:string | null;
+  enabled:boolean;
+  rank:number;
+  version:number;
+  createdAt:string;
+  updatedAt:string;
+};
+export type AdminHomeCarouselSlide = Omit<HomeCarouselSlide, 'version' | 'createdAt' | 'updatedAt'> & {
+  version:number;
+  createdAt:string;
+  updatedAt:string;
+};
+export type HomeCarouselSlideAudit = {
+  id:number;
+  slideId:number;
+  bookId:number;
+  action:string;
+  details:string;
+  operatorUserId:number | null;
+  createdAt:string;
+};
+export type PlatformBannerAsset = {
+  id:string;
+  ownerScope:'PLATFORM';
+  ownerUserId:null;
+  purpose:'HOME_CAROUSEL_BANNER';
+  objectKey:string;
+  publicUrl:string;
+  sha256:string;
+  contentType:string;
+  width:number;
+  height:number;
+  byteSize:number;
+  label:string | null;
+  state:'ACTIVE' | 'ARCHIVED' | 'PENDING_DELETE' | 'DELETED';
+  createdAt:string;
+  updatedAt:string;
+  archivedAt:string | null;
+  deletedAt:string | null;
+};
+export type PlatformBannerAssetPage = {
+  items:PlatformBannerAsset[];
+  meta:{ total:number; page:number; size:number };
+};
+export type MediaAssetBinding = {
+  id:number;
+  assetId:string;
+  bindingType:'BOOK_COVER' | 'HOME_CAROUSEL_BANNER';
+  targetId:number;
+  createdByUserId:number | null;
+  createdAt:string;
+};
+export type MediaAssetAudit = {
+  id:number;
+  assetId:string;
+  action:string;
+  details:string;
+  operatorUserId:number | null;
+  createdAt:string;
+};
 export type DiscoveryWordCountRange = { key:string; label:string; minWords:number | null; maxWords:number | null };
 export type DiscoveryFacets = { categories:string[]; serialStatuses:string[]; wordCountRanges:DiscoveryWordCountRange[] };
 export type PublicTaxonomyItem = { id:number; type:string; name:string; enabled:boolean; sortOrder:number };
 export type PublicCatalogPage = {
-  items:Book[];
+  items:BookPresentation[];
   meta:{
     total:number;
+    page:number;
+    size:number;
     facets:DiscoveryFacets;
     query:{ query:string; category:string; serialStatus:string; minWords:number | null; maxWords:number | null };
   };
 };
-export type PublicDiscoveryHome = { carousel:Book[]; recommendations:Book[]; hot:Book[]; hotSearchTerms?:HotSearchTerm[]; facets?:DiscoveryFacets };
+/** Author-owned work list, paged by the server to avoid loading a whole catalog in the workspace. */
+export type AuthorBookPage = BookPresentationPage;
+export type PublicDiscoveryHome = {
+  carousel:HomeCarouselSlide[];
+  recommendations:BookPresentation[];
+  hot:BookPresentation[];
+  hotSearchTerms:HotSearchTerm[];
+  facets:DiscoveryFacets;
+};
 export type AuthorAnalyticsTrendPoint = {
   date:string;
   favoriteAddCount:number;
+  favoriteRemoveCount:number;
+  subscriptionAddCount:number;
+  subscriptionRemoveCount:number;
   purchaseCount:number;
   purchaseTokenAmount:number;
 };
@@ -179,6 +324,11 @@ export type AuthorAnalyticsBookMetric = {
   bookId:number;
   bookTitle:string;
   currentFavoriteCount:number;
+  currentSubscriptionCount:number;
+  subscriptionAddCount:number;
+  subscriptionRemoveCount:number;
+  ratingCount:number;
+  averageRating:number;
   purchaseCount:number;
   purchaseTokenAmount:number;
   activeReaderBookCount:number;
@@ -186,6 +336,16 @@ export type AuthorAnalyticsBookMetric = {
 };
 export type AuthorAnalyticsMetricAvailability = { available:boolean; reason:string };
 export type AuthorAnalyticsSubscriptionMetrics = {
+  currentSubscriptionCount:number;
+  currentSubscriberCount:number;
+  subscriptionAddCount:number;
+  subscriptionRemoveCount:number;
+};
+/**
+ * Historical membership-redemption attribution is deliberately separate from
+ * a reader following a free work. It must never be labelled as a subscription.
+ */
+export type AuthorAnalyticsMembershipAttributionMetrics = {
   attributedGrantCount:number;
   attributedReaderCount:number;
   membershipDayCount:number;
@@ -203,10 +363,16 @@ export type AuthorAnalyticsRetentionMetrics = {
 export type AuthorAnalyticsReport = {
   summary:{
     currentFavoriteCount:number;
+    currentSubscriptionCount:number;
+    currentSubscriberCount:number;
+    ratingCount:number;
+    averageRating:number;
     purchaseCount:number;
     purchaseTokenAmount:number;
     activeReaderBookCount:number;
     activeReaderCount:number;
+    currentReaderBookCount:number;
+    currentReaderCount:number;
     completedReaderBookCount:number;
     averageReadThroughPercent:number;
     amountUnit:string;
@@ -214,8 +380,13 @@ export type AuthorAnalyticsReport = {
   dailyTrend:AuthorAnalyticsTrendPoint[];
   bookMetrics:AuthorAnalyticsBookMetric[];
   subscriptionMetrics:AuthorAnalyticsSubscriptionMetrics;
+  membershipAttributionMetrics:AuthorAnalyticsMembershipAttributionMetrics;
   retentionMetrics:AuthorAnalyticsRetentionMetrics;
-  availability:{ subscription:AuthorAnalyticsMetricAvailability; retention:AuthorAnalyticsMetricAvailability };
+  availability:{
+    subscription:AuthorAnalyticsMetricAvailability;
+    favorite:AuthorAnalyticsMetricAvailability;
+    retention:AuthorAnalyticsMetricAvailability;
+  };
   meta:{
     from:string;
     to:string;
@@ -225,10 +396,13 @@ export type AuthorAnalyticsReport = {
     bookMetricTotal:number;
     returnedBookMetricLimit:number;
     bookMetricsTruncated:boolean;
-    shelfTrendInclusion:string;
+    favoriteTrendInclusion:string;
     purchaseInclusion:string;
     readThroughDefinition:string;
+    activeReadingDefinition:string;
     subscriptionInclusion:string;
+    membershipAttributionInclusion:string;
+    historicalObservationBoundary:string;
     retentionDefinition:string;
   };
 };

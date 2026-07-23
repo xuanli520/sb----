@@ -8,6 +8,7 @@ import {
   BookOpenText,
   ClipboardCheck,
   Gauge,
+  Images,
   KeyRound,
   LibraryBig,
   Mail,
@@ -52,6 +53,7 @@ export const adminNavigation: NavGroup[] = [
     items: [
       { href: '/novel-admin/operations/redemption-codes', label: '兑换码', icon: KeyRound },
       { href: '/novel-admin/operations/discovery', label: '推荐与热搜', icon: LibraryBig },
+      { href: '/novel-admin/operations/home-carousel', label: '首页轮播与素材', icon: Images },
       { href: '/novel-admin/analytics/retention', label: '渠道留存', icon: BarChart3 },
     ],
   },

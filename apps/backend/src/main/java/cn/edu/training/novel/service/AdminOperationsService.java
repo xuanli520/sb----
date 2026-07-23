@@ -31,11 +31,7 @@ public class AdminOperationsService {
         }
         AdminOperationsRepository.AccountFilter filter = new AdminOperationsRepository.AccountFilter(
                 parseEnabled(status), parseRole(role));
-        return new AdminAccountPage(
-                repository.findAccounts(query, filter, size, Math.multiplyExact(page, size)),
-                repository.countAccounts(query, filter),
-                page,
-                size);
+        return repository.findAccounts(query, filter, page, size);
     }
 
     public List<AccountStatusAudit> accountStatusAudits(long accountId, int limit) {

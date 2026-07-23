@@ -25,8 +25,10 @@ public class NovelStore {
     private final ContentModerationReviewService contentModerationReviewService;
     private final BookModerationSnapshotService bookModerationSnapshotService;
     private final AuthorApplicationPolicyProperties authorApplicationPolicy;
+    private final HomeCarouselService homeCarouselService;
+    private final BookPageService bookPageService;
 
-    /** Retains the test/repository recreation constructor with the documented default policy. */
+    /** Test/repository recreation constructor with the documented default policy. */
     public NovelStore(
             AuditTrail auditTrail,
             CatalogRepository catalogRepository,
@@ -38,7 +40,8 @@ public class NovelStore {
             AuthService authService,
             ContentModerationService contentModerationService,
             ContentModerationReviewService contentModerationReviewService,
-            BookModerationSnapshotService bookModerationSnapshotService) {
+            BookModerationSnapshotService bookModerationSnapshotService,
+            BookPageService bookPageService) {
         this(
                 auditTrail,
                 catalogRepository,
@@ -51,7 +54,9 @@ public class NovelStore {
                 contentModerationService,
                 contentModerationReviewService,
                 bookModerationSnapshotService,
-                new AuthorApplicationPolicyProperties(Duration.ofDays(7)));
+                new AuthorApplicationPolicyProperties(Duration.ofDays(7)),
+                null,
+                bookPageService);
     }
 
     @Autowired
@@ -67,7 +72,9 @@ public class NovelStore {
             ContentModerationService contentModerationService,
             ContentModerationReviewService contentModerationReviewService,
             BookModerationSnapshotService bookModerationSnapshotService,
-            AuthorApplicationPolicyProperties authorApplicationPolicy) {
+            AuthorApplicationPolicyProperties authorApplicationPolicy,
+            HomeCarouselService homeCarouselService,
+            BookPageService bookPageService) {
         this.auditTrail = auditTrail;
         this.catalogRepository = catalogRepository;
         this.walletRepository = walletRepository;
@@ -80,6 +87,8 @@ public class NovelStore {
         this.contentModerationReviewService = contentModerationReviewService;
         this.bookModerationSnapshotService = bookModerationSnapshotService;
         this.authorApplicationPolicy = authorApplicationPolicy;
+        this.homeCarouselService = homeCarouselService;
+        this.bookPageService = Objects.requireNonNull(bookPageService, "bookPageService");
     }
     public List<Book> published(String query, String category, String status) {
         return catalogRepository.findPublished(query, category, status);
@@ -134,7 +143,8 @@ public class NovelStore {
                 book,
                 readerChapters,
                 visibleComments,
-                new ReaderBookAccess(fullAccessSource != null, fullAccessSource == null ? "PREVIEW" : fullAccessSource));
+                new ReaderBookAccess(fullAccessSource != null, fullAccessSource == null ? "PREVIEW" : fullAccessSource),
+                actor == null ? null : interactionRepository.ratingForUser(actor.id(), bookId));
     }
     @Transactional
     public boolean toggleShelf(long userId, long bookId) {
@@ -142,7 +152,34 @@ public class NovelStore {
         return readerRepository.toggleShelf(userId, bookId);
     }
     public Set<Long> shelf(long userId) { return readerRepository.shelf(userId); }
-    public List<Book> shelfBooks(long userId) { return readerRepository.shelfBooks(userId); }
+    public BookPresentationPage shelfBooks(long userId, int page, int size) {
+        return bookPages().bookshelf(userId, page, size);
+    }
+    public boolean bookshelfContains(long userId, long bookId) {
+        ensureActive(userId);
+        return bookPages().bookshelfContains(userId, bookId);
+    }
+    @Transactional
+    public BookSubscription subscribe(long userId, long bookId) {
+        ensureActive(userId);
+        // Following is allowed only while a work is publicly discoverable. It grants no reading
+        // entitlement and remains independent of membership and purchase state.
+        publishedBook(bookId);
+        return readerRepository.subscribe(userId, bookId);
+    }
+    @Transactional
+    public BookSubscription unsubscribe(long userId, long bookId) {
+        ensureActive(userId);
+        return readerRepository.unsubscribe(userId, bookId);
+    }
+    public List<BookSubscription> subscriptions(long userId) {
+        ensureActive(userId);
+        return readerRepository.subscriptions(userId);
+    }
+    public BookSubscription subscription(long userId, long bookId) {
+        ensureActive(userId);
+        return readerRepository.subscription(userId, bookId);
+    }
     @Transactional
     public int checkin(long userId) { ensureActive(userId); return readerRepository.checkin(userId); }
     public int pointBalance(long userId) { return readerRepository.pointBalance(userId); }
@@ -203,6 +240,11 @@ public class NovelStore {
         return readerRepository.saveProgress(actor.id(), bookId, chapterId, offset);
     }
     public List<ReadingProgress> progress(long userId) { return readerRepository.progress(userId); }
+    public ReadingProgress progressForBook(long userId, long bookId) {
+        ensureActive(userId);
+        if (bookId <= 0) throw new IllegalArgumentException("book id is required");
+        return readerRepository.progressForBook(userId, bookId).orElse(null);
+    }
     @Transactional
     public Bookmark bookmark(long userId,long bookId,long chapterId,int offset,String note) {
         return bookmark(readerActor(userId), bookId, chapterId, offset, note);
@@ -680,7 +722,7 @@ public class NovelStore {
                 0,
                 "连载中",
                 requireTextAtMost(synopsis, "book synopsis is required", 20000),
-                "#563d7c",
+                null,
                 BookStatus.DRAFT,
                 userId,
                 0));
@@ -705,9 +747,11 @@ public class NovelStore {
         String updatedSerialStatus = serialStatus == null
                 ? book.serialStatus()
                 : normalizeSerialStatus(serialStatus);
-        String updatedCover = cover == null
-                ? book.cover()
-                : requireTextAtMost(cover, "book cover is required", 1024).trim();
+        if (cover != null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "book cover is managed only through the media upload endpoint");
+        }
         Book updated = new Book(
                 book.id(),
                 requireTextAtMost(title, "book title is required", 255).trim(),
@@ -716,7 +760,7 @@ public class NovelStore {
                 book.words(),
                 updatedSerialStatus,
                 requireTextAtMost(synopsis, "book synopsis is required", 20000),
-                updatedCover,
+                null,
                 book.status(),
                 book.authorId(),
                 book.heat(),
@@ -839,10 +883,16 @@ public class NovelStore {
         return catalogRepository.findChaptersByBookId(bookId);
     }
 
+    /** Shows an author the retained incremental proposals without exposing them to readers. */
+    public List<ChapterCandidate> authorChapterCandidates(long userId, long bookId) {
+        owned(userId, bookId);
+        return catalogRepository.findChapterCandidatesByBookId(bookId);
+    }
+
     /**
-     * Drafts and scheduled chapters are edited in place. A change to a published chapter is never
-     * directly visible: it is moved out of the public read model and the complete work is queued
-     * for review after the local automatic screen.
+     * Drafts and scheduled chapters are edited in place. A published chapter is never overwritten
+     * by an author edit: the proposed replacement is retained as a separate candidate until an
+     * administrator decides it.
      */
     @Transactional
     public Chapter updateChapter(
@@ -855,6 +905,7 @@ public class NovelStore {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
+        requireNoPendingCandidate(chapter);
         String normalizedTitle = requireTextAtMost(title, "chapter title is required", 255).trim();
         String normalizedContent = requireTextAtMost(content, "chapter content is required", 20000);
         Long targetVolumeId;
@@ -863,9 +914,8 @@ public class NovelStore {
         } else {
             targetVolumeId = lockedVolumeForBook(book, volumeId).id();
         }
-        int words = updatedWordCount(book.words(), chapter.content(), normalizedContent);
-
         if (chapter.status() == ChapterStatus.DRAFT || chapter.status() == ChapterStatus.SCHEDULED) {
+            int words = updatedWordCount(book.words(), chapter.content(), normalizedContent);
             Chapter updated = new Chapter(
                     chapter.id(),
                     chapter.bookId(),
@@ -892,30 +942,23 @@ public class NovelStore {
             throw new IllegalStateException("only draft, scheduled, or published chapters can be edited");
         }
 
-        ContentModerationAudit moderation = contentModerationService.moderateChapter(
-                chapter.id(), normalizedTitle, normalizedContent, ModerationTrigger.PUBLISHED_CHAPTER_REVISION);
-        boolean localSensitiveHit = moderation.decision() == ModerationDecision.LOCAL_SENSITIVE_WORD;
-        Chapter queuedRevision = new Chapter(
-                chapter.id(),
-                chapter.bookId(),
+        ChapterCandidate candidate = createCandidate(
+                book,
+                chapter,
+                ChapterCandidateType.CHAPTER_REVISION,
                 targetVolumeId,
                 normalizedTitle,
                 normalizedContent,
-                false,
-                ChapterStatus.NEEDS_REVIEW,
-                null,
-                null,
-                localSensitiveHit
-                        ? "命中本地敏感词，已暂停已发布章节修改并标记整书复核"
-                        : chapterRevisionReviewReason(moderation),
-                chapter.orderNo());
-        catalogRepository.updateChapter(queuedRevision);
-        Book queuedBook = copyBook(book, words, BookStatus.NEEDS_REVIEW);
-        catalogRepository.updateBook(queuedBook);
-        queueWholeWorkSnapshot(queuedBook);
-        audit("update published chapter=" + queuedRevision.id() + " author=" + userId
-                + " screened=" + (localSensitiveHit ? "blocked" : moderation.decision().name()) + " book=" + book.id());
-        return queuedRevision;
+                userId);
+        ContentModerationAudit moderation = contentModerationService.moderateChapterCandidate(
+                candidate.id(), normalizedTitle, normalizedContent, ModerationTrigger.PUBLISHED_CHAPTER_REVISION);
+        ChapterCandidate pending = updateCandidateModeration(
+                candidate,
+                moderation,
+                incrementalCandidateReviewReason(moderation, ChapterCandidateType.CHAPTER_REVISION, false));
+        audit("queue published chapter revision=" + chapter.id() + " candidate=" + pending.id() + " author=" + userId
+                + " moderation=" + moderation.decision() + " book=" + book.id());
+        return chapter;
     }
 
     @Transactional
@@ -923,6 +966,7 @@ public class NovelStore {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
+        requireNoPendingCandidate(chapter);
         if (!isChapterSafeToDelete(chapter.status())) {
             throw new IllegalStateException("only draft or scheduled chapters can be deleted");
         }
@@ -985,11 +1029,20 @@ public class NovelStore {
             return draft;
         }
 
+        // An already public work has an independent incremental lifecycle. The source draft
+        // reserves its stable chapter id and order, while the candidate owns the proposed text
+        // and its moderation evidence.
+        if (book.status() == BookStatus.PUBLISHED) {
+            Book withDraftWords = copyBook(book, addWords(book.words(), normalizedContent.length()), book.status());
+            catalogRepository.updateBook(withDraftWords);
+            return submitPublishedNewChapter(withDraftWords, draft, userId, ModerationTrigger.CHAPTER_SUBMISSION, Instant.now());
+        }
+
         ContentModerationAudit moderation = contentModerationService.moderateChapter(
                 draft.id(), normalizedTitle, normalizedContent, ModerationTrigger.CHAPTER_SUBMISSION);
         boolean mayPublishChapter = moderation.decision().permitsAutomaticChapterPublication();
         ChapterStatus chapterStatus = mayPublishChapter ? ChapterStatus.PUBLISHED : ChapterStatus.NEEDS_REVIEW;
-        BookStatus bookStatus = nextBookStatusForChapterSubmission(book.status(), true, !mayPublishChapter);
+        BookStatus bookStatus = statusAfterInitialChapterSubmission(book.status());
         Chapter submitted = new Chapter(
                 draft.id(),
                 draft.bookId(),
@@ -1005,7 +1058,9 @@ public class NovelStore {
         Chapter persisted = catalogRepository.updateChapter(submitted);
         Book submittedBook = copyBook(book, addWords(book.words(), normalizedContent.length()), bookStatus);
         catalogRepository.updateBook(submittedBook);
-        queueWholeWorkSnapshot(submittedBook);
+        if (awaitingFullWorkReview(submittedBook.status())) {
+            queueWholeWorkSnapshot(submittedBook);
+        }
         audit("chapter=" + persisted.id() + " state=" + chapterStatus + " moderation=" + moderation.decision());
         return persisted;
     }
@@ -1016,14 +1071,18 @@ public class NovelStore {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
+        requireNoPendingCandidate(chapter);
         if (chapter.status() != ChapterStatus.DRAFT) {
             throw new IllegalStateException("only draft chapters can be submitted");
+        }
+        if (book.status() == BookStatus.PUBLISHED) {
+            return submitPublishedNewChapter(book, chapter, userId, ModerationTrigger.CHAPTER_SUBMISSION, Instant.now());
         }
         ContentModerationAudit moderation = contentModerationService.moderateChapter(
                 chapter.id(), chapter.title(), chapter.content(), ModerationTrigger.CHAPTER_SUBMISSION);
         boolean mayPublishChapter = moderation.decision().permitsAutomaticChapterPublication();
         ChapterStatus chapterStatus = mayPublishChapter ? ChapterStatus.PUBLISHED : ChapterStatus.NEEDS_REVIEW;
-        BookStatus bookStatus = nextBookStatusForChapterSubmission(book.status(), true, !mayPublishChapter);
+        BookStatus bookStatus = statusAfterInitialChapterSubmission(book.status());
         Chapter submitted = new Chapter(
                 chapter.id(),
                 chapter.bookId(),
@@ -1039,7 +1098,9 @@ public class NovelStore {
         Chapter persisted = catalogRepository.updateChapter(submitted);
         Book submittedBook = copyBook(book, book.words(), bookStatus);
         catalogRepository.updateBook(submittedBook);
-        queueWholeWorkSnapshot(submittedBook);
+        if (awaitingFullWorkReview(submittedBook.status())) {
+            queueWholeWorkSnapshot(submittedBook);
+        }
         audit("submit chapter=" + persisted.id() + " author=" + userId + " state=" + chapterStatus
                 + " moderation=" + moderation.decision());
         return persisted;
@@ -1053,6 +1114,7 @@ public class NovelStore {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
         Chapter chapter = lockedChapterForBook(book, chapterId);
+        requireNoPendingCandidate(chapter);
         if (chapter.status() != ChapterStatus.DRAFT) {
             throw new IllegalStateException("only draft chapters can be scheduled");
         }
@@ -1075,8 +1137,8 @@ public class NovelStore {
 
     /**
      * Publishes due chapters only after the same local-first, bounded automatic screen used by a
-     * direct submission. Every non-pass (including model unavailability) holds the complete work
-     * for the administrator's review.
+     * direct submission. A non-pass for an already public work holds only the candidate chapter,
+     * never the work's public visibility.
      */
     @Transactional
     public DuePublicationResult publishDueChapters(long userId, Instant dueAt) {
@@ -1087,10 +1149,7 @@ public class NovelStore {
                 userId);
     }
 
-    /**
-     * Trusted scheduler entry point. It deliberately has no browser/API route and processes every
-     * due row using the same sensitive-word and complete-book review transition as an author run.
-     */
+    /** Trusted scheduler entry point with the same incremental lifecycle as an author run. */
     @Transactional
     public DuePublicationResult publishAllDueChapters(Instant dueAt) {
         requireDueTime(dueAt);
@@ -1116,7 +1175,7 @@ public class NovelStore {
             if (expectedAuthorId != null && book.authorId() != expectedAuthorId) {
                 continue;
             }
-            if (book.status() == BookStatus.OFFLINE) {
+            if (book.status() == BookStatus.OFFLINE || book.status() == BookStatus.NEEDS_REVIEW) {
                 continue;
             }
             Chapter chapter;
@@ -1128,6 +1187,17 @@ public class NovelStore {
             if (chapter.status() != ChapterStatus.SCHEDULED
                     || chapter.scheduledPublishAt() == null
                     || chapter.scheduledPublishAt().isAfter(dueAt)) {
+                continue;
+            }
+
+            if (book.status() == BookStatus.PUBLISHED) {
+                Chapter outcome = submitPublishedNewChapter(
+                        book, chapter, book.authorId(), ModerationTrigger.SCHEDULED_PUBLICATION, dueAt);
+                if (outcome.status() == ChapterStatus.PUBLISHED) {
+                    published.add(outcome);
+                } else {
+                    needsReview.add(outcome);
+                }
                 continue;
             }
 
@@ -1147,7 +1217,10 @@ public class NovelStore {
                         scheduledPublicationReviewReason(moderation),
                         chapter.orderNo());
                 catalogRepository.updateChapter(held);
-                Book heldBook = copyBook(book, book.words(), BookStatus.NEEDS_REVIEW);
+                Book heldBook = copyBook(
+                        book,
+                        book.words(),
+                        statusAfterInitialChapterSubmission(book.status()));
                 catalogRepository.updateBook(heldBook);
                 queueWholeWorkSnapshot(heldBook);
                 audit("scheduled chapter=" + held.id() + " blocked="
@@ -1196,7 +1269,7 @@ public class NovelStore {
             throw new IllegalArgumentException("reviewer user id is required");
         }
         Book book = lockedBook(id);
-        if (book.status() != BookStatus.PENDING_REVIEW && book.status() != BookStatus.NEEDS_REVIEW) {
+        if (book.status() != BookStatus.PENDING_REVIEW) {
             throw new IllegalStateException("book is not awaiting a full-work human review");
         }
         String normalizedReason = requireTextAtMost(reason, "review reason is required", 900);
@@ -1246,9 +1319,101 @@ public class NovelStore {
                 + " reason=" + normalizedReason);
         return updated;
     }
-    public List<Book> authorBooks(long userId) { return catalogRepository.findByAuthorId(userId); }
-    public List<Book> pending() { return catalogRepository.findPendingReview(); }
-    public List<Book> availabilityManagedBooks() { return catalogRepository.findAvailabilityManagedBooks(); }
+
+    /**
+     * Decides one incremental candidate. This path deliberately bypasses whole-work snapshots:
+     * an existing published chapter remains public until the proposed replacement is atomically
+     * applied here.
+     */
+    @Transactional
+    public ChapterCandidate reviewChapterCandidate(long reviewerUserId, long candidateId, boolean approve, String reason) {
+        requireOperatorUserId(reviewerUserId);
+        ChapterCandidate located = catalogRepository.findChapterCandidateById(candidateId)
+                .orElseThrow(() -> new NoSuchElementException("chapter candidate not found"));
+        // Keep the same lock order as author edits: book, source chapter, then candidate.
+        Book book = lockedBook(located.bookId());
+        Chapter target = lockedChapterForBook(book, located.targetChapterId());
+        ChapterCandidate candidate = catalogRepository.findChapterCandidateByIdForUpdate(candidateId)
+                .orElseThrow(() -> new NoSuchElementException("chapter candidate not found"));
+        if (candidate.bookId() != book.id() || candidate.targetChapterId() != target.id()) {
+            throw new IllegalStateException("chapter candidate no longer matches its source chapter");
+        }
+        if (book.status() != BookStatus.PUBLISHED) {
+            throw new IllegalStateException("incremental candidates can only be reviewed for published books");
+        }
+        if (candidate.status() != ChapterCandidateStatus.PENDING_REVIEW) {
+            throw new IllegalStateException("chapter candidate is no longer awaiting review");
+        }
+        String normalizedReason = requireTextAtMost(reason, "review reason is required", 900);
+        if (candidate.moderationAuditId() == null) {
+            throw new IllegalStateException("chapter candidate is missing moderation evidence");
+        }
+
+        Instant reviewedAt = Instant.now();
+        if (approve) {
+            if (candidate.type() == ChapterCandidateType.NEW_CHAPTER) {
+                if (target.status() != ChapterStatus.DRAFT) {
+                    throw new IllegalStateException("new chapter candidate source is not awaiting review");
+                }
+            } else if (target.status() != ChapterStatus.PUBLISHED) {
+                throw new IllegalStateException("chapter revision source is no longer published");
+            }
+            Chapter applied = candidateAppliedChapter(target, candidate, reviewedAt);
+            catalogRepository.updateChapter(applied);
+            if (candidate.type() == ChapterCandidateType.CHAPTER_REVISION) {
+                catalogRepository.updateBook(copyBook(
+                        book,
+                        updatedWordCount(book.words(), target.content(), candidate.content()),
+                        book.status()));
+            }
+            ChapterCandidate approved = resolveCandidate(
+                    candidate, ChapterCandidateStatus.APPROVED, normalizedReason, reviewerUserId, reviewedAt);
+            contentModerationReviewService.recordCandidateEvidence(
+                    book.id(), reviewerUserId, true, normalizedReason, candidate.moderationAuditId());
+            audit("review chapter candidate=" + candidate.id() + " reviewer=" + reviewerUserId + " APPROVED");
+            return approved;
+        }
+
+        if (candidate.type() == ChapterCandidateType.NEW_CHAPTER) {
+            if (target.status() != ChapterStatus.DRAFT) {
+                throw new IllegalStateException("new chapter candidate source is no longer awaiting review");
+            }
+            catalogRepository.updateChapter(new Chapter(
+                    target.id(),
+                    target.bookId(),
+                    target.volumeId(),
+                    target.title(),
+                    target.content(),
+                    false,
+                    ChapterStatus.DRAFT,
+                    null,
+                    null,
+                    "增量审核驳回：" + normalizedReason,
+                    target.orderNo()));
+        }
+        ChapterCandidate rejected = resolveCandidate(
+                candidate, ChapterCandidateStatus.REJECTED, normalizedReason, reviewerUserId, reviewedAt);
+        contentModerationReviewService.recordCandidateEvidence(
+                book.id(), reviewerUserId, false, normalizedReason, candidate.moderationAuditId());
+        audit("review chapter candidate=" + candidate.id() + " reviewer=" + reviewerUserId + " REJECTED");
+        return rejected;
+    }
+
+    public BookPresentationPage authorBooks(long userId, int page, int size) {
+        return bookPages().authorBooks(userId, page, size);
+    }
+
+    public BookPresentationPage pendingBooks(int page, int size) {
+        return bookPages().wholeBookReviews(page, size);
+    }
+
+    /** A scoped, database-paged queue keeps incremental candidates separate from whole-work review. */
+    public ModerationReviewQueuePage reviewQueue(ModerationReviewScope scope, int page, int size) {
+        return bookPages().moderationQueue(scope, page, size);
+    }
+    public BookPresentationPage availabilityManagedBooks(int page, int size) {
+        return bookPages().availabilityManagedBooks(page, size);
+    }
 
     /**
      * Removes a currently public work from every public catalog query. The row remains available
@@ -1265,6 +1430,9 @@ public class NovelStore {
         }
         Book updated = copyBook(book, book.words(), BookStatus.OFFLINE);
         catalogRepository.updateBook(updated);
+        if (homeCarouselService != null) {
+            homeCarouselService.disableSlidesForBook(book.id(), operatorUserId, normalizedReason);
+        }
         catalogRepository.recordBookStatusAudit(
                 book.id(), "TAKEDOWN", book.status(), updated.status(), normalizedReason, operatorUserId);
         audit("book-takedown operator=" + operatorUserId + " book=" + book.id());
@@ -1292,14 +1460,14 @@ public class NovelStore {
         return updated;
     }
 
-    public List<BookStatusAudit> bookStatusAudits(long bookId, int limit) {
+    public BookStatusAuditPage bookStatusAudits(long bookId, int page, int size) {
         book(bookId);
-        return catalogRepository.findBookStatusAudits(bookId, limit);
+        return bookPages().statusAudits(bookId, page, size);
     }
 
-    public List<BookStatusAudit> authorBookStatusAudits(long userId, long bookId, int limit) {
+    public BookStatusAuditPage authorBookStatusAudits(long userId, long bookId, int page, int size) {
         owned(userId, bookId);
-        return catalogRepository.findBookStatusAudits(bookId, limit);
+        return bookPages().statusAudits(bookId, page, size);
     }
     public List<String> audits() { return auditTrail.recent(); }
     public List<ContentModerationAudit> moderationAudits(String contentType, int limit) {
@@ -1341,6 +1509,152 @@ public class NovelStore {
         }
         return normalized;
     }
+
+    /** Creates an immutable proposal before the moderation call so its audit has a durable id. */
+    private ChapterCandidate createCandidate(
+            Book book,
+            Chapter target,
+            ChapterCandidateType type,
+            Long volumeId,
+            String title,
+            String content,
+            long authorUserId) {
+        return catalogRepository.createChapterCandidate(new ChapterCandidate(
+                0,
+                book.id(),
+                target.id(),
+                volumeId,
+                type,
+                title,
+                content,
+                target.orderNo(),
+                ChapterCandidateStatus.PENDING_REVIEW,
+                "",
+                null,
+                authorUserId,
+                null,
+                null,
+                null));
+    }
+
+    private void requireNoPendingCandidate(Chapter chapter) {
+        if (catalogRepository.findPendingCandidateForTargetChapterForUpdate(chapter.id()).isPresent()) {
+            throw new IllegalStateException("chapter already has an incremental candidate awaiting review");
+        }
+    }
+
+    /**
+     * Handles an incremental new chapter for a public work. Automatic passes are applied at once;
+     * every other moderation result remains a durable candidate and leaves its parent public.
+     */
+    private Chapter submitPublishedNewChapter(
+            Book book,
+            Chapter source,
+            long authorUserId,
+            ModerationTrigger trigger,
+            Instant publicationAt) {
+        requireNoPendingCandidate(source);
+        ChapterCandidate candidate = createCandidate(
+                book,
+                source,
+                ChapterCandidateType.NEW_CHAPTER,
+                source.volumeId(),
+                source.title(),
+                source.content(),
+                authorUserId);
+        ContentModerationAudit moderation = contentModerationService.moderateChapterCandidate(
+                candidate.id(), candidate.title(), candidate.content(), trigger);
+        if (moderation.decision().permitsAutomaticChapterPublication()) {
+            Chapter released = candidateAppliedChapter(source, candidate, publicationAt);
+            catalogRepository.updateChapter(released);
+            resolveCandidate(candidate, ChapterCandidateStatus.APPROVED, "", null, null, moderation.id());
+            audit("publish incremental chapter=" + released.id() + " candidate=" + candidate.id()
+                    + " moderation=" + moderation.decision());
+            return released;
+        }
+
+        String reason = incrementalCandidateReviewReason(moderation, ChapterCandidateType.NEW_CHAPTER,
+                trigger == ModerationTrigger.SCHEDULED_PUBLICATION);
+        Chapter held = new Chapter(
+                source.id(),
+                source.bookId(),
+                source.volumeId(),
+                source.title(),
+                source.content(),
+                false,
+                ChapterStatus.DRAFT,
+                null,
+                null,
+                reason,
+                source.orderNo());
+        catalogRepository.updateChapter(held);
+        ChapterCandidate pending = updateCandidateModeration(candidate, moderation, reason);
+        audit("hold incremental chapter=" + source.id() + " candidate=" + pending.id()
+                + " moderation=" + moderation.decision());
+        return held;
+    }
+
+    private ChapterCandidate updateCandidateModeration(
+            ChapterCandidate candidate, ContentModerationAudit moderation, String reviewReason) {
+        return resolveCandidate(
+                candidate,
+                ChapterCandidateStatus.PENDING_REVIEW,
+                reviewReason,
+                null,
+                null,
+                moderation.id());
+    }
+
+    private ChapterCandidate resolveCandidate(
+            ChapterCandidate candidate,
+            ChapterCandidateStatus status,
+            String reviewReason,
+            Long reviewerUserId,
+            Instant reviewedAt) {
+        return resolveCandidate(
+                candidate, status, reviewReason, reviewerUserId, reviewedAt, candidate.moderationAuditId());
+    }
+
+    private ChapterCandidate resolveCandidate(
+            ChapterCandidate candidate,
+            ChapterCandidateStatus status,
+            String reviewReason,
+            Long reviewerUserId,
+            Instant reviewedAt,
+            Long moderationAuditId) {
+        return catalogRepository.updateChapterCandidate(new ChapterCandidate(
+                candidate.id(),
+                candidate.bookId(),
+                candidate.targetChapterId(),
+                candidate.volumeId(),
+                candidate.type(),
+                candidate.title(),
+                candidate.content(),
+                candidate.orderNo(),
+                status,
+                reviewReason,
+                moderationAuditId,
+                candidate.createdByUserId(),
+                candidate.createdAt(),
+                reviewerUserId,
+                reviewedAt));
+    }
+
+    private static Chapter candidateAppliedChapter(Chapter target, ChapterCandidate candidate, Instant publishedAt) {
+        return new Chapter(
+                target.id(),
+                target.bookId(),
+                candidate.volumeId(),
+                candidate.title(),
+                candidate.content(),
+                true,
+                ChapterStatus.PUBLISHED,
+                null,
+                publishedAt,
+                "",
+                target.orderNo());
+    }
+
     private Chapter lockedChapterForBook(Book book, long chapterId) {
         Chapter chapter = catalogRepository.findChapterByIdForUpdate(chapterId)
                 .orElseThrow(() -> new NoSuchElementException("chapter not found"));
@@ -1356,7 +1670,7 @@ public class NovelStore {
                 catalogRepository.findChaptersByBookIdForUpdate(book.id()));
     }
     private static boolean awaitingFullWorkReview(BookStatus status) {
-        return status == BookStatus.PENDING_REVIEW || status == BookStatus.NEEDS_REVIEW;
+        return status == BookStatus.PENDING_REVIEW;
     }
     private static void requireOperatorUserId(long operatorUserId) {
         if (operatorUserId <= 0) {
@@ -1367,12 +1681,15 @@ public class NovelStore {
         if (book.status() == BookStatus.OFFLINE) {
             throw new IllegalStateException("offline books can only be restored by an administrator");
         }
+        if (book.status() == BookStatus.NEEDS_REVIEW) {
+            throw new IllegalStateException("historical review state requires administrator triage");
+        }
     }
-    /** A model result may release a chapter, but only a human review can set a book to PUBLISHED. */
-    private static BookStatus nextBookStatusForChapterSubmission(
-            BookStatus current, boolean submit, boolean requiresHumanReview) {
-        if (!submit) return current;
-        if (requiresHumanReview) return BookStatus.NEEDS_REVIEW;
+    /** A chapter submission may queue an initial work but can never withdraw an existing public work. */
+    private static BookStatus statusAfterInitialChapterSubmission(BookStatus current) {
+        // Incremental problems are represented by chapter candidates, never by withdrawing an
+        // already public parent work from reader-facing queries.
+        if (current == BookStatus.PUBLISHED) return BookStatus.PUBLISHED;
         return current == BookStatus.DRAFT || current == BookStatus.REJECTED
                 ? BookStatus.PENDING_REVIEW
                 : current;
@@ -1386,7 +1703,7 @@ public class NovelStore {
                 words,
                 book.serialStatus(),
                 book.synopsis(),
-                book.cover(),
+                null,
                 status,
                 book.authorId(),
                 book.heat(),
@@ -1569,13 +1886,33 @@ public class NovelStore {
             case MODEL_UNAVAILABLE, MODEL_ERROR, INVALID_OUTPUT -> "模型审核不可用或结果无效，已暂停已发布章节修改并标记整书复核";
         };
     }
+
+    private static String incrementalCandidateReviewReason(
+            ContentModerationAudit moderation,
+            ChapterCandidateType type,
+            boolean scheduled) {
+        if (type == ChapterCandidateType.CHAPTER_REVISION
+                && moderation.decision().permitsAutomaticChapterPublication()) {
+            return "已修改已发布章节，等待增量审核";
+        }
+        String action = scheduled ? "定时发布" : "章节发布";
+        return switch (moderation.decision()) {
+            case PASS, SIMULATED_PASS -> "等待增量审核";
+            case LOCAL_SENSITIVE_WORD -> "命中本地敏感词，已暂停" + action + "，等待增量审核";
+            case MANUAL_REVIEW, REJECT -> "模型审核建议人工复核，已暂停" + action + "，等待增量审核";
+            case MODEL_UNAVAILABLE, MODEL_ERROR, INVALID_OUTPUT -> "模型审核不可用或结果无效，已暂停" + action + "，等待增量审核";
+        };
+    }
     private String authorPenName(long userId) {
         return operationsRepository.findAuthorProfile(userId)
                 .map(AuthorProfile::penName)
                 // Existing local fixtures predate author applications. Their persisted catalog
                 // record keeps the legacy author workflow usable without a code-level name.
-                .or(() -> catalogRepository.findByAuthorId(userId).stream().map(Book::author).findFirst())
+                .or(() -> catalogRepository.findAuthorNameByAuthorId(userId))
                 .orElseThrow(() -> new IllegalStateException("approved author profile is required to create a book"));
+    }
+    private BookPageService bookPages() {
+        return bookPageService;
     }
     private boolean containsSensitive(String value) { return operationsRepository.containsSensitiveWord(value); }
     private void audit(String action) { auditTrail.record(action); }

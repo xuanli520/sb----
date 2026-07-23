@@ -72,16 +72,18 @@ class BookTakedownIntegrationTest {
         mvc.perform(get("/api/v1/public/books/1")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/author/books")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                .header(DEVELOPMENT_PRINCIPAL, "author"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].id").value(1))
-                .andExpect(jsonPath("$.data[0].status").value("OFFLINE"));
+                .andExpect(jsonPath("$.data.items[0].id").value(1))
+                .andExpect(jsonPath("$.data.items[0].status").value("OFFLINE"))
+                .andExpect(jsonPath("$.data.meta.total").value(1));
         mvc.perform(get("/api/v1/author/books/1/status-audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                .header(DEVELOPMENT_PRINCIPAL, "author"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].action").value("TAKEDOWN"))
-                .andExpect(jsonPath("$.data[0].reason").value("涉嫌侵权，待核验"));
+                .andExpect(jsonPath("$.data.items[0].action").value("TAKEDOWN"))
+                .andExpect(jsonPath("$.data.items[0].reason").value("涉嫌侵权，待核验"))
+                .andExpect(jsonPath("$.data.meta.total").value(1));
         mvc.perform(get("/api/v1/author/books/2/status-audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(DEVELOPMENT_PRINCIPAL, "author"))
@@ -125,11 +127,12 @@ class BookTakedownIntegrationTest {
         mvc.perform(get("/api/v1/public/books/1")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/admin/reviews")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .header(DEVELOPMENT_PRINCIPAL, "admin"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.id == 1)].status").value("PENDING_REVIEW"));
+                .andExpect(jsonPath("$.data.items[?(@.id == 1)].status").value("PENDING_REVIEW"))
+                .andExpect(jsonPath("$.data.meta.total").value(1));
 
-        List<BookStatusAudit> audits = store.bookStatusAudits(1L, 10);
+        List<BookStatusAudit> audits = store.bookStatusAudits(1L, 0, 10).items();
         assertThat(audits).extracting(BookStatusAudit::action)
                 .containsExactly("RESTORE_FOR_REVIEW", "TAKEDOWN");
         assertThat(audits.getFirst())

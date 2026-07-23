@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class ContentModerationService {
     public static final String CHAPTER = "CHAPTER";
+    /** A proposed incremental edit. It deliberately has a distinct audit identity from live text. */
+    public static final String CHAPTER_CANDIDATE = "CHAPTER_CANDIDATE";
     /** Clear audit type for immutable whole-work snapshot chunks, never a live chapter row. */
     public static final String BOOK_SNAPSHOT_CHUNK = "BOOK_SNAPSHOT_CHUNK";
     private static final String LOCAL_PROVIDER = "LOCAL_SENSITIVE_WORD";
@@ -42,6 +44,18 @@ public class ContentModerationService {
                 CHAPTER,
                 chapterId,
                 chapterContentVersionHash(title, content),
+                title,
+                content,
+                trigger));
+    }
+
+    /** Screens an immutable candidate without making its text part of the public chapter row. */
+    public ContentModerationAudit moderateChapterCandidate(
+            long candidateId, String title, String content, ModerationTrigger trigger) {
+        return persistPrepared(prepareModeration(
+                CHAPTER_CANDIDATE,
+                candidateId,
+                chapterCandidateContentVersionHash(title, content),
                 title,
                 content,
                 trigger));
@@ -175,6 +189,11 @@ public class ContentModerationService {
     /** Canonical version hash shared by moderation and the human-review evidence linker. */
     public static String chapterContentVersionHash(String title, String content) {
         return contentVersionHash(CHAPTER, title, content);
+    }
+
+    /** Candidate hashes are not interchangeable with the live chapter's hash. */
+    public static String chapterCandidateContentVersionHash(String title, String content) {
+        return contentVersionHash(CHAPTER_CANDIDATE, title, content);
     }
 
     /** Canonical hash for an immutable snapshot chunk, separate from a live chapter version. */

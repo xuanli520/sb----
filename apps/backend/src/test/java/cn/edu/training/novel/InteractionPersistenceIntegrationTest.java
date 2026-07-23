@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import cn.edu.training.novel.domain.Comment;
 import cn.edu.training.novel.domain.InteractionStats;
+import cn.edu.training.novel.mapper.InteractionPageMapper;
+import cn.edu.training.novel.mapper.WalletPageMapper;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.CommercialRuleService;
@@ -17,6 +19,7 @@ import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
+import cn.edu.training.novel.service.BookPageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,6 +44,9 @@ class InteractionPersistenceIntegrationTest {
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
+    @Autowired BookPageService bookPageService;
+    @Autowired InteractionPageMapper interactionPageMapper;
+    @Autowired WalletPageMapper walletPageMapper;
 
     @Test
     void commentsRatingsVotesAndDurableCountersSurviveFreshRepositoryAndServiceInstances() {
@@ -61,11 +67,11 @@ class InteractionPersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_audit_event WHERE action LIKE '%rate book=1 user=81 value=4%'", Long.class)).isEqualTo(1L);
 
-        InteractionRepository reloadedInteractions = new InteractionRepository(jdbc);
+        InteractionRepository reloadedInteractions = new InteractionRepository(jdbc, interactionPageMapper);
         NovelStore reloadedStore = new NovelStore(
                 auditTrail,
                 new CatalogRepository(jdbc),
-                new WalletRepository(jdbc),
+                new WalletRepository(jdbc, walletPageMapper),
                 commercialRuleService,
                 new ReaderRepository(jdbc),
                 reloadedInteractions,
@@ -73,7 +79,8 @@ class InteractionPersistenceIntegrationTest {
                 authService,
                 contentModerationService,
                 contentModerationReviewService,
-                bookModerationSnapshotService);
+                bookModerationSnapshotService,
+                bookPageService);
 
         assertThat(reloadedStore.comments(1L)).containsExactly(visible);
         assertThat(reloadedInteractions.findCommentsForUser(81L, "PENDING_REVIEW", 0, 20).items())

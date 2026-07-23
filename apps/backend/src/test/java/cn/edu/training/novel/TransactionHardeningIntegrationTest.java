@@ -29,9 +29,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /** Covers price authority and the durable reward-request idempotency boundary end to end. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:transaction_hardening_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
@@ -50,7 +50,7 @@ class TransactionHardeningIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Development-Principal", "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 

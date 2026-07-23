@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
+import cn.edu.training.novel.domain.ChapterCandidateType;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.ContentModerationAudit;
 import cn.edu.training.novel.domain.DuePublicationResult;
@@ -28,13 +31,16 @@ class ContentModerationUnavailableIntegrationTest {
     @Autowired NovelStore store;
 
     @Test
-    void disabledQwenFailsClosedForDirectSubmission() {
+    void disabledQwenHoldsOnlyTheIncrementalDirectSubmission() {
         Chapter held = store.addChapter(2L, 1L, "未配置模型", "即使正文安全也不能在生产配置下自动发布。", true);
 
-        ContentModerationAudit audit = auditFor(held.id());
+        ChapterCandidate candidate = candidateFor(held.id());
+        ContentModerationAudit audit = auditFor(candidate.id());
         assertThat(held.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
         assertThat(held.published()).isFalse();
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(candidate.type()).isEqualTo(ChapterCandidateType.NEW_CHAPTER);
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(audit.decision()).isEqualTo(ModerationDecision.MODEL_UNAVAILABLE);
         assertThat(audit.simulated()).isFalse();
     }
@@ -47,17 +53,27 @@ class ContentModerationUnavailableIntegrationTest {
         store.scheduleChapter(2L, 1L, draft.id(), scheduledAt);
 
         DuePublicationResult result = store.publishDueChapters(2L, scheduledAt.plusSeconds(1));
-        ContentModerationAudit audit = auditFor(draft.id());
+        ChapterCandidate candidate = candidateFor(draft.id());
+        ContentModerationAudit audit = auditFor(candidate.id());
 
         assertThat(result.published()).isEmpty();
         assertThat(result.needsReview()).extracting(Chapter::id).containsExactly(draft.id());
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(candidate.type()).isEqualTo(ChapterCandidateType.NEW_CHAPTER);
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(audit.decision()).isEqualTo(ModerationDecision.MODEL_UNAVAILABLE);
     }
 
-    private ContentModerationAudit auditFor(long chapterId) {
-        return store.moderationAudits("CHAPTER", 50).stream()
-                .filter(item -> item.contentId() == chapterId)
+    private ChapterCandidate candidateFor(long chapterId) {
+        return store.authorChapterCandidates(2L, 1L).stream()
+                .filter(item -> item.targetChapterId() == chapterId)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private ContentModerationAudit auditFor(long candidateId) {
+        return store.moderationAudits("CHAPTER_CANDIDATE", 50).stream()
+                .filter(item -> item.contentId() == candidateId)
                 .findFirst()
                 .orElseThrow();
     }

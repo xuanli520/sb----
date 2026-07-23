@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { BookOpen, Check, ClipboardCheck, Clock3, MessageSquareText, Plus, Power, Save, ShieldAlert, ShieldCheck, TextQuote, Trash2, Users, X } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, MouseEvent, useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -12,12 +12,14 @@ import { Alert, AlertDescription } from '@/app/components/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { InlineNotice, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { AdminOperationsPanels } from '@/components/novel/AdminOperationsPanels';
 import { CommercialRulesPanel } from '@/components/novel/CommercialRulesPanel';
 import { EmailDeliverySettingsPanel } from '@/components/novel/EmailDeliverySettingsPanel';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
-import { Book, BookStatusAudit, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
+import { HomeCarouselOperationsPanel } from '@/components/novel/HomeCarouselOperationsPanel';
+import { Book, BookPresentation, BookPresentationPage, BookStatusAuditPage, ChapterCandidate, ModerationReviewQueueItem, ModerationReviewQueuePage, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
 type Application = { id: number; penName: string; statement: string; status: string };
@@ -45,6 +47,10 @@ type SensitiveWord = {
   enabled: boolean;
   disabledAt: string | null;
 };
+type PageMeta = { total: number; page: number; size: number };
+
+const BOOK_PAGE_SIZE = 12;
+const REVIEW_PAGE_SIZE = 20;
 
 export type AdminWorkspaceView =
   | 'all'
@@ -57,6 +63,7 @@ export type AdminWorkspaceView =
   | 'accounts-applications'
   | 'operations-redemption-codes'
   | 'operations-discovery'
+  | 'operations-home-carousel'
   | 'analytics-retention'
   | 'settings-commercial'
   | 'settings-email'
@@ -118,6 +125,50 @@ function RedemptionStatusBadge({ status }: { status: string }) {
   return <Badge variant="outline" className={`rounded-none ${meta.className}`}>{meta.label}</Badge>;
 }
 
+function pageWindow(current: number, totalPages: number) {
+  const pages = new Set([0, totalPages - 1, current - 1, current, current + 1]);
+  return [...pages]
+    .filter((page) => page >= 0 && page < totalPages)
+    .sort((left, right) => left - right)
+    .reduce<Array<number | 'ellipsis'>>((items, page) => {
+      const previous = items.at(-1);
+      if (typeof previous === 'number' && page - previous > 1) items.push('ellipsis');
+      items.push(page);
+      return items;
+    }, []);
+}
+
+function PageNavigation({ meta, onPageChange, label }: { meta: PageMeta; onPageChange: (page: number) => void; label: string }) {
+  const totalPages = Math.ceil(meta.total / meta.size);
+  if (totalPages <= 1) return null;
+  const navigate = (page: number) => (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (page >= 0 && page < totalPages && page !== meta.page) onPageChange(page);
+  };
+  const previousDisabled = meta.page === 0;
+  const nextDisabled = meta.page >= totalPages - 1;
+
+  return (
+    <Pagination aria-label={label} className="border-t border-stone-100 px-4 py-4">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious href="#" aria-disabled={previousDisabled} tabIndex={previousDisabled ? -1 : undefined} onClick={navigate(meta.page - 1)} className={previousDisabled ? 'pointer-events-none opacity-40' : undefined} />
+        </PaginationItem>
+        {pageWindow(meta.page, totalPages).map((page, index) => page === 'ellipsis' ? (
+          <PaginationItem key={`ellipsis-${index}`}><PaginationEllipsis /></PaginationItem>
+        ) : (
+          <PaginationItem key={page}>
+            <PaginationLink href="#" isActive={page === meta.page} aria-label={`第 ${page + 1} 页`} onClick={navigate(page)}>{page + 1}</PaginationLink>
+          </PaginationItem>
+        ))}
+        <PaginationItem>
+          <PaginationNext href="#" aria-disabled={nextDisabled} tabIndex={nextDisabled ? -1 : undefined} onClick={navigate(meta.page + 1)} className={nextDisabled ? 'pointer-events-none opacity-40' : undefined} />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
+  );
+}
+
 function RedemptionBenefitFields({
   prefix,
   values,
@@ -156,26 +207,39 @@ function RedemptionBenefitFields({
 
 export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView }) {
   const [dashboard, setDashboard] = useState<Dashboard>();
-  const [reviews, setReviews] = useState<Book[]>([]);
-  const [availabilityBooks, setAvailabilityBooks] = useState<Book[]>([]);
+  const [reviews, setReviews] = useState<BookPresentation[]>([]);
+  const [reviewMeta, setReviewMeta] = useState<PageMeta>({ total: 0, page: 0, size: BOOK_PAGE_SIZE });
+  const [reviewPage, setReviewPage] = useState(0);
+  const [candidateReviews, setCandidateReviews] = useState<ModerationReviewQueueItem[]>([]);
+  const [candidateMeta, setCandidateMeta] = useState<PageMeta>({ total: 0, page: 0, size: BOOK_PAGE_SIZE });
+  const [candidatePage, setCandidatePage] = useState(0);
+  const [candidateScope, setCandidateScope] = useState<'NEW_CHAPTER' | 'CHAPTER_REVISION'>('NEW_CHAPTER');
+  const [candidateReasons, setCandidateReasons] = useState<Record<number, string>>({});
+  const [availabilityBooks, setAvailabilityBooks] = useState<BookPresentation[]>([]);
+  const [availabilityMeta, setAvailabilityMeta] = useState<PageMeta>({ total: 0, page: 0, size: BOOK_PAGE_SIZE });
+  const [availabilityPage, setAvailabilityPage] = useState(0);
   const [bookActionReasons, setBookActionReasons] = useState<Record<number, string>>({});
   const [selectedBookStatusAuditId, setSelectedBookStatusAuditId] = useState<number>();
-  const [bookStatusAudits, setBookStatusAudits] = useState<BookStatusAudit[]>([]);
+  const [bookStatusAuditPage, setBookStatusAuditPage] = useState<BookStatusAuditPage>();
+  const [bookStatusAuditPageIndex, setBookStatusAuditPageIndex] = useState(0);
   const [bookStatusAuditsLoading, setBookStatusAuditsLoading] = useState(false);
   const [bookStatusAuditsError, setBookStatusAuditsError] = useState('');
   const [applications, setApplications] = useState<Application[]>([]);
   const [commentReviews, setCommentReviews] = useState<Comment[]>([]);
-  const [commentReviewTotal, setCommentReviewTotal] = useState(0);
+  const [commentReviewMeta, setCommentReviewMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
+  const [commentReviewPage, setCommentReviewPage] = useState(0);
   const [commentReasons, setCommentReasons] = useState<Record<number, string>>({});
   const [annotationReviews, setAnnotationReviews] = useState<ParagraphAnnotation[]>([]);
-  const [annotationReviewTotal, setAnnotationReviewTotal] = useState(0);
+  const [annotationReviewMeta, setAnnotationReviewMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
+  const [annotationReviewPage, setAnnotationReviewPage] = useState(0);
   const [annotationReasons, setAnnotationReasons] = useState<Record<number, string>>({});
   const [words, setWords] = useState<SensitiveWord[]>([]);
   const [word, setWord] = useState('');
   const [wordEdits, setWordEdits] = useState<Record<string, string>>({});
   const [wordReasons, setWordReasons] = useState<Record<string, string>>({});
   const [redemptionCodes, setRedemptionCodes] = useState<RedemptionCode[]>([]);
-  const [redemptionCodeTotal, setRedemptionCodeTotal] = useState(0);
+  const [redemptionCodeMeta, setRedemptionCodeMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
+  const [redemptionCodePage, setRedemptionCodePage] = useState(0);
   const [generateQuantity, setGenerateQuantity] = useState('10');
   const [generateBatchNo, setGenerateBatchNo] = useState('');
   const [generatePrefix, setGeneratePrefix] = useState('NVC');
@@ -197,62 +261,77 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     setLoading(true);
     try {
       if (view === 'all') {
-        const [nextDashboard, nextReviews, nextAvailabilityBooks, nextApplications, nextWords, nextCommentReviews, nextAnnotationReviews, nextRedemptionCodes] = await Promise.all([
+        const [nextDashboard, nextReviews, nextCandidateQueue, nextAvailabilityBooks, nextApplications, nextWords, nextCommentReviews, nextAnnotationReviews, nextRedemptionCodes] = await Promise.all([
           novelApi<Dashboard>('admin/dashboard', 'admin'),
-          novelApi<Book[]>('admin/reviews', 'admin'),
-          novelApi<Book[]>('admin/books', 'admin'),
+          novelApi<BookPresentationPage>(`admin/reviews?page=${reviewPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
+          novelApi<ModerationReviewQueuePage>(`admin/reviews/queue?scope=${candidateScope}&page=${candidatePage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
+          novelApi<BookPresentationPage>(`admin/books?page=${availabilityPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
           novelApi<Application[]>('admin/author-applications', 'admin'),
           novelApi<SensitiveWord[]>('admin/sensitive-words', 'admin'),
-          novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin'),
-          novelApi<ParagraphAnnotationPage>('admin/annotations?status=PENDING_REVIEW&size=20', 'admin'),
-          novelApi<RedemptionCodePage>('admin/redemption-codes?size=20', 'admin'),
+          novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
+          novelApi<ParagraphAnnotationPage>(`admin/annotations?status=PENDING_REVIEW&page=${annotationReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
+          novelApi<RedemptionCodePage>(`admin/redemption-codes?page=${redemptionCodePage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
         ]);
         setDashboard(nextDashboard);
-        setReviews(nextReviews);
-        setAvailabilityBooks(nextAvailabilityBooks);
+        setReviews(nextReviews.items);
+        setReviewMeta(nextReviews.meta);
+        setCandidateReviews(nextCandidateQueue.items);
+        setCandidateMeta(nextCandidateQueue.meta);
+        setAvailabilityBooks(nextAvailabilityBooks.items);
+        setAvailabilityMeta(nextAvailabilityBooks.meta);
         setApplications(nextApplications);
         setWords(nextWords);
         setCommentReviews(nextCommentReviews.items);
-        setCommentReviewTotal(nextCommentReviews.meta.total);
+        setCommentReviewMeta(nextCommentReviews.meta);
         setAnnotationReviews(nextAnnotationReviews.items);
-        setAnnotationReviewTotal(nextAnnotationReviews.meta.total);
+        setAnnotationReviewMeta(nextAnnotationReviews.meta);
         setRedemptionCodes(nextRedemptionCodes.items);
-        setRedemptionCodeTotal(nextRedemptionCodes.total);
+        setRedemptionCodeMeta({ total: nextRedemptionCodes.total, page: nextRedemptionCodes.page, size: nextRedemptionCodes.size });
       } else if (view === 'overview') {
         const [nextDashboard, nextReviews, nextApplications, nextCommentReviews, nextAnnotationReviews] = await Promise.all([
           novelApi<Dashboard>('admin/dashboard', 'admin'),
-          novelApi<Book[]>('admin/reviews', 'admin'),
+          novelApi<BookPresentationPage>(`admin/reviews?page=${reviewPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
           novelApi<Application[]>('admin/author-applications', 'admin'),
-          novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin'),
-          novelApi<ParagraphAnnotationPage>('admin/annotations?status=PENDING_REVIEW&size=20', 'admin'),
+          novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
+          novelApi<ParagraphAnnotationPage>(`admin/annotations?status=PENDING_REVIEW&page=${annotationReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
         ]);
         setDashboard(nextDashboard);
-        setReviews(nextReviews);
+        setReviews(nextReviews.items);
+        setReviewMeta(nextReviews.meta);
         setApplications(nextApplications);
         setCommentReviews(nextCommentReviews.items);
-        setCommentReviewTotal(nextCommentReviews.meta.total);
+        setCommentReviewMeta(nextCommentReviews.meta);
         setAnnotationReviews(nextAnnotationReviews.items);
-        setAnnotationReviewTotal(nextAnnotationReviews.meta.total);
+        setAnnotationReviewMeta(nextAnnotationReviews.meta);
       } else if (view === 'review-books') {
-        setReviews(await novelApi<Book[]>('admin/reviews', 'admin'));
+        const [next, nextCandidateQueue] = await Promise.all([
+          novelApi<BookPresentationPage>(`admin/reviews?page=${reviewPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
+          novelApi<ModerationReviewQueuePage>(`admin/reviews/queue?scope=${candidateScope}&page=${candidatePage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
+        ]);
+        setReviews(next.items);
+        setReviewMeta(next.meta);
+        setCandidateReviews(nextCandidateQueue.items);
+        setCandidateMeta(nextCandidateQueue.meta);
       } else if (view === 'content-books') {
-        setAvailabilityBooks(await novelApi<Book[]>('admin/books', 'admin'));
+        const next = await novelApi<BookPresentationPage>(`admin/books?page=${availabilityPage}&size=${BOOK_PAGE_SIZE}`, 'admin');
+        setAvailabilityBooks(next.items);
+        setAvailabilityMeta(next.meta);
       } else if (view === 'accounts-applications') {
         setApplications(await novelApi<Application[]>('admin/author-applications', 'admin'));
       } else if (view === 'content-words') {
         setWords(await novelApi<SensitiveWord[]>('admin/sensitive-words', 'admin'));
       } else if (view === 'review-comments') {
-        const next = await novelApi<CommentPage>('admin/comments?status=PENDING_REVIEW&size=20', 'admin');
+        const next = await novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin');
         setCommentReviews(next.items);
-        setCommentReviewTotal(next.meta.total);
+        setCommentReviewMeta(next.meta);
       } else if (view === 'review-annotations') {
-        const next = await novelApi<ParagraphAnnotationPage>('admin/annotations?status=PENDING_REVIEW&size=20', 'admin');
+        const next = await novelApi<ParagraphAnnotationPage>(`admin/annotations?status=PENDING_REVIEW&page=${annotationReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin');
         setAnnotationReviews(next.items);
-        setAnnotationReviewTotal(next.meta.total);
+        setAnnotationReviewMeta(next.meta);
       } else if (view === 'operations-redemption-codes') {
-        const next = await novelApi<RedemptionCodePage>('admin/redemption-codes?size=20', 'admin');
+        const next = await novelApi<RedemptionCodePage>(`admin/redemption-codes?page=${redemptionCodePage}&size=${REVIEW_PAGE_SIZE}`, 'admin');
         setRedemptionCodes(next.items);
-        setRedemptionCodeTotal(next.total);
+        setRedemptionCodeMeta({ total: next.total, page: next.page, size: next.size });
       }
       setHasLoaded(true);
     } catch (reason) {
@@ -260,7 +339,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [annotationReviewPage, availabilityPage, candidatePage, candidateScope, commentReviewPage, redemptionCodePage, reviewPage, view]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -298,14 +377,38 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     }
   };
 
-  const loadBookStatusAudits = async (bookId: number) => {
+  const decideCandidate = async (candidate: ChapterCandidate, approve: boolean) => {
+    const reason = candidateReasons[candidate.id]?.trim() || (approve ? '候选章节符合发布规则' : '请依据审核意见修改后重新提交');
+    setPendingAction(`candidate-${candidate.id}`);
+    try {
+      await novelApi<ChapterCandidate>(`admin/reviews/candidates/${candidate.id}`, 'admin', {
+        method: 'POST',
+        body: JSON.stringify({ approve, reason }),
+      });
+      setCandidateReasons((current) => {
+        const next = { ...current };
+        delete next[candidate.id];
+        return next;
+      });
+      announce(approve ? '章节候选已批准，读者将继续看到已发布作品。' : '章节候选已驳回，原公开章节未受影响。');
+      await load();
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '章节候选审核失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const loadBookStatusAudits = async (bookId: number, page = bookStatusAuditPageIndex) => {
     setSelectedBookStatusAuditId(bookId);
     setBookStatusAuditsLoading(true);
     setBookStatusAuditsError('');
     try {
-      setBookStatusAudits(await novelApi<BookStatusAudit[]>(`admin/books/${bookId}/status-audits?limit=20`, 'admin'));
+      const next = await novelApi<BookStatusAuditPage>(`admin/books/${bookId}/status-audits?page=${page}&size=${REVIEW_PAGE_SIZE}`, 'admin');
+      setBookStatusAuditPage(next);
+      if (next.meta.page !== page) setBookStatusAuditPageIndex(next.meta.page);
     } catch (reason) {
-      setBookStatusAudits([]);
+      setBookStatusAuditPage(undefined);
       setBookStatusAuditsError(reason instanceof Error ? reason.message : '作品处置记录暂时无法加载。');
     } finally {
       setBookStatusAuditsLoading(false);
@@ -335,7 +438,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
         ? `《${updated.title}》已下线，读者端不再可见。`
         : `《${updated.title}》已重新进入整书审核，审核通过前不会重新上线。`);
       await load();
-      await loadBookStatusAudits(book.id);
+      await loadBookStatusAudits(book.id, 0);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '作品处置失败，请稍后重试。', 'error');
     } finally {
@@ -620,10 +723,10 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     { name: '待复核', value: dashboard.pendingReviews, icon: Clock3, note: '需要站长决定' },
   ] : [];
   const taskQueues = [
-    { label: '作品审核', count: reviews.length, href: '/novel-admin/review/books', note: '完整作品等待上线决定' },
+    { label: '作品审核', count: dashboard?.pendingReviews ?? reviewMeta.total, href: '/novel-admin/review/books', note: '整书与增量内容等待决定' },
     { label: '作者准入', count: applications.length, href: '/novel-admin/accounts/applications', note: '等待处理的作者申请' },
-    { label: '评论审核', count: commentReviewTotal, href: '/novel-admin/review/comments', note: '命中规则的评论' },
-    { label: '段评与划线', count: annotationReviewTotal, href: '/novel-admin/review/annotations', note: '申请公开的读者内容' },
+    { label: '评论审核', count: commentReviewMeta.total, href: '/novel-admin/review/comments', note: '命中规则的评论' },
+    { label: '段评与划线', count: annotationReviewMeta.total, href: '/novel-admin/review/annotations', note: '申请公开的读者内容' },
   ];
   const visible = (...views: AdminWorkspaceView[]) => view === 'all' || views.includes(view);
   const detailedRetention = view === 'all' || view === 'analytics-retention';
@@ -688,7 +791,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             <h2 id="redemption-code-heading" className="mt-1 text-xl font-semibold text-stone-950">兑换码管理</h2>
             <p className="mt-2 text-sm leading-6 text-stone-600">批量发放、单码导入与未核销码停用都保留在运营审计中。</p>
           </div>
-          <span className="text-sm text-stone-500">{redemptionCodeTotal ? `共 ${redemptionCodeTotal.toLocaleString('zh-CN')} 个兑换码` : '尚未创建兑换码'}</span>
+          <span className="text-sm text-stone-500">{redemptionCodeMeta.total ? `共 ${redemptionCodeMeta.total.toLocaleString('zh-CN')} 个兑换码` : '尚未创建兑换码'}</span>
         </div>
 
         {generatedBatch ? (
@@ -706,7 +809,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
           <div className="min-w-0 border border-stone-200 bg-white">
             <div className="flex flex-col gap-2 border-b border-stone-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <h3 className="font-semibold text-stone-950">最近兑换码</h3>
-              <span className="text-xs text-stone-500">显示最近 20 条记录</span>
+              <span className="text-xs text-stone-500">每页 {REVIEW_PAGE_SIZE} 条记录</span>
             </div>
             {loading && redemptionCodes.length === 0 ? <div className="p-5"><Skeleton className="h-40 rounded-none bg-stone-100" /></div> : null}
             {!loading && hasLoaded && redemptionCodes.length === 0 ? <div className="px-5 py-12 text-center"><ClipboardCheck className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有兑换码</p><p className="mt-1 text-sm text-stone-500">可通过右侧表单生成批次或导入已有兑换码。</p></div> : null}
@@ -743,6 +846,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
                   </TableBody>
               </Table>
             ) : null}
+            <PageNavigation meta={redemptionCodeMeta} onPageChange={setRedemptionCodePage} label="兑换码分页" />
           </div>
 
           <div className="border border-stone-200 bg-white p-5">
@@ -832,6 +936,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
               ))}
             </div>
           ) : null}
+          <PageNavigation meta={reviewMeta} onPageChange={setReviewPage} label="整书审核分页" />
         </div>
 
         <aside className="border border-stone-200 bg-[#eef4ef] p-5">
@@ -840,6 +945,40 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             {dashboard?.auditLog.length ? dashboard.auditLog.slice(0, 8).map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>) : <p>审核、兑换和内容规则的变更会记录在这里。</p>}
           </div>
         </aside>
+
+        <div className="border border-stone-200 bg-white xl:col-span-2">
+          <div className="flex flex-col gap-4 border-b border-stone-200 px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold text-emerald-700">增量内容审核</p>
+              <h2 className="mt-1 text-xl font-semibold text-stone-950">章节候选</h2>
+              <p className="mt-2 text-sm leading-6 text-stone-600">批准后才会发布新章或替换公开章节；驳回不会改变读者当前可见内容。</p>
+            </div>
+            <div className="inline-flex w-fit border border-stone-300 bg-white p-1" role="group" aria-label="候选章节类型">
+              <Button type="button" variant={candidateScope === 'NEW_CHAPTER' ? 'default' : 'ghost'} size="sm" onClick={() => { setCandidateScope('NEW_CHAPTER'); setCandidatePage(0); }} className={candidateScope === 'NEW_CHAPTER' ? 'h-8 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800' : 'h-8 rounded-none px-3 text-stone-700 hover:bg-stone-100'}>新章</Button>
+              <Button type="button" variant={candidateScope === 'CHAPTER_REVISION' ? 'default' : 'ghost'} size="sm" onClick={() => { setCandidateScope('CHAPTER_REVISION'); setCandidatePage(0); }} className={candidateScope === 'CHAPTER_REVISION' ? 'h-8 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800' : 'h-8 rounded-none px-3 text-stone-700 hover:bg-stone-100'}>已发布章节修订</Button>
+            </div>
+          </div>
+          {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
+          {!loading && hasLoaded && candidateReviews.length === 0 ? <div className="px-5 py-12 text-center"><ClipboardCheck className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核章节候选</p><p className="mt-1 text-sm text-stone-500">提交的新章和已发布章节修订会分别进入此队列。</p></div> : null}
+          {!loading && candidateReviews.length > 0 ? <div className="divide-y divide-stone-100">{candidateReviews.map((item) => {
+            const candidate = item.candidate;
+            if (!candidate) return null;
+            const busy = pendingAction === `candidate-${candidate.id}`;
+            return <article key={candidate.id} className="grid gap-4 px-5 py-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,.7fr)]">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">{candidate.title}</h3><Badge variant="outline" className="rounded-none border-amber-200 bg-amber-50 text-amber-800">{candidate.type === 'NEW_CHAPTER' ? '新章' : '章节修订'}</Badge></div>
+                <p className="mt-1 text-xs text-stone-500">作品 #{candidate.bookId} · 目标章节 #{candidate.targetChapterId} · 排序 {candidate.orderNo}</p>
+                <details className="mt-3 border border-stone-200 bg-stone-50 px-3 py-2 text-sm leading-6 text-stone-700"><summary className="cursor-pointer font-medium text-stone-800">查看候选正文</summary><p className="mt-3 whitespace-pre-wrap">{candidate.content}</p></details>
+              </div>
+              <div className="border-t border-stone-100 pt-4 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+                <Label htmlFor={`candidate-reason-${candidate.id}`} className="text-stone-700">审核说明</Label>
+                <Textarea id={`candidate-reason-${candidate.id}`} aria-label={`章节候选审核说明 ${candidate.id}`} value={candidateReasons[candidate.id] ?? ''} onChange={(event) => setCandidateReasons((current) => ({ ...current, [candidate.id]: event.target.value }))} disabled={busy} maxLength={900} className="mt-2 min-h-20 resize-y rounded-none border-stone-300 bg-white px-3 py-2 text-sm leading-6 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="可补充审核意见" />
+                <div className="mt-3 flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void decideCandidate(candidate, false)} disabled={busy} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800"><X size={15} aria-hidden="true" />驳回</Button><Button type="button" size="sm" onClick={() => void decideCandidate(candidate, true)} disabled={busy} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800"><Check size={15} aria-hidden="true" />批准候选</Button></div>
+              </div>
+            </article>;
+          })}</div> : null}
+          <PageNavigation meta={candidateMeta} onPageChange={setCandidatePage} label="章节候选审核分页" />
+        </div>
       </section> : null}
 
       {visible('content-books') ? <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="book-availability-heading">
@@ -873,11 +1012,13 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
                       <Button type="button" variant="outline" size="sm" aria-expanded={selectedBookStatusAuditId === book.id} onClick={() => {
                         if (selectedBookStatusAuditId === book.id) {
                           setSelectedBookStatusAuditId(undefined);
-                          setBookStatusAudits([]);
+                          setBookStatusAuditPage(undefined);
+                          setBookStatusAuditPageIndex(0);
                           setBookStatusAuditsError('');
                           return;
                         }
-                        void loadBookStatusAudits(book.id);
+                        setBookStatusAuditPageIndex(0);
+                        void loadBookStatusAudits(book.id, 0);
                       }} disabled={pendingAction === `book-status-${book.id}`} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-stone-700 hover:border-emerald-700 hover:text-emerald-800">查看处置记录</Button>
                       <Button type="button" size="sm" aria-label={actionLabel} onClick={() => void changeBookAvailability(book)} disabled={pendingAction === `book-status-${book.id}`} className={takingDown ? 'h-auto rounded-none bg-rose-700 px-3 py-2 hover:bg-rose-800' : 'h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800'}>{takingDown ? <><ShieldAlert size={15} aria-hidden="true" />下线</> : <><Clock3 size={15} aria-hidden="true" />提交复核</>}</Button>
                     </div>
@@ -887,13 +1028,19 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             })}
           </div>
         ) : null}
+        <PageNavigation meta={availabilityMeta} onPageChange={setAvailabilityPage} label="作品处置分页" />
         {selectedBookStatusAuditId ? (
           <div className="border-t border-stone-200 bg-stone-50 px-5 py-5" aria-live="polite">
             <div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-stone-950">作品处置审计</h3><span className="text-xs text-stone-500">作品 #{selectedBookStatusAuditId}</span></div>
             {bookStatusAuditsLoading ? <Skeleton className="mt-4 h-20 rounded-none bg-white" /> : null}
             {bookStatusAuditsError ? <InlineNotice tone="error">处置记录无法显示：{bookStatusAuditsError}</InlineNotice> : null}
-            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length === 0 ? <p className="mt-3 text-sm text-stone-500">尚无作品下线或恢复记录。</p> : null}
-            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAudits.length > 0 ? <ol className="mt-4 space-y-3 border-l border-emerald-300 pl-4">{bookStatusAudits.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatRedemptionTime(audit.createdAt)}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol> : null}
+            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAuditPage?.items.length === 0 ? <p className="mt-3 text-sm text-stone-500">尚无作品下线或恢复记录。</p> : null}
+            {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAuditPage?.items.length ? <ol className="mt-4 space-y-3 border-l border-emerald-300 pl-4">{bookStatusAuditPage.items.map((audit) => <li key={audit.id} className="text-sm leading-6 text-stone-700"><div className="flex flex-wrap items-center gap-2"><strong className="text-stone-950">{audit.action === 'TAKEDOWN' ? '已下线' : '已提交重新审核'}</strong><span>{audit.previousStatus} → {audit.status}</span><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatRedemptionTime(audit.createdAt)}</time></div><p className="mt-1 whitespace-pre-wrap">{audit.reason}</p></li>)}</ol> : null}
+            {bookStatusAuditPage ? <PageNavigation meta={bookStatusAuditPage.meta} onPageChange={(page) => {
+              if (selectedBookStatusAuditId === undefined) return;
+              setBookStatusAuditPageIndex(page);
+              void loadBookStatusAudits(selectedBookStatusAuditId, page);
+            }} label="作品处置审计分页" /> : null}
           </div>
         ) : null}
       </section> : null}
@@ -904,7 +1051,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             <p className="text-xs font-semibold text-emerald-700">互动审核</p>
             <h2 id="comment-review-heading" className="mt-1 text-xl font-semibold text-stone-950">待审核评论</h2>
           </div>
-          <span className="text-sm text-stone-500">{commentReviewTotal ? `${commentReviewTotal.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示命中规则的评论'}</span>
+          <span className="text-sm text-stone-500">{commentReviewMeta.total ? `${commentReviewMeta.total.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示命中规则的评论'}</span>
         </div>
         {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
         {!loading && hasLoaded && commentReviews.length === 0 ? <div className="px-5 py-12 text-center"><MessageSquareText className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核评论</p><p className="mt-1 text-sm text-stone-500">命中内容规则的评论会在这里等待处理。</p></div> : null}
@@ -929,6 +1076,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             ))}
           </div>
         ) : null}
+        <PageNavigation meta={commentReviewMeta} onPageChange={setCommentReviewPage} label="评论审核分页" />
       </section> : null}
 
       {visible('review-annotations') ? <section className="mt-7 border border-stone-200 bg-white" aria-labelledby="annotation-review-heading">
@@ -938,7 +1086,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             <h2 id="annotation-review-heading" className="mt-1 text-xl font-semibold text-stone-950">待审核段评与划线</h2>
             <p className="mt-2 text-sm leading-6 text-stone-600">读者申请公开的划线会在站长审核通过后显示在章节旁。</p>
           </div>
-          <span className="text-sm text-stone-500">{annotationReviewTotal ? `${annotationReviewTotal.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示申请公开的段评'}</span>
+          <span className="text-sm text-stone-500">{annotationReviewMeta.total ? `${annotationReviewMeta.total.toLocaleString('zh-CN')} 条等待人工决定` : '仅显示申请公开的段评'}</span>
         </div>
         {loading ? <div className="p-5"><Skeleton className="h-24 rounded-none bg-stone-100" /></div> : null}
         {!loading && hasLoaded && annotationReviews.length === 0 ? <div className="px-5 py-12 text-center"><TextQuote className="mx-auto text-stone-400" size={28} aria-hidden="true" /><p className="mt-3 font-medium text-stone-800">当前没有待审核段评与划线</p><p className="mt-1 text-sm text-stone-500">申请公开的读者划线会在这里等待处理。</p></div> : null}
@@ -964,6 +1112,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             ))}
           </div>
         ) : null}
+        <PageNavigation meta={annotationReviewMeta} onPageChange={setAnnotationReviewPage} label="段评审核分页" />
       </section> : null}
 
       {visible('accounts-applications', 'content-words') ? <section className="mt-7 grid gap-6 xl:grid-cols-2">
@@ -1023,6 +1172,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
       {visible('settings-commercial') ? <CommercialRulesPanel /> : null}
       {visible('settings-email') ? <EmailDeliverySettingsPanel /> : null}
       {visible('operations-discovery') ? <EditorialOperationsPanel /> : null}
+      {view === 'operations-home-carousel' ? <HomeCarouselOperationsPanel /> : null}
       {visible('accounts-users', 'content-catalog') ? <AdminOperationsPanels mode={view === 'content-catalog' ? 'catalog' : view === 'accounts-users' ? 'accounts' : 'all'} /> : null}
     </>
   );

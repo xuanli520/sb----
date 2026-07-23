@@ -25,9 +25,9 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:author_volume_lifecycle_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -35,7 +35,6 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class AuthorVolumeLifecycleIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired NovelStore store;
@@ -181,6 +180,15 @@ class AuthorVolumeLifecycleIntegrationTest {
 
     private MockHttpServletRequestBuilder author(MockHttpServletRequestBuilder request, String principal) {
         return request.header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header(DEVELOPMENT_PRINCIPAL, principal);
+                .header(TestBffSessions.HEADER, testSession(principal));
+    }
+
+    private static String testSession(String principal) {
+        return switch (principal) {
+            case "admin" -> TestBffSessions.ADMIN;
+            case "author" -> TestBffSessions.AUTHOR;
+            case "reader" -> TestBffSessions.READER;
+            default -> throw new IllegalArgumentException("unknown test principal: " + principal);
+        };
     }
 }

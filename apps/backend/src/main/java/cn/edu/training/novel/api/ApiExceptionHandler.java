@@ -18,7 +18,7 @@ class ApiExceptionHandler {
     ApiResponse<Void> invalidCover(InvalidCoverImageException exception) { return new ApiResponse<>(400, exception.getMessage(), null); }
     @ExceptionHandler({MissingServletRequestPartException.class, MaxUploadSizeExceededException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    ApiResponse<Void> invalidMultipart(Exception exception) { return new ApiResponse<>(400, "cover image upload is invalid or too large", null); }
+    ApiResponse<Void> invalidMultipart(Exception exception) { return new ApiResponse<>(400, "media image upload is invalid or too large", null); }
     @ExceptionHandler(CoverStorageUnavailableException.class)
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     ApiResponse<Void> coverStorageUnavailable(CoverStorageUnavailableException exception) { return new ApiResponse<>(503, exception.getMessage(), null); }

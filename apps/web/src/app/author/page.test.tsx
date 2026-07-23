@@ -44,17 +44,50 @@ type RewardReportFixture = {
 type AnalyticsReportFixture = {
   summary: {
     currentFavoriteCount: number;
+    currentSubscriptionCount: number;
+    currentSubscriberCount: number;
+    ratingCount: number;
+    averageRating: number;
     purchaseCount: number;
     purchaseTokenAmount: number;
     activeReaderBookCount: number;
     activeReaderCount: number;
+    currentReaderBookCount: number;
+    currentReaderCount: number;
     completedReaderBookCount: number;
     averageReadThroughPercent: number;
     amountUnit: string;
   };
-  dailyTrend: Array<{ date: string; favoriteAddCount: number; purchaseCount: number; purchaseTokenAmount: number }>;
-  bookMetrics: Array<{ bookId: number; bookTitle: string; currentFavoriteCount: number; purchaseCount: number; purchaseTokenAmount: number; activeReaderBookCount: number; averageReadThroughPercent: number }>;
-  subscriptionMetrics: { attributedGrantCount: number; attributedReaderCount: number; membershipDayCount: number };
+  dailyTrend: Array<{
+    date: string;
+    favoriteAddCount: number;
+    favoriteRemoveCount: number;
+    subscriptionAddCount: number;
+    subscriptionRemoveCount: number;
+    purchaseCount: number;
+    purchaseTokenAmount: number;
+  }>;
+  bookMetrics: Array<{
+    bookId: number;
+    bookTitle: string;
+    currentFavoriteCount: number;
+    currentSubscriptionCount: number;
+    subscriptionAddCount: number;
+    subscriptionRemoveCount: number;
+    ratingCount: number;
+    averageRating: number;
+    purchaseCount: number;
+    purchaseTokenAmount: number;
+    activeReaderBookCount: number;
+    averageReadThroughPercent: number;
+  }>;
+  subscriptionMetrics: {
+    currentSubscriptionCount: number;
+    currentSubscriberCount: number;
+    subscriptionAddCount: number;
+    subscriptionRemoveCount: number;
+  };
+  membershipAttributionMetrics: { attributedGrantCount: number; attributedReaderCount: number; membershipDayCount: number };
   retentionMetrics: {
     cohortReaderBookCount: number;
     day1EligibleReaderBookCount: number;
@@ -65,7 +98,11 @@ type AnalyticsReportFixture = {
     day7RetentionPercent: number | null;
     observedThrough: string;
   };
-  availability: { subscription: { available: boolean; reason: string }; retention: { available: boolean; reason: string } };
+  availability: {
+    favorite: { available: boolean; reason: string };
+    subscription: { available: boolean; reason: string };
+    retention: { available: boolean; reason: string };
+  };
   meta: {
     from: string;
     to: string;
@@ -75,10 +112,13 @@ type AnalyticsReportFixture = {
     bookMetricTotal: number;
     returnedBookMetricLimit: number;
     bookMetricsTruncated: boolean;
-    shelfTrendInclusion: string;
+    favoriteTrendInclusion: string;
     purchaseInclusion: string;
     readThroughDefinition: string;
+    activeReadingDefinition: string;
     subscriptionInclusion: string;
+    membershipAttributionInclusion: string;
+    historicalObservationBoundary: string;
     retentionDefinition: string;
   };
 };
@@ -147,23 +187,35 @@ function analyticsReportFixture(): AnalyticsReportFixture {
   return {
     summary: {
       currentFavoriteCount: 12,
+      currentSubscriptionCount: 7,
+      currentSubscriberCount: 6,
+      ratingCount: 9,
+      averageRating: 4.56,
       purchaseCount: 4,
       purchaseTokenAmount: 120,
       activeReaderBookCount: 5,
       activeReaderCount: 4,
+      currentReaderBookCount: 10,
+      currentReaderCount: 8,
       completedReaderBookCount: 2,
       averageReadThroughPercent: 65.5,
       amountUnit: 'TOKEN',
     },
     dailyTrend: [
-      { date: '2026-07-20', favoriteAddCount: 2, purchaseCount: 1, purchaseTokenAmount: 30 },
-      { date: '2026-07-21', favoriteAddCount: 3, purchaseCount: 2, purchaseTokenAmount: 60 },
+      { date: '2026-07-20', favoriteAddCount: 2, favoriteRemoveCount: 1, subscriptionAddCount: 1, subscriptionRemoveCount: 0, purchaseCount: 1, purchaseTokenAmount: 30 },
+      { date: '2026-07-21', favoriteAddCount: 3, favoriteRemoveCount: 1, subscriptionAddCount: 2, subscriptionRemoveCount: 1, purchaseCount: 2, purchaseTokenAmount: 60 },
     ],
     bookMetrics: [
-      { bookId: 1, bookTitle: '北岸灯塔', currentFavoriteCount: 9, purchaseCount: 3, purchaseTokenAmount: 90, activeReaderBookCount: 4, averageReadThroughPercent: 70 },
-      { bookId: 2, bookTitle: '夜航南岸', currentFavoriteCount: 3, purchaseCount: 1, purchaseTokenAmount: 30, activeReaderBookCount: 1, averageReadThroughPercent: 47.5 },
+      { bookId: 1, bookTitle: '北岸灯塔', currentFavoriteCount: 9, currentSubscriptionCount: 5, subscriptionAddCount: 3, subscriptionRemoveCount: 1, ratingCount: 7, averageRating: 4.71, purchaseCount: 3, purchaseTokenAmount: 90, activeReaderBookCount: 4, averageReadThroughPercent: 70 },
+      { bookId: 2, bookTitle: '夜航南岸', currentFavoriteCount: 3, currentSubscriptionCount: 2, subscriptionAddCount: 1, subscriptionRemoveCount: 0, ratingCount: 2, averageRating: 4, purchaseCount: 1, purchaseTokenAmount: 30, activeReaderBookCount: 1, averageReadThroughPercent: 47.5 },
     ],
     subscriptionMetrics: {
+      currentSubscriptionCount: 7,
+      currentSubscriberCount: 6,
+      subscriptionAddCount: 4,
+      subscriptionRemoveCount: 1,
+    },
+    membershipAttributionMetrics: {
       attributedGrantCount: 3,
       attributedReaderCount: 2,
       membershipDayCount: 90,
@@ -179,7 +231,8 @@ function analyticsReportFixture(): AnalyticsReportFixture {
       observedThrough: '2026-07-21',
     },
     availability: {
-      subscription: { available: true, reason: 'Author-attributed membership redemption ledger is available.' },
+      favorite: { available: true, reason: 'Immutable favorite events are available.' },
+      subscription: { available: true, reason: 'Immutable free-work subscription events are available.' },
       retention: { available: true, reason: 'Immutable reader-work reading-progress activity is available.' },
     },
     meta: {
@@ -191,10 +244,13 @@ function analyticsReportFixture(): AnalyticsReportFixture {
       bookMetricTotal: 2,
       returnedBookMetricLimit: 12,
       bookMetricsTruncated: false,
-      shelfTrendInclusion: 'CURRENT_BOOKSHELF_ROWS_ADDED_IN_WINDOW; REMOVED_ROWS_ARE_NOT_RETAINED',
+      favoriteTrendInclusion: 'IMMUTABLE_FAVORITE_EVENTS_IN_WINDOW; CURRENT_FAVORITE_COUNT_IS_A_QUERY_TIME_SNAPSHOT',
       purchaseInclusion: 'PURCHASE_ENTITLEMENT_WITH_MATCHING_BOOK_PURCHASE_TOKEN_DEBIT',
-      readThroughDefinition: 'CURRENT_PROGRESS_UPDATED_IN_WINDOW; PUBLISHED_CHAPTER_POSITION_PLUS_CAPPED_OFFSET_FRACTION',
-      subscriptionInclusion: 'AUTHOR_ATTRIBUTED_MEMBERSHIP_REDEMPTION_LEDGER; COMPOSITE_REDEMPTION_CODE_BOOK_OWNER_SNAPSHOTTED_AT_GRANT',
+      readThroughDefinition: 'CURRENT_READER_PROGRESS_SNAPSHOT; PUBLISHED_CHAPTER_POSITION_PLUS_CAPPED_OFFSET_FRACTION',
+      activeReadingDefinition: 'IMMUTABLE_READER_BOOK_ACTIVITY_IN_WINDOW; SHANGHAI_NATURAL_DAY_IDEMPOTENT_PER_READER_BOOK',
+      subscriptionInclusion: 'IMMUTABLE_FREE_WORK_SUBSCRIPTION_EVENTS_IN_WINDOW; CURRENT_SUBSCRIPTION_COUNT_IS_A_QUERY_TIME_SNAPSHOT',
+      membershipAttributionInclusion: 'AUTHOR_ATTRIBUTED_MEMBERSHIP_REDEMPTION_LEDGER; COMPOSITE_REDEMPTION_CODE_BOOK_OWNER_SNAPSHOTTED_AT_GRANT',
+      historicalObservationBoundary: '2026-07-20T00:00:00+08:00',
       retentionDefinition: 'FIRST_READING_PROGRESS_ACTIVITY_DATE_PER_READER_BOOK; SAME_READER_BOOK_ACTIVITY_ON_COHORT_DATE_PLUS_1_OR_PLUS_7; ONLY_COHORTS_MATURED_BY_OBSERVED_THROUGH_ARE_ELIGIBLE',
     },
   };
@@ -238,13 +294,25 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
     ],
     2: [chapter({ id: 2001, bookId: 2, volumeId: 201, title: '离岸风', orderNo: 1 })],
   };
+  const candidatesByBook: Record<number, Array<{ id: number; bookId: number; targetChapterId: number; type: 'NEW_CHAPTER' | 'CHAPTER_REVISION'; status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED'; title: string; reviewReason: string; createdAt: string }>> = {
+    1: [],
+    2: [],
+  };
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const endpoint = String(input).replace('/api/novel/', '');
     const method = (init?.method ?? 'GET').toUpperCase();
     const multipart = typeof FormData !== 'undefined' && init?.body instanceof FormData ? init.body : undefined;
     const body = init?.body && !multipart ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
 
-    if (method === 'GET' && endpoint === 'author/books') return Promise.resolve(response(bookItems));
+    if (method === 'GET' && endpoint.startsWith('author/books?')) {
+      const parameters = new URLSearchParams(endpoint.split('?')[1]);
+      const page = Number(parameters.get('page') ?? 0);
+      const size = Number(parameters.get('size') ?? 12);
+      return Promise.resolve(response({
+        items: bookItems.slice(page * size, (page + 1) * size),
+        meta: { total: bookItems.length, page, size },
+      }));
+    }
 
     if (method === 'GET' && endpoint.startsWith('author/reward-records?')) {
       if (options.rewardRequest) return options.rewardRequest;
@@ -308,15 +376,39 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       const bookId = Number(coverUpload[1]);
       const item = bookItems.find((book) => book.id === bookId);
       if (!item || !multipart?.get('file')) return Promise.resolve(rejected('cover image file is required'));
+      if (item.status === 'PUBLISHED') {
+        return Promise.resolve(response({
+          book: item,
+          candidate: {
+            id: 701,
+            bookId,
+            assetId: '22222222-2222-2222-2222-222222222222',
+            approvedAssetId: null,
+            status: 'PENDING_REVIEW',
+            reviewReason: null,
+            createdByUserId: 2,
+            createdAt: '2026-07-23T08:00:00Z',
+            reviewedByUserId: null,
+            reviewedAt: null,
+          },
+        }));
+      }
       const updated = { ...item, cover: '/media/covers/11111111-1111-1111-1111-111111111111.png' };
       bookItems = bookItems.map((book) => book.id === bookId ? updated : book);
-      return Promise.resolve(response(updated));
+      return Promise.resolve(response({ book: updated, candidate: null }));
     }
 
-    const statusAudits = endpoint.match(/^author\/books\/(\d+)\/status-audits\?limit=20$/);
-    if (method === 'GET' && statusAudits) return Promise.resolve(response(
-      (options.statusAudits ?? []).filter((audit) => audit.bookId === Number(statusAudits[1])),
-    ));
+    const statusAudits = endpoint.match(/^author\/books\/(\d+)\/status-audits\?(.+)$/);
+    if (method === 'GET' && statusAudits) {
+      const parameters = new URLSearchParams(statusAudits[2]);
+      const page = Number(parameters.get('page') ?? 0);
+      const size = Number(parameters.get('size') ?? 12);
+      const audits = (options.statusAudits ?? []).filter((audit) => audit.bookId === Number(statusAudits[1]));
+      return Promise.resolve(response({
+        items: audits.slice(page * size, (page + 1) * size),
+        meta: { total: audits.length, page, size },
+      }));
+    }
 
     const volumeList = endpoint.match(/^author\/books\/(\d+)\/volumes$/);
     if (method === 'GET' && volumeList) return Promise.resolve(response(volumesByBook[Number(volumeList[1])] ?? []));
@@ -371,6 +463,11 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       return Promise.resolve(response(volumesByBook[bookId]));
     }
 
+    const candidateList = endpoint.match(/^author\/books\/(\d+)\/chapter-candidates$/);
+    if (method === 'GET' && candidateList) return Promise.resolve(response(
+      (candidatesByBook[Number(candidateList[1])] ?? []).map((candidate) => ({ ...candidate })),
+    ));
+
     const chapterList = endpoint.match(/^author\/books\/(\d+)\/chapters$/);
     if (method === 'GET' && chapterList) return Promise.resolve(response(chaptersByBook[Number(chapterList[1])] ?? []));
     if (method === 'POST' && chapterList) {
@@ -396,7 +493,30 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       const chapterId = Number(chapterDetail[2]);
       const item = chaptersByBook[bookId]?.find((existing) => existing.id === chapterId);
       if (!item) return Promise.resolve(rejected(`Unknown chapter: ${chapterId}`));
-      const status = item.status === 'PUBLISHED' ? 'NEEDS_REVIEW' : item.status;
+      if (item.status === 'PUBLISHED') {
+        const candidate = {
+          id: Math.max(0, ...candidatesByBook[bookId].map((existing) => existing.id)) + 1,
+          bookId,
+          targetChapterId: item.id,
+          type: 'CHAPTER_REVISION' as const,
+          status: 'PENDING_REVIEW' as const,
+          title: String(body.title),
+          reviewReason: '修订候选等待审核',
+          createdAt: '2026-07-23T08:00:00Z',
+        };
+        candidatesByBook[bookId].push(candidate);
+        return Promise.resolve(response({
+          ...item,
+          title: candidate.title,
+          content: String(body.content),
+          volumeId: typeof body.volumeId === 'number' ? body.volumeId : item.volumeId,
+          status: 'NEEDS_REVIEW',
+          published: false,
+          scheduledPublishAt: null,
+          reviewReason: candidate.reviewReason,
+        }));
+      }
+      const status = item.status;
       const updated = {
         ...item,
         title: String(body.title),
@@ -404,11 +524,11 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
         volumeId: typeof body.volumeId === 'number' ? body.volumeId : item.volumeId,
         status,
         published: status === 'PUBLISHED',
-        scheduledPublishAt: status === 'NEEDS_REVIEW' ? null : item.scheduledPublishAt,
-        reviewReason: status === 'NEEDS_REVIEW' ? '已修改已发布章节，等待整书复核' : '',
+        scheduledPublishAt: item.scheduledPublishAt,
+        reviewReason: '',
       };
       chaptersByBook[bookId] = chaptersByBook[bookId].map((existing) => existing.id === chapterId ? updated : existing);
-      bookItems = bookItems.map((book) => book.id === bookId ? { ...book, words: book.words - item.content.length + updated.content.length, status: status === 'NEEDS_REVIEW' ? 'NEEDS_REVIEW' : book.status } : book);
+      bookItems = bookItems.map((book) => book.id === bookId ? { ...book, words: book.words - item.content.length + updated.content.length } : book);
       return Promise.resolve(response(updated));
     }
     if (method === 'DELETE' && chapterDetail) {
@@ -507,6 +627,26 @@ describe('author manuscript workspace', () => {
     refresh.mockReset();
   });
 
+  it('requests author works as a strict server page and loads the next page through the shared navigation', async () => {
+    const pagedBooks = Array.from({ length: 13 }, (_, index) => ({
+      ...books[0],
+      id: index + 1,
+      title: `分页作品 ${index + 1}`,
+    }));
+    const fetchMock = mockAuthorApi({ books: pagedBooks });
+    render(<AuthorPage />);
+
+    await screen.findByRole('button', { name: /分页作品 1.*正在编辑/ });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books?page=0&size=12', expect.anything()));
+
+    const pagination = screen.getByRole('navigation', { name: '作品库分页' });
+    fireEvent.click(within(pagination).getByRole('link', { name: '下一页' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books?page=1&size=12', expect.anything()));
+    expect(await screen.findByRole('button', { name: /分页作品 13.*正在编辑/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /分页作品 1.*继续编辑/ })).toBeNull();
+  });
+
   it('loads author-owned comments and explicitly shared annotations for the selected work', async () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
@@ -577,7 +717,29 @@ describe('author manuscript workspace', () => {
     expect(screen.getByText('作品已下线')).toBeTruthy();
     expect(screen.getByText('该作品已下线，等待站长根据处置反馈决定是否重新进入审核。')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '提交完整作品' })).toBeNull();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/status-audits?limit=20', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/status-audits?page=0&size=12', expect.anything()));
+  });
+
+  it('requests later stationmaster disposition audit pages from the server', async () => {
+    const statusAudits = Array.from({ length: 13 }, (_, index) => ({
+      id: 800 + index,
+      bookId: 1,
+      action: 'TAKEDOWN' as const,
+      previousStatus: 'PUBLISHED' as const,
+      status: 'OFFLINE' as const,
+      reason: `处置反馈 ${index + 1}`,
+      operatorUserId: 1,
+      createdAt: `2026-07-${String(index + 1).padStart(2, '0')}T08:00:00Z`,
+    }));
+    const fetchMock = mockAuthorApi({ statusAudits });
+    render(<AuthorPage />);
+
+    await screen.findByText('处置反馈 1');
+    const pagination = screen.getByRole('navigation', { name: '作品处置反馈分页' });
+    fireEvent.click(within(pagination).getByRole('link', { name: '下一页' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/status-audits?page=1&size=12', expect.anything()));
+    expect(await screen.findByText('处置反馈 13')).toBeTruthy();
   });
 
   it('renders only explicitly shared annotations and lets authors submit non-final station-review advice', async () => {
@@ -815,6 +977,28 @@ describe('author manuscript workspace', () => {
     expect(screen.getByRole('img', { name: '《夜航南岸》封面' }).getAttribute('src')).toBe('/media/covers/11111111-1111-1111-1111-111111111111.png');
   });
 
+  it('keeps a published cover public while staging its replacement as a review candidate', async () => {
+    const publicCover = '/media/covers/33333333-3333-3333-3333-333333333333.jpg';
+    const fetchMock = mockAuthorApi({ books: [{ ...books[0], cover: publicCover }, books[1]] });
+    render(<AuthorPage />);
+
+    await screen.findByRole('button', { name: '管理封面《北岸灯塔》' });
+    fireEvent.click(screen.getByRole('button', { name: '管理封面《北岸灯塔》' }));
+    const dialog = await screen.findByRole('dialog', { name: '管理作品封面' });
+    expect(within(dialog).getByText('已发布作品的文字信息保持不变。上传新封面会创建候选，当前公开封面会保留到站长批准。')).toBeTruthy();
+    expect(within(dialog).getByLabelText('编辑作品名称').hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).queryByRole('button', { name: '保存作品信息' })).toBeNull();
+
+    const file = new File(['candidate-image-bytes'], 'candidate-cover.jpg', { type: 'image/jpeg' });
+    fireEvent.change(within(dialog).getByLabelText('上传作品封面'), { target: { files: [file] } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '上传新封面' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/cover', expect.objectContaining({ method: 'POST' })));
+    expect(await screen.findByText('《北岸灯塔》的封面候选已提交审核；当前公开封面保持不变。')).toBeTruthy();
+    expect(within(dialog).getByText('封面候选 #701 待审核：当前公开封面保持不变。')).toBeTruthy();
+    expect(within(dialog).getByRole('img', { name: '《北岸灯塔》封面' }).getAttribute('src')).toBe(publicCover);
+  });
+
   it('edits a scheduled chapter without losing its scheduled publication state', async () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
@@ -838,25 +1022,26 @@ describe('author manuscript workspace', () => {
     });
   });
 
-  it('surfaces the server review state after editing a published chapter', async () => {
+  it('keeps published text readable while a chapter revision candidate awaits review', async () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
     await screen.findByRole('button', { name: '编辑章节《抵达旧港》' });
     fireEvent.click(screen.getByRole('button', { name: '编辑章节《抵达旧港》' }));
-    await screen.findByText('修改已发布章节后，服务端会将章节和整部作品转入复核，修改不会立即公开。');
+    await screen.findByText('修改已发布章节会创建修订候选等待审核；当前已发布正文持续对读者可读，批准后才会原子替换。');
 
     fireEvent.change(screen.getByLabelText('编辑章节标题'), { target: { value: '重访旧港' } });
     fireEvent.change(screen.getByLabelText('编辑章节正文'), { target: { value: '公开章节的修订正文' } });
     fireEvent.click(screen.getByRole('button', { name: '保存章节' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/books/1/chapters/1001', expect.objectContaining({ method: 'PUT' })));
-    await screen.findByText('《重访旧港》已保存，已发布章节的修改已送入整书复核。');
+    await screen.findByText('《重访旧港》的修订候选已提交审核；当前已发布正文保持可读。');
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input) === '/api/novel/author/books/1/chapter-candidates')).toHaveLength(2));
     await waitFor(() => {
-      const item = screen.getByRole('heading', { name: '第 1 章 · 重访旧港' }).closest('article');
+      const item = screen.getByRole('heading', { name: '第 1 章 · 抵达旧港' }).closest('article');
       expect(item).not.toBeNull();
-      expect(within(item as HTMLElement).getByText('需复核')).toBeTruthy();
-      expect(within(item as HTMLElement).getByText('已修改已发布章节，等待整书复核')).toBeTruthy();
+      expect(within(item as HTMLElement).getByText(/修订候选《重访旧港》待审核/)).toBeTruthy();
+      expect(within(item as HTMLElement).getByText('已发布')).toBeTruthy();
     });
   });
 
@@ -904,22 +1089,27 @@ describe('author manuscript workspace', () => {
     expect(screen.getAllByText('夜航南岸', { selector: 'span' }).length).toBeGreaterThan(0);
   });
 
-  it('shows author-owned shelf, subscription, purchase, and immutable D1/D7 retention analytics', async () => {
+  it('shows author-owned favorites, free subscriptions, ratings, reading, and immutable D1/D7 retention analytics', async () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅、评分与阅读数据' });
     expect(await within(analytics).findByText('12')).toBeTruthy();
     expect(within(analytics).getByText('65.5%')).toBeTruthy();
-    expect(within(analytics).getByText('作品归因订阅')).toBeTruthy();
-    expect(within(analytics).getByText('作品归因订阅').parentElement?.textContent).toContain('3次');
+    expect(within(analytics).getByText('当前免费订阅')).toBeTruthy();
+    expect(within(analytics).getByText('读者评分')).toBeTruthy();
+    expect(within(analytics).getByText('4.56 分')).toBeTruthy();
+    expect(within(analytics).getByText('作品归因会员兑换')).toBeTruthy();
+    expect(within(analytics).getByText('作品归因会员兑换').parentElement?.textContent).toContain('3次');
     expect(within(analytics).getByText('D1 追读')).toBeTruthy();
     expect(within(analytics).getByText('66.67%')).toBeTruthy();
     expect(within(analytics).getByText('D7 追读')).toBeTruthy();
     expect(within(analytics).getByText('33.33%')).toBeTruthy();
     expect(within(analytics).getByRole('columnheader', { name: '新增收藏' })).toBeTruthy();
-    expect(within(analytics).getByRole('row', { name: /2026-07-21.*3.*2.*60/ })).toBeTruthy();
-    expect(within(analytics).getByRole('row', { name: /北岸灯塔.*9.*3.*70%/ })).toBeTruthy();
+    expect(within(analytics).getByRole('columnheader', { name: '取消收藏' })).toBeTruthy();
+    expect(within(analytics).getByRole('columnheader', { name: '新增订阅' })).toBeTruthy();
+    expect(within(analytics).getByRole('row', { name: /2026-07-21.*3.*1.*2.*1.*2.*60/ })).toBeTruthy();
+    expect(within(analytics).getByRole('row', { name: /北岸灯塔.*9.*5.*4\.71 分.*7 人.*4.*70%/ })).toBeTruthy();
     expect(within(analytics).getByText(/代币不是法币收入/)).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/author/analytics', expect.anything()));
   });
@@ -928,7 +1118,7 @@ describe('author manuscript workspace', () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅、评分与阅读数据' });
     await within(analytics).findByText('12');
     fireEvent.click(within(analytics).getByRole('combobox', { name: '作品数据作品筛选' }));
     fireEvent.click(await screen.findByRole('option', { name: '夜航南岸' }));
@@ -943,7 +1133,7 @@ describe('author manuscript workspace', () => {
     mockAuthorApi({ rejectAnalyticsReport: true });
     render(<AuthorPage />);
 
-    const analytics = await screen.findByRole('region', { name: '收藏、订阅与阅读数据' });
+    const analytics = await screen.findByRole('region', { name: '收藏、订阅、评分与阅读数据' });
     expect(await within(analytics).findByText('作品数据无法显示：author analytics service is unavailable')).toBeTruthy();
     expect(within(analytics).getByRole('button', { name: '重试' })).toBeTruthy();
   });

@@ -60,14 +60,9 @@ public record CoverStorageProperties(
     }
 
     private boolean validPublicBasePath() {
-        if (publicBasePath == null) return false;
-        String value = publicBasePath.trim();
-        return value.startsWith("/")
-                && !value.startsWith("//")
-                && !value.contains("?")
-                && !value.contains("#")
-                && !value.contains("..")
-                && value.length() > 1;
+        // Nginx, Next development proxying, and the public media controller all intentionally
+        // share one small URL grammar. A configurable arbitrary path would split that contract.
+        return publicBasePath != null && "/media".equals(publicBasePath.trim());
     }
 
     private static boolean hasText(String value) { return value != null && !value.isBlank(); }

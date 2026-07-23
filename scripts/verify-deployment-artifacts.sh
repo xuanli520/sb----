@@ -41,15 +41,17 @@ assert_deployment_invariants() {
   local ignore="$ROOT/.dockerignore"
   local web_dockerfile="$ROOT/apps/web/Dockerfile"
 
-  require_line "$nginx" '  client_max_body_size 5m;'
-  require_line "$nginx" '  location ~ "^/media/covers/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.(?:png|jpg)$" {'
+  require_line "$nginx" '  listen 80;'
+  require_line "$nginx" '  client_max_body_size 6m;'
+  require_line "$nginx" '  location ~ "^/media/(?:covers|banners)/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.(?:png|jpg)$" {'
   require_line "$nginx" '    if ($request_method != GET) {'
   require_line "$nginx" '      return 405;'
-  require_line "$nginx" '    rewrite "^/media/(covers/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.(?:png|jpg))$" /novel-covers/$1 break;'
+  require_line "$nginx" '    rewrite "^/media/((?:covers|banners)/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.(?:png|jpg))$" /novel-covers/$1 break;'
   require_line "$nginx" '  location = /media { return 404; }'
   require_line "$nginx" '  location /media/ { return 404; }'
   forbid_literal "$nginx" 'location ^~ /media/'
   forbid_literal "$nginx" 'rewrite ^/media/(.*)$'
+  forbid_literal "$nginx" 'listen 443 ssl;'
 
   require_line "$ignore" '.env'
   require_line "$ignore" '.env.*'
@@ -66,6 +68,7 @@ assert_deployment_invariants() {
 
   require_service_line mysql 'restart: unless-stopped'
   require_service_line redis 'restart: unless-stopped'
+  require_line "$compose" '      - "127.0.0.1:${HTTP_PORT:-8080}:80"'
   require_line "$compose" '        if user_add_error="$$(mc admin user add local "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY" 2>&1)"; then'
   require_line "$compose" '            *"already exists"*|*"already in use"*) ;;'
   require_line "$compose" '        mc alias set cover-writer http://minio:9000 "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY"'

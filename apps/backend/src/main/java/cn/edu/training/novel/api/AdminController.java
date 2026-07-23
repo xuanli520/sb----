@@ -15,14 +15,52 @@ import org.springframework.web.bind.annotation.*;
 public class AdminController implements UserResolver {
     private final NovelStore store;
     private final EmailDeliverySettingsService emailDeliverySettingsService;
-    public AdminController(NovelStore store, EmailDeliverySettingsService emailDeliverySettingsService){this.store=store;this.emailDeliverySettingsService=emailDeliverySettingsService;}
-    @GetMapping("/reviews") ApiResponse<List<Book>> reviews(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.pending());}
-    @PostMapping("/reviews/{bookId}") ApiResponse<Book> review(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.review(u.id(),bookId,body.approve(),body.reason()));}
-    @GetMapping("/books") ApiResponse<List<Book>> availabilityManagedBooks(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.availabilityManagedBooks());}
-    @PostMapping("/books/{bookId}/takedown") ApiResponse<Book> takeDownBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.takeDownBook(u.id(),bookId,body.reason()));}
-    @PostMapping("/books/{bookId}/restore") ApiResponse<Book> restoreBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.restoreBookForReview(u.id(),bookId,body.reason()));}
-    @GetMapping("/books/{bookId}/status-audits") ApiResponse<List<BookStatusAudit>> bookStatusAudits(HttpServletRequest request,@PathVariable long bookId,@RequestParam(defaultValue="20") @Min(1) @Max(100) int limit){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.bookStatusAudits(bookId,limit));}
-    @GetMapping("/dashboard") ApiResponse<Map<String,Object>> dashboard(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(Map.of("activeReaders",store.activeReaders(),"todayReads",store.todayReads(),"publishedBooks",store.published(null,null,null).size(),"pendingReviews",store.pending().size(),"auditLog",store.audits()));}
+    private final BookPresentationService bookPresentations;
+    public AdminController(NovelStore store,EmailDeliverySettingsService emailDeliverySettingsService,BookPresentationService bookPresentations){this.store=store;this.emailDeliverySettingsService=emailDeliverySettingsService;this.bookPresentations=bookPresentations;}
+    @GetMapping("/reviews")
+    ApiResponse<BookPresentationPage> reviews(
+            HttpServletRequest request,
+            @RequestParam(defaultValue="0") @Min(0) int page,
+            @RequestParam(defaultValue="12") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        CurrentUser u=current(request);
+        u.require(Role.ADMIN);
+        return ApiResponse.ok(store.pendingBooks(page, size));
+    }
+    @PostMapping("/reviews/{bookId}") ApiResponse<BookPresentation> review(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(bookPresentations.present(store.review(u.id(),bookId,body.approve(),body.reason())));}
+    @GetMapping("/reviews/queue")
+    ApiResponse<ModerationReviewQueuePage> reviewQueue(
+            HttpServletRequest request,
+            @RequestParam(required=false) ModerationReviewScope scope,
+            @RequestParam(defaultValue="0") @Min(0) int page,
+            @RequestParam(defaultValue="12") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        CurrentUser u=current(request);
+        u.require(Role.ADMIN);
+        ModerationReviewQueuePage source=store.reviewQueue(scope,page,size);
+        return ApiResponse.ok(new ModerationReviewQueuePage(source.items().stream().map(this::presentQueueItem).toList(),source.meta()));
+    }
+    @PostMapping("/reviews/candidates/{candidateId}") ApiResponse<ChapterCandidate> reviewCandidate(HttpServletRequest request,@PathVariable long candidateId,@Valid @RequestBody CandidateReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.reviewChapterCandidate(u.id(),candidateId,body.approve(),body.reason()));}
+    @GetMapping("/books")
+    ApiResponse<BookPresentationPage> availabilityManagedBooks(
+            HttpServletRequest request,
+            @RequestParam(defaultValue="0") @Min(0) int page,
+            @RequestParam(defaultValue="12") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        CurrentUser u=current(request);
+        u.require(Role.ADMIN);
+        return ApiResponse.ok(store.availabilityManagedBooks(page, size));
+    }
+    @PostMapping("/books/{bookId}/takedown") ApiResponse<BookPresentation> takeDownBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(bookPresentations.present(store.takeDownBook(u.id(),bookId,body.reason())));}
+    @PostMapping("/books/{bookId}/restore") ApiResponse<BookPresentation> restoreBook(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookStatusRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(bookPresentations.present(store.restoreBookForReview(u.id(),bookId,body.reason())));}
+    @GetMapping("/books/{bookId}/status-audits")
+    ApiResponse<BookStatusAuditPage> bookStatusAudits(
+            HttpServletRequest request,
+            @PathVariable long bookId,
+            @RequestParam(defaultValue="0") @Min(0) int page,
+            @RequestParam(defaultValue="20") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        CurrentUser u=current(request);
+        u.require(Role.ADMIN);
+        return ApiResponse.ok(store.bookStatusAudits(bookId, page, size));
+    }
+    @GetMapping("/dashboard") ApiResponse<Map<String,Object>> dashboard(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(Map.of("activeReaders",store.activeReaders(),"todayReads",store.todayReads(),"publishedBooks",store.published(null,null,null).size(),"pendingReviews",store.reviewQueue(null,0,1).meta().total(),"auditLog",store.audits()));}
     @GetMapping("/author-applications") ApiResponse<List<AuthorApplication>> authorApplications(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.authorApplications());}
     @PostMapping("/author-applications/{id}") ApiResponse<AuthorApplication> decideAuthor(HttpServletRequest request,@PathVariable long id,@Valid @RequestBody ReviewRequest body){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.decideAuthorApplication(u.id(),id,body.approve(),body.reason()));}
     @GetMapping("/sensitive-words") ApiResponse<List<SensitiveWord>> sensitiveWords(HttpServletRequest request){CurrentUser u=current(request);u.require(Role.ADMIN);return ApiResponse.ok(store.sensitiveWordEntries());}
@@ -40,6 +78,7 @@ public class AdminController implements UserResolver {
     public record ReviewRequest(boolean approve,@NotBlank @Size(max=1024) String reason){}
     // Content moderation decisions are stored separately with a 900-character limit.
     public record BookReviewRequest(boolean approve,@NotBlank @Size(max=900) String reason){}
+    public record CandidateReviewRequest(boolean approve,@NotBlank @Size(max=900) String reason){}
     public record BookStatusRequest(@NotBlank @Size(max=1024) String reason){}
     public record SensitiveWordRequest(@NotBlank @Size(max=128) String word){}
     public record SensitiveWordUpdateRequest(@NotBlank @Size(max=128) String word,@NotBlank @Size(max=512) String reason){}
@@ -49,4 +88,7 @@ public class AdminController implements UserResolver {
         @Override public String toString(){return "EmailDeliverySettingsUpdateRequest[redacted]";}
     }
     public record EmailDeliverySettingsVerificationRequest(@NotBlank @jakarta.validation.constraints.Email @Size(max=320) String recipient){}
+    private ModerationReviewQueueItem presentQueueItem(ModerationReviewQueueItem item){
+        return item.book()==null?item:new ModerationReviewQueueItem(item.scope(),bookPresentations.resolveCover(item.book()),item.candidate());
+    }
 }

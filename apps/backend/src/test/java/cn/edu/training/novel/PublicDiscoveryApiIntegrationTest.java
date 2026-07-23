@@ -56,11 +56,12 @@ class PublicDiscoveryApiIntegrationTest {
     }
 
     @Test
-    void homeSeparatesPersistedEditorialPlacementFromStableHotRanking() throws Exception {
+    void homeUsesItsOwnSlideProjectionAndKeepsHotRankingIndependent() throws Exception {
         mvc.perform(get("/api/v1/public/home"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.carousel[0].id").value(1))
-                .andExpect(jsonPath("$.data.carousel[1].id").value(3))
+                .andExpect(jsonPath("$.data.carousel[0].slideId").value(1))
+                .andExpect(jsonPath("$.data.carousel[0].book.id").value(1))
+                .andExpect(jsonPath("$.data.carousel[1].book.id").value(3))
                 .andExpect(jsonPath("$.data.hot[0].id").value(1))
                 .andExpect(jsonPath("$.data.hot[1].id").value(2));
 
@@ -81,7 +82,7 @@ class PublicDiscoveryApiIntegrationTest {
                 .andExpect(jsonPath("$.data.items.length()").value(0));
         mvc.perform(get("/api/v1/public/home"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.carousel[0].id").value(3))
+                .andExpect(jsonPath("$.data.carousel[0].book.id").value(3))
                 .andExpect(jsonPath("$.data.hot[0].id").value(2));
     }
 }

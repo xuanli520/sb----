@@ -17,16 +17,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:interaction_api_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class InteractionApiIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     private MockMvc mvc;
@@ -36,7 +35,7 @@ class InteractionApiIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 
@@ -65,17 +64,17 @@ class InteractionApiIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.total").value(1))
                 .andExpect(jsonPath("$.data.items[0].id").value(pendingId));
         mvc.perform(get("/api/v1/account/comments")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(0));
 
         mvc.perform(get("/api/v1/author/books/1/comments"))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/author/books/2/comments")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/author/books/1/comments")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("status", "PENDING_REVIEW"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(1));
@@ -83,7 +82,7 @@ class InteractionApiIntegrationTest {
         mvc.perform(get("/api/v1/admin/comments").param("status", "PENDING_REVIEW"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/admin/comments/{commentId}/review", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"人工审核通过\"}"))
                 .andExpect(status().isOk())
@@ -97,7 +96,7 @@ class InteractionApiIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         long rejectedId = ((Number) JsonPath.read(rejectedBody, "$.data.id")).longValue();
         mvc.perform(post("/api/v1/admin/comments/{commentId}/review", rejectedId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":false,\"reason\":\"不符合社区规范\"}"))
                 .andExpect(status().isOk())
@@ -161,7 +160,7 @@ class InteractionApiIntegrationTest {
         long commentId = ((Number) JsonPath.read(pendingBody, "$.data.id")).longValue();
 
         mvc.perform(post("/api/v1/author/books/1/comments/{commentId}/moderation-advice", commentId)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recommendVisible\":false,\"reason\":\"建议站长按社区规范驳回\"}"))
                 .andExpect(status().isOk())
@@ -169,7 +168,7 @@ class InteractionApiIntegrationTest {
                 .andExpect(jsonPath("$.data.reason").value("建议站长按社区规范驳回"));
 
         mvc.perform(get("/api/v1/author/books/1/comments")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("status", "PENDING_REVIEW"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].id").value(commentId))
@@ -180,7 +179,7 @@ class InteractionApiIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.total").value(0));
 
         mvc.perform(post("/api/v1/author/books/2/comments/{commentId}/moderation-advice", commentId)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recommendVisible\":true,\"reason\":\"越权尝试\"}"))
                 .andExpect(status().isForbidden());
@@ -190,7 +189,7 @@ class InteractionApiIntegrationTest {
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/comments/{commentId}/review", commentId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"站长复核后允许公开\"}"))
                 .andExpect(status().isOk())

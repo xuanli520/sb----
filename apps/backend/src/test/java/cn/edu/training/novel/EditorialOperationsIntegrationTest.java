@@ -27,9 +27,9 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Covers the FR-10 recommendation and hot-search operator path, including rank contention. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:editorial_operations_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -37,7 +37,6 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class EditorialOperationsIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -50,12 +49,12 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/editorial/recommendations")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/editorial/recommendations")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"bookId\":40,\"rank\":2}"))
                 .andExpect(status().isOk())
@@ -64,7 +63,7 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/editorial/recommendations")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(4))
                 .andExpect(jsonPath("$.data[0].book.id").value(1))
@@ -74,21 +73,21 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/editorial/recommendations")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"bookId\":41}"))
                 .andExpect(status().isConflict());
 
         mvc.perform(put("/api/v1/admin/editorial/recommendations/{bookId}", 1L)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"rank\":99}"))
                 .andExpect(status().isBadRequest());
 
         mvc.perform(put("/api/v1/admin/editorial/recommendations/{bookId}", 40L)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"rank\":1}"))
                 .andExpect(status().isOk())
@@ -96,12 +95,12 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(delete("/api/v1/admin/editorial/recommendations/{bookId}", 3L)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk());
 
         mvc.perform(get("/api/v1/admin/editorial/recommendations/audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].action").value("REMOVED"))
                 .andExpect(jsonPath("$.data[1].action").value("REORDERED"))
@@ -124,7 +123,7 @@ class EditorialOperationsIntegrationTest {
     void hotSearchLifecycleIsAuditedAndPublicReadsOnlyEnabledTerms() throws Exception {
         mvc.perform(get("/api/v1/admin/hot-searches")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/public/hot-searches"))
                 .andExpect(status().isOk())
@@ -133,7 +132,7 @@ class EditorialOperationsIntegrationTest {
 
         String creation = mvc.perform(post("/api/v1/admin/hot-searches")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"term\":\"月色\",\"enabled\":true,\"rank\":1}"))
                 .andExpect(status().isOk())
@@ -152,7 +151,7 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(put("/api/v1/admin/hot-searches/{termId}", termId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"term\":\"月色\",\"enabled\":false,\"rank\":2}"))
                 .andExpect(status().isOk())
@@ -164,18 +163,18 @@ class EditorialOperationsIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/hot-searches")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"term\":\" 星海 \",\"enabled\":true}"))
                 .andExpect(status().isConflict());
 
         mvc.perform(delete("/api/v1/admin/hot-searches/{termId}", termId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/admin/hot-searches/audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].action").value("REMOVED"))
                 .andExpect(jsonPath("$.data[1].action").value("UPDATED"))

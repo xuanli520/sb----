@@ -6,9 +6,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import cn.edu.training.novel.domain.Book;
+import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.CoverImage;
 import cn.edu.training.novel.service.CoverObjectStorage;
-import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.NovelStore;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -26,6 +26,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
@@ -37,7 +38,8 @@ import org.springframework.mock.web.MockMultipartFile;
         CoverUploadIntegrationTest.FakeCoverStorageConfiguration.class
 }, properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
+        "novel.development-auth-enabled=false",
+        "novel.auth.bcrypt-strength=4",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:cover_upload_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -48,59 +50,65 @@ class CoverUploadIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired NovelStore store;
-    @Autowired CatalogRepository catalogRepository;
+    @Autowired AuthService authService;
+    @Autowired JdbcTemplate jdbc;
     @Autowired FakeCoverObjectStorage coverStorage;
 
     @Test
-    void authorUploadsValidatedBytesAndOnlyManagedFormerCoverIsRemovedAfterCommit() throws Exception {
-        Book draft = store.createBook(2L, "Cover draft", "科幻", "cover test");
+    void authorUploadsValidatedBytesAndDefersFormerCoverCleanup() throws Exception {
+        AuthService.AuthenticatedSession author = authorSession("cover.author@example.test");
+        Book draft = store.createBook(author.user().id(), "Cover draft", "科幻", "cover test");
 
-        String firstCover = upload(draft.id(), imageFile("suspicious-name.txt", "png", "text/plain"));
+        String firstCover = upload(author, draft.id(), imageFile("suspicious-name.txt", "png", "text/plain"));
         assertThat(firstCover).matches("/media/covers/[0-9a-f-]{36}\\.png");
         assertThat(coverStorage.uploaded).containsKey(firstCover);
         assertThat(coverStorage.uploaded.get(firstCover).contentType()).isEqualTo("image/png");
-        assertThat(coverStorage.deleted).doesNotContain("#563d7c");
 
-        String secondCover = upload(draft.id(), imageFile("ignored.jpg", "jpeg", "application/octet-stream"));
+        String secondCover = upload(author, draft.id(), imageFile("ignored.jpg", "jpeg", "application/octet-stream"));
         assertThat(secondCover).matches("/media/covers/[0-9a-f-]{36}\\.jpg");
-        assertThat(coverStorage.deleted).containsExactly(firstCover);
-        assertThat(store.book(draft.id()).cover()).isEqualTo(secondCover);
-
-        Book externalCover = withCover(store.book(draft.id()), "https://files.example.invalid/not-managed.png");
-        catalogRepository.updateBook(externalCover);
-        String thirdCover = upload(draft.id(), imageFile("no-trust.png", "png", "image/png"));
-        assertThat(thirdCover).isNotEqualTo(secondCover);
-        assertThat(coverStorage.deleted).doesNotContain("https://files.example.invalid/not-managed.png");
+        assertThat(coverStorage.deleted).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_media_asset WHERE state = 'PENDING_DELETE' AND purpose = 'BOOK_COVER'",
+                Integer.class)).isEqualTo(1);
+        assertThat(store.book(draft.id()).cover()).isNull();
     }
 
     @Test
     void authorEndpointRejectsInvalidActualBytesAndProtectedOrPublishedBooks() throws Exception {
-        Book draft = store.createBook(2L, "Invalid cover draft", "科幻", "cover test");
+        AuthService.AuthenticatedSession author = authorSession("invalid.cover.author@example.test");
+        AuthService.AuthenticatedSession reader = authService.register(
+                "invalid.cover.reader@example.test", "普通读者", "correct-horse-battery-staple");
+        Book draft = store.createBook(author.user().id(), "Invalid cover draft", "科幻", "cover test");
         MockMultipartFile invalid = new MockMultipartFile("file", "cover.png", "image/png", "not actually an image".getBytes());
 
-        mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", draft.id()).file(invalid), "author"))
+        mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", draft.id()).file(invalid), author))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.msg").value("cover image must be PNG or JPEG data"));
         assertThat(coverStorage.uploaded).isEmpty();
 
-        mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", draft.id()).file(imageFile("cover.png", "png", "image/png")), "reader"))
+        mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", draft.id()).file(imageFile("cover.png", "png", "image/png")), reader))
                 .andExpect(status().isForbidden());
-        mvc.perform(author(multipart("/api/v1/author/books/1/cover").file(imageFile("cover.png", "png", "image/png")), "author"))
-                .andExpect(status().isConflict());
-        assertThat(coverStorage.uploaded).isEmpty();
-    }
-
-    private String upload(long bookId, MultipartFile file) throws Exception {
-        String response = mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", bookId).file((MockMultipartFile) file), "author"))
+        jdbc.update("UPDATE novel_book SET status = 'PUBLISHED' WHERE id = ?", draft.id());
+        mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", draft.id()).file(imageFile("cover.png", "png", "image/png")), author))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.cover").isString())
-                .andReturn().getResponse().getContentAsString();
-        return com.jayway.jsonpath.JsonPath.read(response, "$.data.cover");
+                .andExpect(jsonPath("$.data.book.cover").doesNotExist())
+                .andExpect(jsonPath("$.data.candidate.status").value("PENDING_REVIEW"));
     }
 
-    private static MockMultipartHttpServletRequestBuilder author(MockMultipartHttpServletRequestBuilder request, String principal) {
+    private String upload(AuthService.AuthenticatedSession author, long bookId, MultipartFile file) throws Exception {
+        String response = mvc.perform(author(multipart("/api/v1/author/books/{bookId}/cover", bookId).file((MockMultipartFile) file), author))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.book.cover").isString())
+                .andExpect(jsonPath("$.data.candidate").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.read(response, "$.data.book.cover");
+    }
+
+    private static MockMultipartHttpServletRequestBuilder author(
+            MockMultipartHttpServletRequestBuilder request,
+            AuthService.AuthenticatedSession session) {
         return request.header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header("X-Novel-Development-Principal", principal);
+                .header("X-Novel-Bff-Session", session.bffSessionId());
     }
 
     private static MockMultipartFile imageFile(String filename, String format, String declaredMime) throws Exception {
@@ -111,9 +119,12 @@ class CoverUploadIntegrationTest {
         return new MockMultipartFile("file", filename, declaredMime, output.toByteArray());
     }
 
-    private static Book withCover(Book book, String cover) {
-        return new Book(book.id(), book.title(), book.author(), book.category(), book.words(), book.serialStatus(),
-                book.synopsis(), cover, book.status(), book.authorId(), book.heat(), book.purchasePrice());
+    private AuthService.AuthenticatedSession authorSession(String username) {
+        AuthService.AuthenticatedSession session = authService.register(
+                username, "封面作者", "correct-horse-battery-staple");
+        var application = store.applyAuthor(session.user().id(), "封面笔名", "持续创作并维护作品封面。");
+        store.decideAuthorApplication(1L, application.id(), true, "申请材料完整");
+        return session;
     }
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -125,6 +136,7 @@ class CoverUploadIntegrationTest {
 
     static final class FakeCoverObjectStorage implements CoverObjectStorage {
         final Map<String, CoverImage> uploaded = new LinkedHashMap<>();
+        final Map<String, CoverImage> staged = new LinkedHashMap<>();
         final List<String> deleted = new ArrayList<>();
 
         @Override
@@ -132,6 +144,29 @@ class CoverUploadIntegrationTest {
             String url = "/media/covers/" + UUID.randomUUID() + "." + image.extension();
             uploaded.put(url, image);
             return new StoredCover(url, url.substring("/media/".length()));
+        }
+
+        @Override
+        public StoredStagedCover storeStagingCover(CoverImage image) {
+            String objectKey = "staging/" + UUID.randomUUID() + "." + image.extension();
+            staged.put(objectKey, image);
+            return new StoredStagedCover(objectKey);
+        }
+
+        @Override
+        public StoredCover promoteStagingCover(String objectKey) {
+            CoverImage image = staged.get(objectKey);
+            if (image == null) throw new AssertionError("missing staged object " + objectKey);
+            return store(image);
+        }
+
+        @Override
+        public void deleteManagedObject(String objectKey) {
+            if (objectKey.startsWith("staging/")) {
+                staged.remove(objectKey);
+                return;
+            }
+            deleteManaged("/media/" + objectKey);
         }
 
         @Override

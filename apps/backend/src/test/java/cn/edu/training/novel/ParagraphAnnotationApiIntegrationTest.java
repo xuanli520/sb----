@@ -20,16 +20,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /** Exercises the FR-04 selection anchor, visibility, ownership, and review boundaries end to end. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:paragraph_annotation_api_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ParagraphAnnotationApiIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -40,7 +39,7 @@ class ParagraphAnnotationApiIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 
@@ -57,40 +56,40 @@ class ParagraphAnnotationApiIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.total").value(2))
                 .andExpect(jsonPath("$.data.items[0].id").value(pendingId));
         mvc.perform(get("/api/v1/account/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(0));
 
         mvc.perform(get("/api/v1/author/books/1/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("status", "PENDING_REVIEW"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(1))
                 .andExpect(jsonPath("$.data.items[0].id").value(pendingId));
         mvc.perform(get("/api/v1/author/books/1/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("status", "PRIVATE"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(0));
         mvc.perform(get("/api/v1/admin/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("status", "PRIVATE"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.meta.total").value(0));
         mvc.perform(get("/api/v1/author/books/2/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/admin/annotations").param("status", "PENDING_REVIEW"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"内容符合社区规范\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("VISIBLE"));
         mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"重复审核\"}"))
                 .andExpect(status().isConflict());
@@ -152,7 +151,7 @@ class ParagraphAnnotationApiIntegrationTest {
                         .content("{\"approve\":false,\"reason\":\"不符合社区规范\"}"))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":false,\"reason\":\"不符合社区规范\"}"))
                 .andExpect(status().isOk())
@@ -172,13 +171,13 @@ class ParagraphAnnotationApiIntegrationTest {
         long privateId = createAnnotation(0, 0, 3, "雨落在", "私密划线", false);
 
         mvc.perform(post("/api/v1/author/books/1/annotations/{annotationId}/moderation-advice", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recommendVisible\":true,\"reason\":\"作者建议站长复核后公开\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.recommendation").value("RECOMMEND_VISIBLE"));
         mvc.perform(get("/api/v1/author/books/1/annotations")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("status", "PENDING_REVIEW"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].id").value(pendingId))
@@ -189,18 +188,18 @@ class ParagraphAnnotationApiIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.total").value(0));
 
         mvc.perform(post("/api/v1/author/books/1/annotations/{annotationId}/moderation-advice", privateId)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recommendVisible\":true,\"reason\":\"不能管理私密划线\"}"))
                 .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/author/books/2/annotations/{annotationId}/moderation-advice", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recommendVisible\":true,\"reason\":\"越权尝试\"}"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/annotations/{annotationId}/review", pendingId)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"站长审核通过\"}"))
                 .andExpect(status().isOk())

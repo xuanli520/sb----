@@ -32,12 +32,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Verifies that the D-06 stationmaster ADMIN role alone can use encrypted SMTP settings. */
+@UseTestBffSessions
 @SpringBootTest(classes = {
         NovelPlatformApplication.class,
         EmailDeliverySettingsIntegrationTest.CapturingSenderConfiguration.class
 }, properties = {
         "novel.internal-api-key=email-delivery-settings-test-key",
-        "novel.development-auth-enabled=true",
         "novel.auth.bcrypt-strength=4",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:email_delivery_settings_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
@@ -52,7 +52,6 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class EmailDeliverySettingsIntegrationTest {
     private static final String INTERNAL_KEY = "email-delivery-settings-test-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -62,33 +61,33 @@ class EmailDeliverySettingsIntegrationTest {
     void onlyTheStationmasterAdminCanReadPersistOrVerifySmtpSettings() throws Exception {
         mvc.perform(get("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
         mvc.perform(put("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(settingsPayload("first-smtp.example.test", 465, "new-smtp-password", "new-hmac-secret", "首次配置")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/admin/email-delivery-settings/verify")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recipient\":\"station.admin@example.test\"}"))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isForbidden());
         mvc.perform(put("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(settingsPayload("first-smtp.example.test", 465, "new-smtp-password", "new-hmac-secret", "首次配置")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/admin/email-delivery-settings/verify")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recipient\":\"station.admin@example.test\"}"))
                 .andExpect(status().isForbidden());
@@ -97,7 +96,7 @@ class EmailDeliverySettingsIntegrationTest {
 
         String savedResponse = mvc.perform(put("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(settingsPayload("first-smtp.example.test", 465, "new-smtp-password", "new-hmac-secret", "首次配置")))
                 .andExpect(status().isOk())
@@ -119,7 +118,7 @@ class EmailDeliverySettingsIntegrationTest {
         // Blank write-only secrets retain the encrypted values while the station admin changes a port.
         mvc.perform(put("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(settingsPayload("updated-smtp.example.test", 2525, "", "", "迁移到新的 SMTP 端口")))
                 .andExpect(status().isOk())
@@ -128,7 +127,7 @@ class EmailDeliverySettingsIntegrationTest {
 
         String readResponse = mvc.perform(get("/api/v1/admin/email-delivery-settings")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.source").value("ADMIN"))
                 .andExpect(jsonPath("$.data.passwordConfigured").value(true))
@@ -140,7 +139,7 @@ class EmailDeliverySettingsIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/email-delivery-settings/verify")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"recipient\":\"station.admin@example.test\"}"))
                 .andExpect(status().isOk());

@@ -3,6 +3,7 @@ package cn.edu.training.novel.service;
 import cn.edu.training.novel.config.CoverStorageProperties;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Iterator;
@@ -56,13 +57,24 @@ public class CoverImageValidator {
                 }
                 BufferedImage decoded = reader.read(0);
                 if (decoded == null) throw new InvalidCoverImageException("cover image cannot be decoded");
-                return new CoverImage(bytes, contentType, extension, width, height);
+                byte[] sanitized = reencode(decoded, extension, maxBytes);
+                return new CoverImage(sanitized, contentType, extension, width, height);
             } finally {
                 reader.dispose();
             }
         } catch (IOException exception) {
             throw new InvalidCoverImageException("cover image must be valid PNG or JPEG data", exception);
         }
+    }
+
+    /** Home banners deliberately use a wide, inspectable image instead of a cover-shaped crop. */
+    public CoverImage validateBanner(MultipartFile file) {
+        CoverImage image = validate(file);
+        double ratio = (double) image.width() / image.height();
+        if (image.width() < 1200 || image.height() < 400 || ratio < 2.0d || ratio > 4.0d) {
+            throw new InvalidCoverImageException("banner image must be at least 1200x400 with a 2:1 to 4:1 ratio");
+        }
+        return image;
     }
 
     private static byte[] readBounded(MultipartFile file, long maxBytes) {
@@ -74,6 +86,23 @@ public class CoverImageValidator {
             return bytes;
         } catch (IOException | ArithmeticException exception) {
             throw new InvalidCoverImageException("cover image cannot be read", exception);
+        }
+    }
+
+    /** Re-encoding removes browser-supplied metadata before any bytes reach object storage. */
+    private static byte[] reencode(BufferedImage decoded, String extension, long maxBytes) {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            String format = "jpg".equals(extension) ? "jpeg" : "png";
+            if (!ImageIO.write(decoded, format, output)) {
+                throw new InvalidCoverImageException("cover image cannot be sanitized");
+            }
+            byte[] bytes = output.toByteArray();
+            if (bytes.length == 0 || bytes.length > maxBytes) {
+                throw new InvalidCoverImageException("cover image is too large after sanitization");
+            }
+            return bytes;
+        } catch (IOException exception) {
+            throw new InvalidCoverImageException("cover image cannot be sanitized", exception);
         }
     }
 }

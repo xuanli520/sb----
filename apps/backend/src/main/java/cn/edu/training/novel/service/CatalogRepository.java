@@ -4,6 +4,9 @@ import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatusAudit;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
+import cn.edu.training.novel.domain.ChapterCandidateType;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.Volume;
 import java.sql.Timestamp;
@@ -28,9 +31,12 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Repository
 public class CatalogRepository {
-    private static final String BOOK_COLUMNS = "id, title, author_name, category, word_count, serial_status, synopsis, cover, status, author_id, heat, purchase_price";
+    // `cover` is a historical physical column. Project a typed null so it cannot leak into a
+    // runtime model while the media binding registry remains the sole cover source.
+    private static final String BOOK_COLUMNS = "id, title, author_name, category, word_count, serial_status, synopsis, NULL AS cover, status, author_id, heat, purchase_price";
     private static final String CHAPTER_COLUMNS = "id, book_id, volume_id, title, content, published, status, scheduled_publish_at, published_at, review_reason, order_no";
     private static final String JOINED_CHAPTER_COLUMNS = "c.id, c.book_id, c.volume_id, c.title, c.content, c.published, c.status, c.scheduled_publish_at, c.published_at, c.review_reason, c.order_no";
+    private static final String CHAPTER_CANDIDATE_COLUMNS = "id, book_id, target_chapter_id, volume_id, candidate_type, title, content, order_no, status, review_reason, moderation_audit_id, created_by_user_id, created_at, reviewed_by_user_id, reviewed_at";
     private static final RowMapper<Book> BOOK_MAPPER = (resultSet, rowNum) -> new Book(
             resultSet.getLong("id"),
             resultSet.getString("title"),
@@ -39,7 +45,7 @@ public class CatalogRepository {
             resultSet.getInt("word_count"),
             resultSet.getString("serial_status"),
             resultSet.getString("synopsis"),
-            resultSet.getString("cover"),
+            null,
             BookStatus.valueOf(resultSet.getString("status")),
             resultSet.getLong("author_id"),
             resultSet.getLong("heat"),
@@ -66,6 +72,22 @@ public class CatalogRepository {
             instant(resultSet.getTimestamp("published_at")),
             resultSet.getString("review_reason"),
             resultSet.getInt("order_no"));
+    private static final RowMapper<ChapterCandidate> CHAPTER_CANDIDATE_MAPPER = (resultSet, rowNum) -> new ChapterCandidate(
+            resultSet.getLong("id"),
+            resultSet.getLong("book_id"),
+            resultSet.getLong("target_chapter_id"),
+            resultSet.getObject("volume_id", Long.class),
+            ChapterCandidateType.valueOf(resultSet.getString("candidate_type")),
+            resultSet.getString("title"),
+            resultSet.getString("content"),
+            resultSet.getInt("order_no"),
+            ChapterCandidateStatus.valueOf(resultSet.getString("status")),
+            resultSet.getString("review_reason"),
+            resultSet.getObject("moderation_audit_id", Long.class),
+            resultSet.getLong("created_by_user_id"),
+            instant(resultSet.getTimestamp("created_at")),
+            resultSet.getObject("reviewed_by_user_id", Long.class),
+            instant(resultSet.getTimestamp("reviewed_at")));
     private static final RowMapper<Volume> VOLUME_MAPPER = (resultSet, rowNum) -> new Volume(
             resultSet.getLong("id"),
             resultSet.getLong("book_id"),
@@ -207,6 +229,44 @@ public class CatalogRepository {
         return chapters.stream().findFirst();
     }
 
+    public List<ChapterCandidate> findChapterCandidatesByBookId(long bookId) {
+        return jdbcTemplate.query(
+                "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate WHERE book_id = ? "
+                        + "ORDER BY created_at DESC, id DESC",
+                CHAPTER_CANDIDATE_MAPPER,
+                bookId);
+    }
+
+    public Optional<ChapterCandidate> findChapterCandidateById(long candidateId) {
+        return jdbcTemplate.query(
+                        "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate WHERE id = ?",
+                        CHAPTER_CANDIDATE_MAPPER,
+                        candidateId)
+                .stream()
+                .findFirst();
+    }
+
+    public Optional<ChapterCandidate> findChapterCandidateByIdForUpdate(long candidateId) {
+        return jdbcTemplate.query(
+                        "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate WHERE id = ? FOR UPDATE",
+                        CHAPTER_CANDIDATE_MAPPER,
+                        candidateId)
+                .stream()
+                .findFirst();
+    }
+
+    /** A chapter can have at most one active revision/candidate under the parent-book lock. */
+    public Optional<ChapterCandidate> findPendingCandidateForTargetChapterForUpdate(long targetChapterId) {
+        return jdbcTemplate.query(
+                        "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate "
+                                + "WHERE target_chapter_id = ? AND status = ? ORDER BY id DESC FOR UPDATE",
+                        CHAPTER_CANDIDATE_MAPPER,
+                        targetChapterId,
+                        ChapterCandidateStatus.PENDING_REVIEW.name())
+                .stream()
+                .findFirst();
+    }
+
     /** Returns current due candidates; callers lock parent book and chapter in that order. */
     public List<Chapter> findDueScheduledChaptersByAuthorId(long authorId, Instant dueAt) {
         return jdbcTemplate.query(
@@ -267,28 +327,12 @@ public class CatalogRepository {
         return volumes.stream().findFirst();
     }
 
-    public List<Book> findByAuthorId(long authorId) {
-        return jdbcTemplate.query(
-                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE author_id = ? ORDER BY id ASC",
-                BOOK_MAPPER,
-                authorId);
-    }
-
-    public List<Book> findPendingReview() {
-        return jdbcTemplate.query(
-                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE status IN (?, ?) ORDER BY id ASC",
-                BOOK_MAPPER,
-                BookStatus.PENDING_REVIEW.name(),
-                BookStatus.NEEDS_REVIEW.name());
-    }
-
-    /** Operator-facing inventory. Only work that can be taken down or restored is returned. */
-    public List<Book> findAvailabilityManagedBooks() {
-        return jdbcTemplate.query(
-                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE status IN (?, ?) ORDER BY id DESC",
-                BOOK_MAPPER,
-                BookStatus.PUBLISHED.name(),
-                BookStatus.OFFLINE.name());
+    /** Compatibility lookup for old fixtures that predate persisted author profiles. */
+    public Optional<String> findAuthorNameByAuthorId(long authorId) {
+        return Optional.ofNullable(jdbcTemplate.queryForObject(
+                "SELECT MIN(author_name) FROM novel_book WHERE author_id = ?",
+                String.class,
+                authorId));
     }
 
     public BookStatusAudit recordBookStatusAudit(
@@ -317,16 +361,6 @@ public class CatalogRepository {
                 .orElseThrow(() -> new IllegalStateException("book status audit was not saved"));
     }
 
-    public List<BookStatusAudit> findBookStatusAudits(long bookId, int limit) {
-        return jdbcTemplate.query(
-                "SELECT id, book_id, action, previous_status, status, reason, operator_user_id, created_at "
-                        + "FROM novel_book_status_audit WHERE book_id = ? "
-                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
-                BOOK_STATUS_AUDIT_MAPPER,
-                bookId,
-                Math.max(1, Math.min(limit, 100)));
-    }
-
     @Transactional
     public Book createBook(Book book) {
         long id = nextId("book");
@@ -338,7 +372,7 @@ public class CatalogRepository {
                 book.words(),
                 book.serialStatus(),
                 book.synopsis(),
-                book.cover(),
+                null,
                 book.status(),
                 book.authorId(),
                 book.heat(),
@@ -352,7 +386,7 @@ public class CatalogRepository {
                 created.words(),
                 created.serialStatus(),
                 created.synopsis(),
-                created.cover(),
+                null,
                 created.status().name(),
                 created.authorId(),
                 created.heat(),
@@ -414,6 +448,68 @@ public class CatalogRepository {
         return findChapterById(chapter.id()).orElseThrow(() -> new IllegalStateException("chapter not found"));
     }
 
+    /** Creates a durable candidate before contacting a moderation provider. */
+    public ChapterCandidate createChapterCandidate(ChapterCandidate candidate) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO novel_chapter_candidate("
+                            + "book_id, target_chapter_id, volume_id, candidate_type, title, content, order_no, status, "
+                            + "review_reason, moderation_audit_id, created_by_user_id, created_at, reviewed_by_user_id, reviewed_at) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, candidate.bookId());
+            statement.setLong(2, candidate.targetChapterId());
+            if (candidate.volumeId() == null) {
+                statement.setObject(3, null);
+            } else {
+                statement.setLong(3, candidate.volumeId());
+            }
+            statement.setString(4, candidate.type().name());
+            statement.setString(5, candidate.title());
+            statement.setString(6, candidate.content());
+            statement.setInt(7, candidate.orderNo());
+            statement.setString(8, candidate.status().name());
+            statement.setString(9, candidate.reviewReason());
+            if (candidate.moderationAuditId() == null) {
+                statement.setObject(10, null);
+            } else {
+                statement.setLong(10, candidate.moderationAuditId());
+            }
+            statement.setLong(11, candidate.createdByUserId());
+            if (candidate.reviewedByUserId() == null) {
+                statement.setObject(12, null);
+            } else {
+                statement.setLong(12, candidate.reviewedByUserId());
+            }
+            statement.setTimestamp(13, timestamp(candidate.reviewedAt()));
+            return statement;
+        }, keyHolder);
+        long id = generatedId(keyHolder, "chapter candidate");
+        return findChapterCandidateById(id).orElseThrow(() -> new IllegalStateException("chapter candidate was not created"));
+    }
+
+    public ChapterCandidate updateChapterCandidate(ChapterCandidate candidate) {
+        int updated = jdbcTemplate.update(
+                "UPDATE novel_chapter_candidate SET volume_id = ?, title = ?, content = ?, order_no = ?, status = ?, "
+                        + "review_reason = ?, moderation_audit_id = ?, reviewed_by_user_id = ?, reviewed_at = ? WHERE id = ?",
+                candidate.volumeId(),
+                candidate.title(),
+                candidate.content(),
+                candidate.orderNo(),
+                candidate.status().name(),
+                candidate.reviewReason(),
+                candidate.moderationAuditId(),
+                candidate.reviewedByUserId(),
+                timestamp(candidate.reviewedAt()),
+                candidate.id());
+        if (updated == 0) {
+            throw new IllegalStateException("chapter candidate not found");
+        }
+        return findChapterCandidateById(candidate.id())
+                .orElseThrow(() -> new IllegalStateException("chapter candidate not found"));
+    }
+
     public void deleteChapter(long chapterId) {
         int deleted = jdbcTemplate.update("DELETE FROM novel_chapter WHERE id = ?", chapterId);
         if (deleted == 0) {
@@ -464,9 +560,13 @@ public class CatalogRepository {
 
     /** Retains chapters and their publication lifecycle when their organizational parent is removed. */
     public int detachVolumeChapters(long volumeId) {
-        return jdbcTemplate.update(
+        int detached = jdbcTemplate.update(
                 "UPDATE novel_chapter SET volume_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE volume_id = ?",
                 volumeId);
+        jdbcTemplate.update(
+                "UPDATE novel_chapter_candidate SET volume_id = NULL WHERE volume_id = ?",
+                volumeId);
+        return detached;
     }
 
     public void deleteVolume(long volumeId) {
@@ -485,7 +585,7 @@ public class CatalogRepository {
                 book.words(),
                 book.serialStatus(),
                 book.synopsis(),
-                book.cover(),
+                null,
                 book.status().name(),
                 book.authorId(),
                 book.heat(),
@@ -507,6 +607,9 @@ public class CatalogRepository {
                 || hasRows("novel_book_entitlement", "book_id", bookId)
                 || hasRows("novel_reward_record", "book_id", bookId)
                 || hasRows("novel_reader_bookshelf", "book_id", bookId)
+                || hasRows("novel_reader_favorite_event", "book_id", bookId)
+                || hasRows("novel_book_subscription", "book_id", bookId)
+                || hasRows("novel_book_subscription_event", "book_id", bookId)
                 || hasRows("novel_reader_progress", "book_id", bookId)
                 || hasRows("novel_reader_bookmark", "book_id", bookId)
                 || hasRows("novel_paragraph_annotation", "book_id", bookId)
@@ -526,6 +629,7 @@ public class CatalogRepository {
 
     /** Caller must first lock and validate the book and its child chapter states. */
     public void deleteBookTree(long bookId) {
+        jdbcTemplate.update("DELETE FROM novel_chapter_candidate WHERE book_id = ?", bookId);
         jdbcTemplate.update("DELETE FROM novel_chapter WHERE book_id = ?", bookId);
         jdbcTemplate.update("DELETE FROM novel_volume WHERE book_id = ?", bookId);
         int deleted = jdbcTemplate.update("DELETE FROM novel_book WHERE id = ?", bookId);

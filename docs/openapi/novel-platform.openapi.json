@@ -16,6 +16,7 @@
     { "name": "Reader account", "description": "Current-reader profile, reading state, and interactions." },
     { "name": "Author workspace", "description": "Author-owned catalog, publication, analytics, and interaction reads." },
     { "name": "Operations", "description": "Administrator-only review, account, taxonomy, code, and editorial operations." },
+    { "name": "Media and carousel", "description": "Stationmaster-managed homepage slides and immutable media assets." },
     { "name": "Internal BFF session", "description": "Backend endpoints called only by the Next BFF session route." }
   ],
   "paths": {
@@ -33,7 +34,9 @@
           { "$ref": "#/components/parameters/CategoryAlias" },
           { "$ref": "#/components/parameters/SerialStatus" },
           { "$ref": "#/components/parameters/MinWords" },
-          { "$ref": "#/components/parameters/MaxWords" }
+          { "$ref": "#/components/parameters/MaxWords" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/CatalogPageSize" }
         ],
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" } }
       }
@@ -62,6 +65,23 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" } }
       }
     },
+    "/api/v1/public/media/{kind}/{file}": {
+      "get": {
+        "tags": ["Public discovery"],
+        "operationId": "readManagedPublicMedia",
+        "summary": "Read one strict managed cover or carousel banner in local development",
+        "description": "Only `covers|banners` and generated UUID PNG/JPEG names are accepted. Production Caddy serves the identical `/media/` URL grammar directly from MinIO.",
+        "x-access": "public",
+        "security": [],
+        "x-response-data-schema": "#/components/schemas/MediaBinary",
+        "parameters": [{ "$ref": "#/components/parameters/PathMediaKind" }, { "$ref": "#/components/parameters/PathMediaFile" }],
+        "responses": {
+          "200": { "description": "PNG or JPEG bytes with immutable cache headers.", "content": { "image/png": { "schema": { "type": "string", "format": "binary" } }, "image/jpeg": { "schema": { "type": "string", "format": "binary" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
     "/api/v1/public/hot": {
       "get": {
         "tags": ["Public discovery"],
@@ -69,7 +89,7 @@
         "summary": "Get hot published books",
         "x-access": "public",
         "security": [],
-        "x-response-data-schema": "#/components/schemas/BookList",
+        "x-response-data-schema": "#/components/schemas/BookPresentationList",
         "parameters": [{ "$ref": "#/components/parameters/Limit" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" } }
       }
@@ -81,7 +101,7 @@
         "summary": "Get editor-selected published books",
         "x-access": "public",
         "security": [],
-        "x-response-data-schema": "#/components/schemas/BookList",
+        "x-response-data-schema": "#/components/schemas/BookPresentationList",
         "parameters": [{ "$ref": "#/components/parameters/Limit" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" } }
       }
@@ -195,6 +215,7 @@
         "description": "Required before an initial administrator session can access business APIs. A successful change revokes every active session for this account.",
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/EmptyResponse",
         "requestBody": { "$ref": "#/components/requestBodies/PasswordChangeRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       }
@@ -226,11 +247,20 @@
         "operationId": "getBookshelf",
         "summary": "Get the current reader bookshelf",
         "security": [{ "BffSession": [] }],
-        "x-response-data-schema": "#/components/schemas/BookList",
+        "x-response-data-schema": "#/components/schemas/BookPresentationList",
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       }
     },
     "/api/v1/account/bookshelf/{bookId}": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookshelfBookState",
+        "summary": "Get whether one published book is on the current reader's bookshelf",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/BookshelfState",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
       "post": {
         "tags": ["Reader account"],
         "operationId": "toggleBookshelfBook",
@@ -240,6 +270,48 @@
         "x-response-data-schema": "#/components/schemas/BookshelfToggleResult",
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/subscriptions": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookSubscriptions",
+        "summary": "Get the current reader's active free work follows",
+        "description": "A subscription is a free follow only; it grants no reading entitlement, membership, token balance, payment state, or notification delivery.",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/BookSubscriptionList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/account/subscriptions/{bookId}": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookSubscription",
+        "summary": "Get the current reader's free-follow state for one work",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/BookSubscription",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "put": {
+        "tags": ["Reader account"],
+        "operationId": "subscribeToBook",
+        "summary": "Idempotently follow one published work for free",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/BookSubscription",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["Reader account"],
+        "operationId": "unsubscribeFromBook",
+        "summary": "Idempotently stop following one work",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-response-data-schema": "#/components/schemas/BookSubscription",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       }
     },
     "/api/v1/account/checkin": {
@@ -307,6 +379,18 @@
         "x-response-data-schema": "#/components/schemas/ReaderBookDetail",
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/account/books/{bookId}/progress": {
+      "get": {
+        "tags": ["Reader account"],
+        "operationId": "getBookReadingProgress",
+        "summary": "Get the current reader's saved progress for one book",
+        "description": "Returns null when the current reader has not saved progress for this book.",
+        "security": [{ "BffSession": [] }],
+        "x-response-data-schema": "#/components/schemas/ReadingProgressOrNull",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       }
     },
     "/api/v1/account/progress": {
@@ -507,7 +591,7 @@
         "summary": "List books owned by the current author",
         "security": [{ "BffSession": [] }],
         "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/BookList",
+        "x-response-data-schema": "#/components/schemas/BookPresentationList",
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       },
       "post": {
@@ -517,7 +601,7 @@
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/Book",
+        "x-response-data-schema": "#/components/schemas/BookPresentation",
         "requestBody": { "$ref": "#/components/requestBodies/BookRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
@@ -543,7 +627,7 @@
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/Book",
+        "x-response-data-schema": "#/components/schemas/BookPresentation",
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "requestBody": { "$ref": "#/components/requestBodies/BookUpdateRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
@@ -564,15 +648,43 @@
       "post": {
         "tags": ["Author workspace"],
         "operationId": "uploadAuthorBookCover",
-        "summary": "Upload a PNG or JPEG cover for an author-owned draft or rejected book",
-        "description": "The browser sends multipart data only through the same-origin BFF, which retains its generated boundary and CSRF protection. The backend ignores the filename and declared MIME type, validates actual PNG/JPEG bytes and dimensions, stores a random managed object key, and returns only a relative `/media/` URL. Object-store endpoints and credentials are never part of this contract.",
+        "summary": "Upload a PNG or JPEG cover, or propose a private replacement for a published book",
+        "description": "The backend ignores the filename and declared MIME type, validates actual PNG/JPEG bytes and dimensions, and writes an immutable managed object. Draft and rejected works switch their active binding immediately. Published works retain the public binding and receive a private review candidate until an administrator approves it. Object-store endpoints and credentials are never part of this contract.",
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/Book",
+        "x-response-data-schema": "#/components/schemas/CoverUploadResponse",
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "requestBody": { "$ref": "#/components/requestBodies/CoverUploadRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/cover-candidates": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorBookCoverCandidates",
+        "summary": "List private cover proposals for one author-owned book",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/BookCoverCandidateList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/author/books/{bookId}/cover-candidates/{candidateId}/preview": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "previewAuthorBookCoverCandidate",
+        "summary": "Read an author-owned private cover proposal",
+        "description": "Returns image bytes with `Cache-Control: no-store`; staged candidate bytes are never publicly reachable through `/media`.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/MediaBinary",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathCoverCandidateId" }],
+        "responses": {
+          "200": { "description": "PNG or JPEG bytes with no-store cache policy.", "content": { "image/png": { "schema": { "type": "string", "format": "binary" } }, "image/jpeg": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "503": { "$ref": "#/components/responses/Unavailable" }
+        }
       }
     },
     "/api/v1/author/books/{bookId}/volumes": {
@@ -664,6 +776,19 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
+    "/api/v1/author/books/{bookId}/chapter-candidates": {
+      "get": {
+        "tags": ["Author workspace"],
+        "operationId": "getAuthorChapterCandidates",
+        "summary": "List retained incremental chapter candidates for an author-owned book",
+        "description": "Candidate text is private to the author and station owner until it is approved and atomically applied to a chapter.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/ChapterCandidateList",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
     "/api/v1/author/books/{bookId}/volumes/{volumeId}/chapters": {
       "post": {
         "tags": ["Author workspace"],
@@ -752,7 +877,7 @@
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/Book",
+        "x-response-data-schema": "#/components/schemas/BookPresentation",
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
       }
@@ -816,7 +941,7 @@
         "tags": ["Author workspace"],
         "operationId": "getAuthorAnalytics",
         "summary": "Get author-owned FR-08 analytics",
-        "description": "Dates are inclusive `Asia/Shanghai` calendar days. Omitted dates select the service default bounded window. Subscription and retention explicitly report availability rather than inventing values.",
+        "description": "Dates are inclusive `Asia/Shanghai` calendar days. Omitted dates select the service default bounded window. Free subscriptions, favorite history, and retention explicitly report availability rather than inventing values. Membership-redemption attribution is returned separately from free subscriptions.",
         "security": [{ "BffSession": [] }],
         "x-required-role": "AUTHOR",
         "x-response-data-schema": "#/components/schemas/AuthorAnalyticsReport",
@@ -916,6 +1041,32 @@
         "x-required-role": "ADMIN",
         "x-response-data-schema": "#/components/schemas/BookList",
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/reviews/queue": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getModerationReviewQueue",
+        "summary": "List whole-work and incremental moderation decisions with an explicit scope",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ModerationReviewQueueItemList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/reviews/candidates/{candidateId}": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "reviewChapterCandidate",
+        "summary": "Approve or reject one incremental chapter candidate",
+        "description": "Approval applies the candidate atomically while rejection leaves an existing published revision unchanged.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/ChapterCandidate",
+        "parameters": [{ "name": "candidateId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } }],
+        "requestBody": { "$ref": "#/components/requestBodies/CandidateReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
       }
     },
     "/api/v1/admin/reviews/{bookId}": {
@@ -1508,6 +1659,205 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
     },
+    "/api/v1/admin/home-carousel": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getAdminHomeCarousel",
+        "summary": "List independently managed homepage carousel slides",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HomeCarouselSlideList",
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Media and carousel"],
+        "operationId": "createHomeCarouselSlide",
+        "summary": "Create a homepage slide bound to one published book",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HomeCarouselSlide",
+        "requestBody": { "$ref": "#/components/requestBodies/HomeCarouselCreateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/home-carousel/{slideId}": {
+      "put": {
+        "tags": ["Media and carousel"],
+        "operationId": "updateHomeCarouselSlide",
+        "summary": "Update slide copy, enabled state, binding, or rank using optimistic versioning",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HomeCarouselSlide",
+        "parameters": [{ "$ref": "#/components/parameters/PathSlideId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/HomeCarouselUpdateRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      },
+      "delete": {
+        "tags": ["Media and carousel"],
+        "operationId": "deleteHomeCarouselSlide",
+        "summary": "Remove a homepage slide using its optimistic version",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/EmptyData",
+        "parameters": [{ "$ref": "#/components/parameters/PathSlideId" }, { "$ref": "#/components/parameters/Version" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/home-carousel/audits": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getHomeCarouselAudits",
+        "summary": "Get bounded homepage-slide audit history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/HomeCarouselSlideAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/media/banners": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getPlatformBannerAssets",
+        "summary": "Page platform-owned carousel banners by lifecycle state, label, or UUID prefix",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAssetPage",
+        "parameters": [{ "$ref": "#/components/parameters/MediaAssetState" }, { "$ref": "#/components/parameters/MediaQuery" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/MediaPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "tags": ["Media and carousel"],
+        "operationId": "uploadPlatformCarouselBanner",
+        "summary": "Upload a platform-owned PNG or JPEG carousel banner",
+        "description": "Images must be at least 1200x400 and have a 2:1 to 4:1 aspect ratio. Author cover assets cannot be reused as platform banners.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAsset",
+        "requestBody": { "$ref": "#/components/requestBodies/BannerUploadRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/admin/media/assets/{assetId}": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getMediaAsset",
+        "summary": "Get one registered media asset",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAsset",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      },
+      "delete": {
+        "tags": ["Media and carousel"],
+        "operationId": "requestDeletePlatformBanner",
+        "summary": "Request deferred deletion of an unbound platform banner",
+        "description": "Referenced assets return 409. Deletion enters a recoverable grace period rather than removing bytes immediately.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAsset",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/media/assets/{assetId}/bindings": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getMediaAssetBindings",
+        "summary": "List current references to a media asset",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAssetBindingList",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/media/assets/{assetId}/audits": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getMediaAssetAudits",
+        "summary": "Get bounded media lifecycle audit history",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAssetAuditList",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }, { "$ref": "#/components/parameters/AuditLimit" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/api/v1/admin/media/assets/{assetId}/archive": {
+      "post": {
+        "tags": ["Media and carousel"],
+        "operationId": "archivePlatformBanner",
+        "summary": "Archive an unbound platform banner",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAsset",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/media/assets/{assetId}/restore": {
+      "post": {
+        "tags": ["Media and carousel"],
+        "operationId": "restorePlatformBanner",
+        "summary": "Restore an archived or pending-delete unbound platform banner",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaAsset",
+        "parameters": [{ "$ref": "#/components/parameters/PathAssetId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/media/cover-candidates": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getCoverCandidateQueue",
+        "summary": "Page private published-book cover candidates",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/CoverCandidatePage",
+        "parameters": [{ "$ref": "#/components/parameters/CoverCandidateStatus" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/MediaPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/media/cover-candidates/{candidateId}/review": {
+      "post": {
+        "tags": ["Media and carousel"],
+        "operationId": "reviewCoverCandidate",
+        "summary": "Approve or reject a private cover replacement candidate",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/CoverCandidateReviewResponse",
+        "parameters": [{ "$ref": "#/components/parameters/PathCoverCandidateId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/CoverCandidateReviewRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "503": { "$ref": "#/components/responses/Unavailable" } }
+      }
+    },
+    "/api/v1/admin/media/cover-candidates/{candidateId}/preview": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "previewCoverCandidate",
+        "summary": "Read private cover candidate bytes for review",
+        "description": "Returns image bytes with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/MediaBinary",
+        "parameters": [{ "$ref": "#/components/parameters/PathCoverCandidateId" }],
+        "responses": {
+          "200": { "description": "PNG or JPEG bytes with no-store cache policy.", "content": { "image/png": { "schema": { "type": "string", "format": "binary" } }, "image/jpeg": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
     "/api/v1/auth/email-verification": {
       "post": {
         "tags": ["Internal BFF session"],
@@ -1607,6 +1957,11 @@
       "PathAccountId": { "name": "accountId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "PathTaxonomyId": { "name": "taxonomyId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "PathTermId": { "name": "termId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathSlideId": { "name": "slideId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathAssetId": { "name": "assetId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "PathCoverCandidateId": { "name": "candidateId", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
+      "PathMediaKind": { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["covers", "banners"] } },
+      "PathMediaFile": { "name": "file", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[0-9a-fA-F-]{36}\\.(png|jpg)$" } },
       "PathCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
       "PathNormalizedWord": { "name": "normalizedWord", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
       "SearchQuery": { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "Literal keyword search." },
@@ -1620,6 +1975,7 @@
       "BookIdQuery": { "name": "bookId", "in": "query", "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "RequiredBookIdQuery": { "name": "bookId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 1 } },
       "Page": { "name": "page", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0, "maximum": 100000 } },
+      "CatalogPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 12, "minimum": 1, "maximum": 48 } },
       "InteractionPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1 }, "description": "The controller accepts an interaction page size; callers should use a bounded value." },
       "AuthorReportPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
       "AdminPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
@@ -1633,6 +1989,11 @@
       "ModerationLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } },
       "SnapshotLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
       "AuditLimit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 } },
+      "Version": { "name": "version", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+      "MediaAssetState": { "name": "state", "in": "query", "schema": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "PENDING_DELETE", "DELETED"] } },
+      "CoverCandidateStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED", "SUPERSEDED"] } },
+      "MediaQuery": { "name": "query", "in": "query", "schema": { "type": "string", "maxLength": 128 }, "description": "Case-insensitive label fragment or generated asset UUID prefix." },
+      "MediaPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 24, "minimum": 1, "maximum": 100 } },
       "AccountQuery": { "name": "query", "in": "query", "schema": { "type": "string" } },
       "AccountStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["ENABLED", "SUSPENDED", "ALL"] } },
       "RoleQuery": { "name": "role", "in": "query", "schema": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] } },
@@ -1662,6 +2023,10 @@
       "BookRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookRequest" } } } },
       "BookUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookUpdateRequest" } } } },
       "CoverUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; filename and declared MIME type are not trusted." } }, "additionalProperties": false } } } },
+      "BannerUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; 1200x400 minimum and 2:1 to 4:1 aspect ratio." }, "label": { "type": "string", "maxLength": 128 } }, "additionalProperties": false } } } },
+      "HomeCarouselCreateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HomeCarouselCreateRequest" } } } },
+      "HomeCarouselUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HomeCarouselUpdateRequest" } } } },
+      "CoverCandidateReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CoverCandidateReviewRequest" } } } },
       "VolumeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeRequest" } } } },
       "VolumeOrderRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeOrderRequest" } } } },
       "ChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterRequest" } } } },
@@ -1669,6 +2034,7 @@
       "ChapterUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterUpdateRequest" } } } },
       "ScheduleChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScheduleChapterRequest" } } } },
       "BookReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookReviewRequest" } } } },
+      "CandidateReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateReviewRequest" } } } },
       "BookStatusRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookStatusRequest" } } } },
       "ReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviewRequest" } } } },
       "SensitiveWordRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordRequest" } } } },
@@ -1714,15 +2080,42 @@
         "type": "object",
         "required": ["id", "title", "author", "category", "words", "serialStatus", "synopsis", "cover", "status", "authorId", "heat", "purchasePrice"],
         "properties": {
-          "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "author": { "type": "string" }, "category": { "type": "string" }, "words": { "type": "integer" }, "serialStatus": { "type": "string" }, "synopsis": { "type": "string" }, "cover": { "type": "string", "description": "A legacy CSS color or a server-generated relative `/media/covers/<uuid>.png|jpg` path; never an object-store endpoint." }, "status": { "type": "string", "enum": ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "NEEDS_REVIEW", "REJECTED", "OFFLINE"] }, "authorId": { "type": "integer", "format": "int64" }, "heat": { "type": "integer", "format": "int64" }, "purchasePrice": { "type": "integer", "format": "int64", "description": "Server-owned platform-token amount." }
+          "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "author": { "type": "string" }, "category": { "type": "string" }, "words": { "type": "integer" }, "serialStatus": { "type": "string" }, "synopsis": { "type": "string" }, "cover": { "type": ["string", "null"], "pattern": "^/media/covers/[0-9a-fA-F-]{36}\\.(png|jpg)$", "description": "Current public cover resolved from the managed media binding, or null when no binding exists. Clients render their neutral fallback for null." }, "status": { "type": "string", "enum": ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "NEEDS_REVIEW", "REJECTED", "OFFLINE"] }, "authorId": { "type": "integer", "format": "int64" }, "heat": { "type": "integer", "format": "int64" }, "purchasePrice": { "type": "integer", "format": "int64", "description": "Server-owned platform-token amount." }
         }
       },
       "BookList": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } },
+      "BookPresentation": { "allOf": [{ "$ref": "#/components/schemas/Book" }, { "type": "object", "required": ["metrics"], "properties": { "metrics": { "$ref": "#/components/schemas/InteractionStats" } } }] },
+      "BookPresentationList": { "type": "array", "items": { "$ref": "#/components/schemas/BookPresentation" } },
+      "MediaBinary": { "type": "string", "format": "binary", "description": "PNG or JPEG binary response, not a JSON envelope." },
+      "MediaAsset": { "type": "object", "required": ["id", "ownerScope", "purpose", "objectKey", "sha256", "contentType", "width", "height", "byteSize", "state", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "ownerScope": { "type": "string", "enum": ["AUTHOR", "PLATFORM"] }, "ownerUserId": { "type": ["integer", "null"], "format": "int64" }, "purpose": { "type": "string", "enum": ["BOOK_COVER", "BOOK_COVER_CANDIDATE", "HOME_CAROUSEL_BANNER"] }, "objectKey": { "type": "string" }, "publicUrl": { "type": ["string", "null"], "description": "Only active public covers/banners have a relative `/media/` URL; staged candidate assets are private and null." }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "contentType": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 }, "byteSize": { "type": "integer", "format": "int64", "minimum": 1 }, "label": { "type": ["string", "null"] }, "state": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "PENDING_DELETE", "DELETED"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "archivedAt": { "type": ["string", "null"], "format": "date-time" }, "deletedAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "MediaAssetPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/MediaAsset" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
+      "MediaAssetBinding": { "type": "object", "required": ["id", "assetId", "bindingType", "targetId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "assetId": { "type": "string", "format": "uuid" }, "bindingType": { "type": "string", "enum": ["BOOK_COVER", "BOOK_COVER_CANDIDATE", "HOME_CAROUSEL_BANNER"] }, "targetId": { "type": "integer", "format": "int64" }, "createdByUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "MediaAssetBindingList": { "type": "array", "items": { "$ref": "#/components/schemas/MediaAssetBinding" } },
+      "MediaAssetAudit": { "type": "object", "required": ["id", "assetId", "action", "details", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "assetId": { "type": "string", "format": "uuid" }, "action": { "type": "string" }, "details": { "type": "string" }, "operatorUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "MediaAssetAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/MediaAssetAudit" } },
+      "BookCoverCandidate": { "type": "object", "required": ["id", "bookId", "assetId", "status", "createdByUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "assetId": { "type": "string", "format": "uuid" }, "approvedAssetId": { "type": ["string", "null"], "format": "uuid" }, "status": { "type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED", "SUPERSEDED"] }, "reviewReason": { "type": ["string", "null"] }, "createdByUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" }, "reviewedByUserId": { "type": ["integer", "null"], "format": "int64" }, "reviewedAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "BookCoverCandidateList": { "type": "array", "items": { "$ref": "#/components/schemas/BookCoverCandidate" } },
+      "BookCoverCandidateQueueItem": { "type": "object", "required": ["scope", "book", "candidate"], "properties": { "scope": { "type": "string", "const": "BOOK_COVER" }, "book": { "$ref": "#/components/schemas/Book" }, "candidate": { "$ref": "#/components/schemas/BookCoverCandidate" } } },
+      "CoverCandidatePage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/BookCoverCandidateQueueItem" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
+      "CoverUploadResponse": { "type": "object", "required": ["book"], "properties": { "book": { "$ref": "#/components/schemas/BookPresentation" }, "candidate": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/BookCoverCandidate" }] } } },
+      "CoverCandidateReviewResponse": { "type": "object", "required": ["book", "candidate"], "properties": { "book": { "$ref": "#/components/schemas/BookPresentation" }, "candidate": { "$ref": "#/components/schemas/BookCoverCandidate" } } },
+      "HomeCarouselSlide": { "type": "object", "required": ["slideId", "book", "enabled", "rank", "version", "createdAt", "updatedAt"], "properties": { "slideId": { "type": "integer", "format": "int64" }, "book": { "$ref": "#/components/schemas/BookPresentation" }, "bannerAssetId": { "type": ["string", "null"], "format": "uuid" }, "bannerUrl": { "type": ["string", "null"], "pattern": "^/media/banners/[0-9a-fA-F-]{36}\\.(png|jpg)$" }, "headline": { "type": ["string", "null"] }, "copy": { "type": ["string", "null"] }, "enabled": { "type": "boolean" }, "rank": { "type": "integer", "minimum": 1 }, "version": { "type": "integer", "format": "int64", "minimum": 0 }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } } },
+      "HomeCarouselSlideList": { "type": "array", "items": { "$ref": "#/components/schemas/HomeCarouselSlide" } },
+      "HomeCarouselSlideAudit": { "type": "object", "required": ["id", "slideId", "bookId", "action", "details", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "slideId": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "action": { "type": "string" }, "details": { "type": "string" }, "operatorUserId": { "type": ["integer", "null"], "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "HomeCarouselSlideAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/HomeCarouselSlideAudit" } },
+      "HomeCarouselCreateRequest": { "type": "object", "required": ["bookId"], "properties": { "bookId": { "type": "integer", "format": "int64", "minimum": 1 }, "bannerAssetId": { "type": ["string", "null"], "format": "uuid" }, "headline": { "type": ["string", "null"], "maxLength": 255 }, "copy": { "type": ["string", "null"], "maxLength": 1024 }, "enabled": { "type": ["boolean", "null"], "default": true }, "rank": { "type": ["integer", "null"], "minimum": 1, "maximum": 100000 } }, "additionalProperties": false },
+      "HomeCarouselUpdateRequest": { "type": "object", "required": ["bookId", "enabled", "rank", "version"], "properties": { "bookId": { "type": "integer", "format": "int64", "minimum": 1 }, "bannerAssetId": { "type": ["string", "null"], "format": "uuid" }, "headline": { "type": ["string", "null"], "maxLength": 255 }, "copy": { "type": ["string", "null"], "maxLength": 1024 }, "enabled": { "type": "boolean" }, "rank": { "type": "integer", "minimum": 1, "maximum": 100000 }, "version": { "type": "integer", "format": "int64", "minimum": 0 } }, "additionalProperties": false },
+      "CoverCandidateReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
+      "EmptyResponse": { "type": "null" },
       "Volume": { "type": "object", "required": ["id", "bookId", "title", "orderNo", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "orderNo": { "type": "integer" }, "createdAt": { "type": "string", "format": "date-time" } } },
       "VolumeList": { "type": "array", "items": { "$ref": "#/components/schemas/Volume" } },
       "VolumeDeleteResult": { "type": "object", "required": ["id", "deleted", "detachedChapterCount"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true }, "detachedChapterCount": { "type": "integer", "minimum": 0 } } },
       "Chapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": "string" }, "published": { "type": "boolean" }, "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "PUBLISHED", "NEEDS_REVIEW"] }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" } } },
       "ChapterList": { "type": "array", "items": { "$ref": "#/components/schemas/Chapter" } },
+      "ChapterCandidate": { "type": "object", "required": ["id", "bookId", "targetChapterId", "type", "title", "content", "orderNo", "status", "reviewReason", "createdByUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "targetChapterId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "type": { "type": "string", "enum": ["NEW_CHAPTER", "CHAPTER_REVISION"] }, "title": { "type": "string" }, "content": { "type": "string" }, "orderNo": { "type": "integer", "minimum": 1 }, "status": { "type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED"] }, "reviewReason": { "type": "string" }, "moderationAuditId": { "type": ["integer", "null"], "format": "int64" }, "createdByUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" }, "reviewedByUserId": { "type": ["integer", "null"], "format": "int64" }, "reviewedAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "ChapterCandidateList": { "type": "array", "items": { "$ref": "#/components/schemas/ChapterCandidate" } },
+      "ModerationReviewQueueItem": { "type": "object", "required": ["scope", "book"], "properties": { "scope": { "type": "string", "enum": ["WHOLE_BOOK", "NEW_CHAPTER", "CHAPTER_REVISION"] }, "book": { "$ref": "#/components/schemas/Book" }, "candidate": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/ChapterCandidate" }] } } },
+      "ModerationReviewQueueItemList": { "type": "array", "items": { "$ref": "#/components/schemas/ModerationReviewQueueItem" } },
       "ReaderChapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo", "readable", "access"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": ["string", "null"], "description": "Chapter body is null when `readable` is false; it is never a masked or truncated body." }, "published": { "type": "boolean", "const": true }, "status": { "type": "string", "const": "PUBLISHED" }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" }, "readable": { "type": "boolean" }, "access": { "type": "string", "enum": ["PREVIEW", "BOOK_ENTITLEMENT", "MEMBERSHIP", "AUTHOR", "ADMIN", "ENTITLEMENT_REQUIRED"] } } },
       "ReaderBookAccess": { "type": "object", "required": ["fullBookAccess", "source"], "properties": { "fullBookAccess": { "type": "boolean" }, "source": { "type": "string", "enum": ["PREVIEW", "BOOK_ENTITLEMENT", "MEMBERSHIP", "AUTHOR", "ADMIN"] } } },
       "Comment": { "type": "object", "required": ["id", "bookId", "userId", "authorName", "content", "status", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": ["integer", "null"], "format": "int64" }, "userId": { "type": "integer", "format": "int64" }, "authorName": { "type": "string" }, "content": { "type": "string" }, "status": { "type": "string", "enum": ["PENDING_REVIEW", "VISIBLE", "REJECTED"] }, "createdAt": { "type": "string", "format": "date-time" }, "authorModerationAdvice": { "$ref": "#/components/schemas/AuthorModerationAdvice", "description": "Present only in author/admin moderation views; it is never a final review decision." } } },
@@ -1740,10 +2133,10 @@
       "HotSearchTermList": { "type": "array", "items": { "$ref": "#/components/schemas/HotSearchTerm" } },
       "DiscoveryFacets": { "type": "object", "properties": { "categories": { "type": "array", "items": { "type": "string" } }, "serialStatuses": { "type": "array", "items": { "type": "string" } }, "wordCountRanges": { "type": "array", "items": { "$ref": "#/components/schemas/WordCountRange" } } } },
       "WordCountRange": { "type": "object", "required": ["key", "label"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "minWords": { "type": ["integer", "null"] }, "maxWords": { "type": ["integer", "null"] } } },
-      "CatalogPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "$ref": "#/components/schemas/BookList" }, "meta": { "type": "object", "required": ["total", "facets", "query"], "properties": { "total": { "type": "integer", "format": "int64" }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" }, "query": { "type": "object" } } } } },
+      "CatalogPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "$ref": "#/components/schemas/BookPresentationList" }, "meta": { "type": "object", "required": ["total", "page", "size", "facets", "query"], "properties": { "total": { "type": "integer", "format": "int64" }, "page": { "type": "integer", "minimum": 0 }, "size": { "type": "integer", "minimum": 1, "maximum": 48 }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" }, "query": { "type": "object" } } } } },
       "BookDetail": { "type": "object", "required": ["book", "chapters", "comments"], "properties": { "book": { "$ref": "#/components/schemas/Book" }, "chapters": { "$ref": "#/components/schemas/ChapterList" }, "comments": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } } } },
-      "ReaderBookDetail": { "type": "object", "required": ["book", "chapters", "comments", "access"], "properties": { "book": { "$ref": "#/components/schemas/Book" }, "chapters": { "type": "array", "items": { "$ref": "#/components/schemas/ReaderChapter" } }, "comments": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } }, "access": { "$ref": "#/components/schemas/ReaderBookAccess" } } },
-      "DiscoveryHome": { "type": "object", "required": ["carousel", "recommendations", "hot"], "properties": { "carousel": { "$ref": "#/components/schemas/BookList" }, "recommendations": { "$ref": "#/components/schemas/BookList" }, "hot": { "$ref": "#/components/schemas/BookList" }, "hotSearchTerms": { "$ref": "#/components/schemas/HotSearchTermList" }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" } } },
+      "ReaderBookDetail": { "type": "object", "required": ["book", "chapters", "comments", "access"], "properties": { "book": { "$ref": "#/components/schemas/Book" }, "chapters": { "type": "array", "items": { "$ref": "#/components/schemas/ReaderChapter" } }, "comments": { "type": "array", "items": { "$ref": "#/components/schemas/Comment" } }, "access": { "$ref": "#/components/schemas/ReaderBookAccess" }, "currentUserRating": { "type": ["integer", "null"], "minimum": 1, "maximum": 5, "description": "Present for an authenticated reader-detail request; null when the current reader has not rated this work." } } },
+      "DiscoveryHome": { "type": "object", "required": ["carousel", "recommendations", "hot"], "properties": { "carousel": { "$ref": "#/components/schemas/HomeCarouselSlideList" }, "recommendations": { "$ref": "#/components/schemas/BookPresentationList" }, "hot": { "$ref": "#/components/schemas/BookPresentationList" }, "hotSearchTerms": { "$ref": "#/components/schemas/HotSearchTermList" }, "facets": { "$ref": "#/components/schemas/DiscoveryFacets" } } },
       "AccountProfile": { "type": "object", "required": ["id", "name", "roles", "passwordChangeRequired"], "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" }, "roles": { "type": "array", "items": { "type": "string", "enum": ["READER", "AUTHOR", "ADMIN"] }, "uniqueItems": true }, "passwordChangeRequired": { "type": "boolean" } } },
       "AccountEntitlements": { "type": "object", "required": ["membership", "books"], "properties": { "membership": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/MembershipEntitlement" }] }, "books": { "type": "array", "items": { "$ref": "#/components/schemas/BookEntitlement" } } } },
       "CommercialRules": { "type": "object", "required": ["membershipDaysMaximumPerCode", "recommendationVotesPerDay", "monthlyVotesPerMonth", "rewardMinimumTokens", "rewardMaximumTokensPerReward", "rewardMaximumTokensPerDay", "updatedAt"], "properties": { "membershipDaysMaximumPerCode": { "type": "integer", "minimum": 1, "maximum": 36500, "description": "Maximum membership days one newly created redemption code may grant." }, "recommendationVotesPerDay": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Per-reader recommendation-vote allowance for one Asia/Shanghai calendar day; zero disables new votes." }, "monthlyVotesPerMonth": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Per-reader monthly-vote allowance for one Asia/Shanghai calendar month; zero disables new votes." }, "rewardMinimumTokens": { "type": "integer", "minimum": 1, "maximum": 1000000 }, "rewardMaximumTokensPerReward": { "type": "integer", "minimum": 1, "maximum": 1000000 }, "rewardMaximumTokensPerDay": { "type": "integer", "minimum": 1, "maximum": 5000000 }, "updatedAt": { "type": "string", "format": "date-time" } } },
@@ -1754,10 +2147,14 @@
       "ReadingPreference": { "type": "object", "required": ["theme", "font", "fontSize", "lineHeight", "brightness", "pageMode"], "properties": { "theme": { "type": "string", "enum": ["paper", "night", "sepia"] }, "font": { "type": "string", "minLength": 1 }, "fontSize": { "type": "integer", "minimum": 14, "maximum": 32 }, "lineHeight": { "type": "integer", "minimum": 120, "maximum": 260 }, "brightness": { "type": "integer", "minimum": 10, "maximum": 100 }, "pageMode": { "type": "string", "enum": ["slide", "cover", "simulation"] } } },
       "ReadingProgress": { "type": "object", "required": ["bookId", "chapterId", "offset", "updatedAt"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "updatedAt": { "type": "string", "format": "date-time" } } },
       "ReadingProgressList": { "type": "array", "items": { "$ref": "#/components/schemas/ReadingProgress" } },
+      "ReadingProgressOrNull": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/ReadingProgress" }] },
+      "BookSubscription": { "type": "object", "required": ["bookId", "subscribed"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "subscribed": { "type": "boolean" }, "subscribedAt": { "type": ["string", "null"], "format": "date-time", "description": "Set only while subscribed." } } },
+      "BookSubscriptionList": { "type": "array", "items": { "$ref": "#/components/schemas/BookSubscription" } },
       "Bookmark": { "type": "object", "required": ["id", "bookId", "chapterId", "offset", "note", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "chapterId": { "type": "integer", "format": "int64" }, "offset": { "type": "integer", "minimum": 0 }, "note": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" } } },
       "BookmarkList": { "type": "array", "items": { "$ref": "#/components/schemas/Bookmark" } },
       "Wallet": { "type": "object", "required": ["points", "tokens"], "properties": { "points": { "type": "integer", "format": "int64" }, "tokens": { "type": "integer", "format": "int64" } } },
       "BookshelfToggleResult": { "type": "object", "required": ["saved"], "properties": { "saved": { "type": "boolean" } } },
+      "BookshelfState": { "type": "object", "required": ["saved"], "properties": { "saved": { "type": "boolean" } } },
       "CheckInResult": { "type": "object", "required": ["points", "awarded"], "properties": { "points": { "type": "integer", "format": "int64" }, "awarded": { "type": "integer", "const": 10 } } },
       "RedeemResult": { "type": "object", "description": "Current redemption result fields are benefit-dependent.", "additionalProperties": true },
       "RatingResult": { "type": "object", "required": ["average"], "properties": { "average": { "type": "number", "format": "double" } } },
@@ -1769,15 +2166,16 @@
       "AuthorApplicationList": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorApplication" } },
       "DeleteResult": { "type": "object", "required": ["id", "deleted"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true } } },
       "DuePublicationResult": { "type": "object", "required": ["processed", "published", "needsReview"], "properties": { "processed": { "type": "integer", "minimum": 0 }, "published": { "$ref": "#/components/schemas/ChapterList" }, "needsReview": { "$ref": "#/components/schemas/ChapterList" } } },
-      "AuthorAnalyticsReport": { "type": "object", "required": ["summary", "dailyTrend", "bookMetrics", "subscriptionMetrics", "retentionMetrics", "availability", "meta"], "properties": { "summary": { "$ref": "#/components/schemas/AuthorAnalyticsSummary" }, "dailyTrend": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsTrendPoint" } }, "bookMetrics": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsBookMetric" } }, "subscriptionMetrics": { "$ref": "#/components/schemas/AuthorAnalyticsSubscriptionMetrics" }, "retentionMetrics": { "$ref": "#/components/schemas/AuthorAnalyticsRetentionMetrics" }, "availability": { "$ref": "#/components/schemas/AuthorAnalyticsAvailability" }, "meta": { "$ref": "#/components/schemas/AuthorAnalyticsMetadata" } } },
-      "AuthorAnalyticsSummary": { "type": "object", "required": ["currentFavoriteCount", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "activeReaderCount", "completedReaderBookCount", "averageReadThroughPercent", "amountUnit"], "properties": { "currentFavoriteCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64" }, "activeReaderCount": { "type": "integer", "format": "int64" }, "completedReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
-      "AuthorAnalyticsTrendPoint": { "type": "object", "required": ["date", "favoriteAddCount", "purchaseCount", "purchaseTokenAmount"], "properties": { "date": { "type": "string", "format": "date" }, "favoriteAddCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" } } },
-      "AuthorAnalyticsBookMetric": { "type": "object", "required": ["bookId", "bookTitle", "currentFavoriteCount", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "averageReadThroughPercent"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "currentFavoriteCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double" } } },
-      "AuthorAnalyticsSubscriptionMetrics": { "type": "object", "required": ["attributedGrantCount", "attributedReaderCount", "membershipDayCount"], "properties": { "attributedGrantCount": { "type": "integer", "format": "int64" }, "attributedReaderCount": { "type": "integer", "format": "int64" }, "membershipDayCount": { "type": "integer", "format": "int64" } } },
+      "AuthorAnalyticsReport": { "type": "object", "required": ["summary", "dailyTrend", "bookMetrics", "subscriptionMetrics", "membershipAttributionMetrics", "retentionMetrics", "availability", "meta"], "properties": { "summary": { "$ref": "#/components/schemas/AuthorAnalyticsSummary" }, "dailyTrend": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsTrendPoint" } }, "bookMetrics": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorAnalyticsBookMetric" } }, "subscriptionMetrics": { "$ref": "#/components/schemas/AuthorAnalyticsSubscriptionMetrics" }, "membershipAttributionMetrics": { "$ref": "#/components/schemas/AuthorAnalyticsMembershipAttributionMetrics" }, "retentionMetrics": { "$ref": "#/components/schemas/AuthorAnalyticsRetentionMetrics" }, "availability": { "$ref": "#/components/schemas/AuthorAnalyticsAvailability" }, "meta": { "$ref": "#/components/schemas/AuthorAnalyticsMetadata" } } },
+      "AuthorAnalyticsSummary": { "type": "object", "required": ["currentFavoriteCount", "currentSubscriptionCount", "currentSubscriberCount", "ratingCount", "averageRating", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "activeReaderCount", "currentReaderBookCount", "currentReaderCount", "completedReaderBookCount", "averageReadThroughPercent", "amountUnit"], "properties": { "currentFavoriteCount": { "type": "integer", "format": "int64" }, "currentSubscriptionCount": { "type": "integer", "format": "int64" }, "currentSubscriberCount": { "type": "integer", "format": "int64" }, "ratingCount": { "type": "integer", "format": "int64" }, "averageRating": { "type": "number", "format": "double" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64", "description": "Distinct reader-work activity pairs in the selected report window." }, "activeReaderCount": { "type": "integer", "format": "int64" }, "currentReaderBookCount": { "type": "integer", "format": "int64", "description": "Current saved progress states, independent of the report window." }, "currentReaderCount": { "type": "integer", "format": "int64" }, "completedReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
+      "AuthorAnalyticsTrendPoint": { "type": "object", "required": ["date", "favoriteAddCount", "favoriteRemoveCount", "subscriptionAddCount", "subscriptionRemoveCount", "purchaseCount", "purchaseTokenAmount"], "properties": { "date": { "type": "string", "format": "date" }, "favoriteAddCount": { "type": "integer", "format": "int64" }, "favoriteRemoveCount": { "type": "integer", "format": "int64" }, "subscriptionAddCount": { "type": "integer", "format": "int64" }, "subscriptionRemoveCount": { "type": "integer", "format": "int64" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" } } },
+      "AuthorAnalyticsBookMetric": { "type": "object", "required": ["bookId", "bookTitle", "currentFavoriteCount", "currentSubscriptionCount", "subscriptionAddCount", "subscriptionRemoveCount", "ratingCount", "averageRating", "purchaseCount", "purchaseTokenAmount", "activeReaderBookCount", "averageReadThroughPercent"], "properties": { "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "currentFavoriteCount": { "type": "integer", "format": "int64" }, "currentSubscriptionCount": { "type": "integer", "format": "int64" }, "subscriptionAddCount": { "type": "integer", "format": "int64" }, "subscriptionRemoveCount": { "type": "integer", "format": "int64" }, "ratingCount": { "type": "integer", "format": "int64" }, "averageRating": { "type": "number", "format": "double" }, "purchaseCount": { "type": "integer", "format": "int64" }, "purchaseTokenAmount": { "type": "integer", "format": "int64" }, "activeReaderBookCount": { "type": "integer", "format": "int64" }, "averageReadThroughPercent": { "type": "number", "format": "double", "description": "Current persisted progress, independent of the selected activity window." } } },
+      "AuthorAnalyticsSubscriptionMetrics": { "type": "object", "required": ["currentSubscriptionCount", "currentSubscriberCount", "subscriptionAddCount", "subscriptionRemoveCount"], "properties": { "currentSubscriptionCount": { "type": "integer", "format": "int64" }, "currentSubscriberCount": { "type": "integer", "format": "int64" }, "subscriptionAddCount": { "type": "integer", "format": "int64" }, "subscriptionRemoveCount": { "type": "integer", "format": "int64" } } },
+      "AuthorAnalyticsMembershipAttributionMetrics": { "type": "object", "required": ["attributedGrantCount", "attributedReaderCount", "membershipDayCount"], "properties": { "attributedGrantCount": { "type": "integer", "format": "int64" }, "attributedReaderCount": { "type": "integer", "format": "int64" }, "membershipDayCount": { "type": "integer", "format": "int64" } } },
       "AuthorAnalyticsRetentionMetrics": { "type": "object", "required": ["cohortReaderBookCount", "day1EligibleReaderBookCount", "day1RetainedReaderBookCount", "day1RetentionPercent", "day7EligibleReaderBookCount", "day7RetainedReaderBookCount", "day7RetentionPercent", "observedThrough"], "properties": { "cohortReaderBookCount": { "type": "integer", "format": "int64" }, "day1EligibleReaderBookCount": { "type": "integer", "format": "int64" }, "day1RetainedReaderBookCount": { "type": "integer", "format": "int64" }, "day1RetentionPercent": { "type": ["number", "null"], "format": "double" }, "day7EligibleReaderBookCount": { "type": "integer", "format": "int64" }, "day7RetainedReaderBookCount": { "type": "integer", "format": "int64" }, "day7RetentionPercent": { "type": ["number", "null"], "format": "double" }, "observedThrough": { "type": "string", "format": "date" } } },
-      "AuthorAnalyticsAvailability": { "type": "object", "required": ["subscription", "retention"], "properties": { "subscription": { "$ref": "#/components/schemas/MetricAvailability" }, "retention": { "$ref": "#/components/schemas/MetricAvailability" } } },
+      "AuthorAnalyticsAvailability": { "type": "object", "required": ["subscription", "favorite", "retention"], "properties": { "subscription": { "$ref": "#/components/schemas/MetricAvailability" }, "favorite": { "$ref": "#/components/schemas/MetricAvailability" }, "retention": { "$ref": "#/components/schemas/MetricAvailability" } } },
       "MetricAvailability": { "type": "object", "required": ["available", "reason"], "properties": { "available": { "type": "boolean" }, "reason": { "type": "string" } } },
-      "AuthorAnalyticsMetadata": { "type": "object", "required": ["from", "to", "timeZone", "dateBoundary", "maximumWindowDays", "bookMetricTotal", "returnedBookMetricLimit", "bookMetricsTruncated", "shelfTrendInclusion", "purchaseInclusion", "readThroughDefinition", "subscriptionInclusion", "retentionDefinition"], "properties": { "from": { "type": "string", "format": "date" }, "to": { "type": "string", "format": "date" }, "timeZone": { "type": "string", "const": "Asia/Shanghai" }, "dateBoundary": { "type": "string", "const": "FROM_INCLUSIVE_TO_INCLUSIVE" }, "maximumWindowDays": { "type": "integer" }, "bookMetricTotal": { "type": "integer", "format": "int64" }, "returnedBookMetricLimit": { "type": "integer" }, "bookMetricsTruncated": { "type": "boolean" }, "shelfTrendInclusion": { "type": "string" }, "purchaseInclusion": { "type": "string" }, "readThroughDefinition": { "type": "string" }, "subscriptionInclusion": { "type": "string", "const": "AUTHOR_ATTRIBUTED_MEMBERSHIP_REDEMPTION_LEDGER; COMPOSITE_REDEMPTION_CODE_BOOK_OWNER_SNAPSHOTTED_AT_GRANT" }, "retentionDefinition": { "type": "string", "const": "FIRST_READING_PROGRESS_ACTIVITY_DATE_PER_READER_BOOK; SAME_READER_BOOK_ACTIVITY_ON_COHORT_DATE_PLUS_1_OR_PLUS_7; ONLY_COHORTS_MATURED_BY_OBSERVED_THROUGH_ARE_ELIGIBLE" } } },
+      "AuthorAnalyticsMetadata": { "type": "object", "required": ["from", "to", "timeZone", "dateBoundary", "maximumWindowDays", "bookMetricTotal", "returnedBookMetricLimit", "bookMetricsTruncated", "favoriteTrendInclusion", "purchaseInclusion", "readThroughDefinition", "activeReadingDefinition", "subscriptionInclusion", "membershipAttributionInclusion", "historicalObservationBoundary", "retentionDefinition"], "properties": { "from": { "type": "string", "format": "date" }, "to": { "type": "string", "format": "date" }, "timeZone": { "type": "string", "const": "Asia/Shanghai" }, "dateBoundary": { "type": "string", "const": "FROM_INCLUSIVE_TO_INCLUSIVE" }, "maximumWindowDays": { "type": "integer" }, "bookMetricTotal": { "type": "integer", "format": "int64" }, "returnedBookMetricLimit": { "type": "integer" }, "bookMetricsTruncated": { "type": "boolean" }, "favoriteTrendInclusion": { "type": "string" }, "purchaseInclusion": { "type": "string" }, "readThroughDefinition": { "type": "string" }, "activeReadingDefinition": { "type": "string" }, "subscriptionInclusion": { "type": "string" }, "membershipAttributionInclusion": { "type": "string" }, "historicalObservationBoundary": { "type": "string" }, "retentionDefinition": { "type": "string" } } },
       "AuthorRewardReport": { "type": "object", "required": ["items", "summary", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorRewardRecord" } }, "summary": { "$ref": "#/components/schemas/AuthorRewardSummary" }, "meta": { "$ref": "#/components/schemas/AuthorRewardMetadata" } } },
       "AuthorRewardRecord": { "type": "object", "required": ["id", "bookId", "bookTitle", "rewarderUserId", "tokenAmount", "rewardedAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "bookTitle": { "type": "string" }, "rewarderUserId": { "type": "integer", "format": "int64" }, "tokenAmount": { "type": "integer", "format": "int64" }, "rewardedAt": { "type": "string", "format": "date-time" } } },
       "AuthorRewardSummary": { "type": "object", "required": ["rewardCount", "totalTokens", "amountUnit"], "properties": { "rewardCount": { "type": "integer", "format": "int64" }, "totalTokens": { "type": "integer", "format": "int64" }, "amountUnit": { "type": "string", "const": "TOKEN" } } },
@@ -1842,7 +2240,7 @@
       "ParagraphAnnotationRequest": { "type": "object", "required": ["paragraphIndex", "selectionStart", "selectionEnd", "selectedText", "shareIntent"], "properties": { "paragraphIndex": { "type": "integer" }, "selectionStart": { "type": "integer" }, "selectionEnd": { "type": "integer" }, "selectedText": { "type": "string", "minLength": 1, "maxLength": 2000 }, "note": { "type": "string", "maxLength": 2000 }, "shareIntent": { "type": "boolean" } }, "additionalProperties": false },
       "RedeemRequest": { "type": "object", "required": ["code"], "properties": { "code": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
       "BookRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
-      "BookUpdateRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 }, "serialStatus": { "type": "string", "maxLength": 32 }, "cover": { "type": "string", "maxLength": 1024 } }, "additionalProperties": false },
+      "BookUpdateRequest": { "type": "object", "required": ["title", "category", "synopsis"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "category": { "type": "string", "minLength": 1, "maxLength": 128 }, "synopsis": { "type": "string", "minLength": 1, "maxLength": 20000 }, "serialStatus": { "type": "string", "maxLength": 32 } }, "additionalProperties": false },
       "VolumeRequest": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 } }, "additionalProperties": false },
       "VolumeOrderRequest": { "type": "object", "required": ["orderNo"], "properties": { "orderNo": { "type": "integer", "minimum": 1 } }, "additionalProperties": false },
       "ChapterRequest": { "type": "object", "required": ["title", "content", "submit"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "submit": { "type": "boolean" }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
@@ -1851,6 +2249,7 @@
       "ScheduleChapterRequest": { "type": "object", "required": ["publishAt"], "properties": { "publishAt": { "type": "string", "format": "date-time", "description": "A future instant." } }, "additionalProperties": false },
       "ReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "BookReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
+      "CandidateReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
       "BookStatusRequest": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "SensitiveWordRequest": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 } }, "additionalProperties": false },
       "SensitiveWordUpdateRequest": { "type": "object", "required": ["word", "reason"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },

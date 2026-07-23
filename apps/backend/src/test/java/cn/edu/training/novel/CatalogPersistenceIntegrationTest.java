@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.mapper.InteractionPageMapper;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.CommercialRuleService;
@@ -17,6 +18,7 @@ import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
+import cn.edu.training.novel.service.BookPageService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +42,9 @@ class CatalogPersistenceIntegrationTest {
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
+    @Autowired BookPageService bookPageService;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired InteractionPageMapper interactionPageMapper;
 
     @Test
     void catalogWritesAreRetrievedAfterRepositoryAndServiceRecreation() {
@@ -61,12 +65,13 @@ class CatalogPersistenceIntegrationTest {
                 walletRepository,
                 commercialRuleService,
                 readerRepository,
-                new InteractionRepository(jdbcTemplate),
+                new InteractionRepository(jdbcTemplate, interactionPageMapper),
                 operationsRepository,
                 authService,
                 contentModerationService,
                 contentModerationReviewService,
-                bookModerationSnapshotService);
+                bookModerationSnapshotService,
+                bookPageService);
         Book reloadedBook = recreatedStore.book(draft.id());
         List<Chapter> reloadedChapters = reloadedRepository.findChaptersByBookId(draft.id());
 

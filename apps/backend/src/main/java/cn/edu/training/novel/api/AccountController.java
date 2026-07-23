@@ -4,6 +4,8 @@ import cn.edu.training.novel.domain.*;
 import cn.edu.training.novel.service.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.*;
@@ -16,7 +18,8 @@ public class AccountController implements UserResolver {
     private final NovelStore store;
     private final AccountProfileService accountProfileService;
     private final AuthService authService;
-    public AccountController(NovelStore store, AccountProfileService accountProfileService, AuthService authService){this.store=store;this.accountProfileService=accountProfileService;this.authService=authService;}
+    private final BookPresentationService bookPresentations;
+    public AccountController(NovelStore store,AccountProfileService accountProfileService,AuthService authService,BookPresentationService bookPresentations){this.store=store;this.accountProfileService=accountProfileService;this.authService=authService;this.bookPresentations=bookPresentations;}
     @GetMapping("/profile") ApiResponse<AccountProfile> profile(HttpServletRequest request) { return ApiResponse.ok(accountProfileService.profileFor(current(request))); }
     @PutMapping("/profile") ApiResponse<AccountProfile> updateProfile(HttpServletRequest request,@Valid @RequestBody ProfileUpdateRequest body) { return ApiResponse.ok(accountProfileService.updateDisplayName(current(request),body.displayName())); }
     @PutMapping("/password") ApiResponse<Void> changePassword(HttpServletRequest request,@Valid @RequestBody PasswordChangeRequest body) {
@@ -24,16 +27,32 @@ public class AccountController implements UserResolver {
         return ApiResponse.ok(null);
     }
     @GetMapping("/entitlements") ApiResponse<AccountEntitlements> entitlements(HttpServletRequest request) { return ApiResponse.ok(accountProfileService.entitlementsFor(current(request))); }
-    @GetMapping("/bookshelf") ApiResponse<List<Book>> shelf(HttpServletRequest request) { CurrentUser u=current(request); return ApiResponse.ok(store.shelfBooks(u.id())); }
+    @GetMapping("/bookshelf")
+    ApiResponse<BookPresentationPage> shelf(
+            HttpServletRequest request,
+            @RequestParam(defaultValue="0") @Min(0) int page,
+            @RequestParam(defaultValue="12") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        CurrentUser u=current(request);
+        return ApiResponse.ok(store.shelfBooks(u.id(), page, size));
+    }
+    @GetMapping("/bookshelf/{bookId}")
+    ApiResponse<BookshelfState> shelfState(HttpServletRequest request, @PathVariable long bookId) {
+        return ApiResponse.ok(new BookshelfState(store.bookshelfContains(current(request).id(), bookId)));
+    }
     @PostMapping("/bookshelf/{bookId}") ApiResponse<Map<String,Object>> shelfToggle(HttpServletRequest request,@PathVariable long bookId) { boolean saved=store.toggleShelf(current(request).id(),bookId); return ApiResponse.ok(Map.of("saved",saved)); }
+    @GetMapping("/subscriptions") ApiResponse<List<BookSubscription>> subscriptions(HttpServletRequest request) { return ApiResponse.ok(store.subscriptions(current(request).id())); }
+    @GetMapping("/subscriptions/{bookId}") ApiResponse<BookSubscription> subscription(HttpServletRequest request,@PathVariable long bookId) { return ApiResponse.ok(store.subscription(current(request).id(),bookId)); }
+    @PutMapping("/subscriptions/{bookId}") ApiResponse<BookSubscription> subscribe(HttpServletRequest request,@PathVariable long bookId) { return ApiResponse.ok(store.subscribe(current(request).id(),bookId)); }
+    @DeleteMapping("/subscriptions/{bookId}") ApiResponse<BookSubscription> unsubscribe(HttpServletRequest request,@PathVariable long bookId) { return ApiResponse.ok(store.unsubscribe(current(request).id(),bookId)); }
     @PostMapping("/checkin") ApiResponse<Map<String,Object>> checkin(HttpServletRequest request) { return ApiResponse.ok(Map.of("points",store.checkin(current(request).id()),"awarded",10)); }
     @PostMapping("/redeem") ApiResponse<Map<String,Object>> redeem(HttpServletRequest request,@Valid @RequestBody RedeemRequest body) { return ApiResponse.ok(store.redeem(current(request).id(),body.code())); }
     @GetMapping("/wallet") ApiResponse<Map<String,Object>> wallet(HttpServletRequest request) { CurrentUser u=current(request); return ApiResponse.ok(Map.of("points",store.pointBalance(u.id()),"tokens",store.tokenBalance(u.id()))); }
     @GetMapping("/commercial-rules") ApiResponse<CommercialRules> commercialRules(HttpServletRequest request) { CurrentUser u=current(request); return ApiResponse.ok(store.commercialRules(u.id())); }
     @GetMapping("/preferences/reading") ApiResponse<ReadingPreference> preference(HttpServletRequest request) { return ApiResponse.ok(store.preference(current(request).id())); }
     @PutMapping("/preferences/reading") ApiResponse<ReadingPreference> savePreference(HttpServletRequest request,@Valid @RequestBody ReadingPreferenceRequest body) { return ApiResponse.ok(store.savePreference(current(request).id(),body.toDomain())); }
-    @GetMapping("/books/{bookId}/reading") ApiResponse<ReaderBookDetail> reading(HttpServletRequest request,@PathVariable long bookId) { CurrentUser user=current(request); return ApiResponse.ok(store.readerBook(user,bookId)); }
+    @GetMapping("/books/{bookId}/reading") ApiResponse<ReaderBookDetail> reading(HttpServletRequest request,@PathVariable long bookId) { CurrentUser user=current(request); return ApiResponse.ok(presentReaderBook(store.readerBook(user,bookId))); }
     @GetMapping("/progress") ApiResponse<List<ReadingProgress>> progress(HttpServletRequest request) { return ApiResponse.ok(store.progress(current(request).id())); }
+    @GetMapping("/books/{bookId}/progress") ApiResponse<ReadingProgress> progressForBook(HttpServletRequest request,@PathVariable long bookId) { return ApiResponse.ok(store.progressForBook(current(request).id(), bookId)); }
     @PutMapping("/progress") ApiResponse<ReadingProgress> saveProgress(HttpServletRequest request,@Valid @RequestBody ProgressRequest body) { return ApiResponse.ok(store.saveProgress(current(request),body.bookId(),body.chapterId(),body.offset())); }
     @GetMapping("/books/{bookId}/bookmarks") ApiResponse<List<Bookmark>> bookmarks(HttpServletRequest request,@PathVariable long bookId) { return ApiResponse.ok(store.bookmarks(current(request).id(),bookId)); }
     @PostMapping("/books/{bookId}/bookmarks") ApiResponse<Bookmark> bookmark(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody BookmarkRequest body) { return ApiResponse.ok(store.bookmark(current(request),bookId,body.chapterId(),body.offset(),body.note())); }
@@ -54,6 +73,7 @@ public class AccountController implements UserResolver {
     public record RatingRequest(int rating) {}
     public record AmountRequest(int amount) {}
     public record AuthorApplicationRequest(@NotBlank @Size(max=128) String penName,@NotBlank @Size(max=4000) String statement) {}
+    public record BookshelfState(boolean saved) {}
     private static String requireIdempotencyKey(String value) {
         if (value == null || value.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key is required");
@@ -62,5 +82,13 @@ public class AccountController implements UserResolver {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key must be at most 128 characters");
         }
         return value;
+    }
+    private ReaderBookDetail presentReaderBook(ReaderBookDetail detail) {
+        return new ReaderBookDetail(
+                bookPresentations.resolveCover(detail.book()),
+                detail.chapters(),
+                detail.comments(),
+                detail.access(),
+                detail.currentUserRating());
     }
 }

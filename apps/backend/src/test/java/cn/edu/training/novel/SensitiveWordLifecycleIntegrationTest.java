@@ -18,16 +18,15 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Covers the administrator-only, audited sensitive-word lifecycle rather than append-only setup. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:sensitive_word_lifecycle_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class SensitiveWordLifecycleIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -36,14 +35,14 @@ class SensitiveWordLifecycleIntegrationTest {
     void administratorsCanRenameDisableAndDeleteVocabularyWithAnImmutableAuditTrail() throws Exception {
         mvc.perform(post("/api/v1/admin/sensitive-words")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"word\":\"生命周期屏蔽词\"}"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/sensitive-words")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"word\":\"生命周期屏蔽词\"}"))
                 .andExpect(status().isOk())
@@ -52,7 +51,7 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(post("/api/v1/account/books/1/comments")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"content\":\"包含生命周期屏蔽词的评论\"}"))
                 .andExpect(status().isOk())
@@ -60,7 +59,7 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(put("/api/v1/admin/sensitive-words/{word}", "生命周期屏蔽词")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"word\":\"改名屏蔽词\",\"reason\":\"修正词条名称\"}"))
                 .andExpect(status().isOk())
@@ -68,7 +67,7 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(post("/api/v1/account/books/1/comments")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"content\":\"包含改名屏蔽词的评论\"}"))
                 .andExpect(status().isOk())
@@ -76,7 +75,7 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(put("/api/v1/admin/sensitive-words/{word}/enabled", "改名屏蔽词")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":false,\"reason\":\"等待规则复核\"}"))
                 .andExpect(status().isOk())
@@ -84,7 +83,7 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(post("/api/v1/account/books/1/comments")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"content\":\"包含改名屏蔽词的评论\"}"))
                 .andExpect(status().isOk())
@@ -92,19 +91,19 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(delete("/api/v1/admin/sensitive-words/{word}", "改名屏蔽词")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"规则已废弃\"}"))
                 .andExpect(status().isOk());
 
         mvc.perform(get("/api/v1/admin/sensitive-words")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.word == '改名屏蔽词')]").isEmpty());
         mvc.perform(get("/api/v1/admin/sensitive-words/audits").param("limit", "20")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].action").value("DELETED"))
                 .andExpect(jsonPath("$.data[0].reason").value("规则已废弃"));
@@ -117,7 +116,7 @@ class SensitiveWordLifecycleIntegrationTest {
     void deletionRequiresAWordToBeDisabledFirst() throws Exception {
         mvc.perform(delete("/api/v1/admin/sensitive-words/{word}", "敏感词")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"不应删除生效规则\"}"))
                 .andExpect(status().isConflict())

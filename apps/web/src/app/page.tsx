@@ -1,9 +1,8 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { ArrowRight, BookOpen, Flame, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Flame, Search, SlidersHorizontal, Star, X } from 'lucide-react';
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent } from '@/app/components/ui/card';
@@ -15,14 +14,14 @@ import {
   CarouselPrevious,
 } from '@/app/components/ui/carousel';
 import { Input } from '@/app/components/ui/input';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
 import { InlineNotice, NovelPageHeader, NovelShell, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
 import { DotGrid } from '@/components/novel/DotGrid';
 import {
-  type Book,
-  type DiscoveryWordCountRange,
+  type BookPresentation,
   type PublicCatalogPage,
   type PublicDiscoveryHome,
   type PublicTaxonomyItem,
@@ -30,14 +29,7 @@ import {
 } from '@/features/novel/api';
 
 const ALL = '全部';
-const fallbackCategories = ['科幻', '悬疑', '古言'];
-const fallbackSerialStatuses = ['连载中', '已完结'];
-const fallbackWordRanges: DiscoveryWordCountRange[] = [
-  { key: 'under-100k', label: '10 万字以下', minWords: null, maxWords: 99_999 },
-  { key: '100k-300k', label: '10-30 万字', minWords: 100_000, maxWords: 299_999 },
-  { key: '300k-500k', label: '30-50 万字', minWords: 300_000, maxWords: 499_999 },
-  { key: 'over-500k', label: '50 万字以上', minWords: 500_000, maxWords: null },
-];
+const catalogPageSize = 12;
 
 const ColorBends = dynamic(
   () => import('@/components/novel/ColorBends').then((module) => module.ColorBends),
@@ -45,16 +37,6 @@ const ColorBends = dynamic(
 );
 
 const homeBackgroundColors = ['#0b4936', '#236b52', '#5f8972', '#bbcbbb'];
-
-const heroArtworkByCategory: Record<string, { src: string; scene: string }> = {
-  科幻: { src: '/images/bookstore-hero-sci-fi-gpt-image-2-v3.png', scene: '星图藏书阁场景' },
-  悬疑: { src: '/images/bookstore-hero-mystery-gpt-image-2-v3.png', scene: '雨夜档案室场景' },
-  古言: { src: '/images/bookstore-hero-classic-gpt-image-2-v3.png', scene: '竹影书斋场景' },
-};
-
-function heroArtwork(category: string) {
-  return heroArtworkByCategory[category] ?? heroArtworkByCategory['科幻'];
-}
 
 type CatalogFilters = {
   query: string;
@@ -94,6 +76,68 @@ function formatHeat(heat?: number) {
   return `${heat.toLocaleString('zh-CN')} 热度`;
 }
 
+function formatRating(book: Pick<BookPresentation, 'metrics'>) {
+  const metrics = book.metrics;
+  if (!metrics || !Number.isFinite(metrics.averageRating) || metrics.ratingCount <= 0) return '暂无评分';
+  return `${metrics.averageRating.toFixed(1)} 分 · ${metrics.ratingCount.toLocaleString('zh-CN')} 人评分`;
+}
+
+function CatalogPagination({
+  total,
+  page,
+  size,
+  loading,
+  onPageChange,
+}: {
+  total: number;
+  page: number;
+  size: number;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || page <= 0;
+  const nextDisabled = loading || page >= totalPages - 1;
+
+  return (
+    <div className="mt-7 flex flex-col gap-3 border-t border-emerald-950/25 pt-5 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-stone-500">共 {total.toLocaleString('zh-CN')} 部作品</p>
+      <Pagination aria-label="作品目录分页" className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#books"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!previousDisabled) onPageChange(page - 1);
+              }}
+              aria-disabled={previousDisabled}
+              tabIndex={previousDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+          <PaginationItem>
+            <span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-stone-600" aria-live="polite">第 {page + 1} / {totalPages} 页</span>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              href="#books"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!nextDisabled) onPageChange(page + 1);
+              }}
+              aria-disabled={nextDisabled}
+              tabIndex={nextDisabled ? -1 : undefined}
+              className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
+}
+
 function filterToggleItemClass(tone: 'emerald' | 'violet' | 'stone') {
   const selected = {
     emerald: 'data-[state=on]:border-emerald-700 data-[state=on]:bg-emerald-700 data-[state=on]:text-white data-[state=on]:hover:bg-emerald-800',
@@ -104,7 +148,9 @@ function filterToggleItemClass(tone: 'emerald' | 'violet' | 'stone') {
 }
 
 export default function BookstorePage() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const [books, setBooks] = useState<BookPresentation[]>([]);
+  const [catalogMeta, setCatalogMeta] = useState<PublicCatalogPage['meta']>();
+  const [catalogPage, setCatalogPage] = useState(0);
   const [home, setHome] = useState<PublicDiscoveryHome>();
   const [taxonomyCategories, setTaxonomyCategories] = useState<string[]>();
   const [query, setQuery] = useState('');
@@ -123,16 +169,24 @@ export default function BookstorePage() {
   const categories = useMemo(
     () => [
       ALL,
-      ...(taxonomyCategories ?? (home?.facets?.categories?.length ? home.facets.categories : fallbackCategories)),
+      ...(taxonomyCategories ?? home?.facets.categories ?? []),
     ],
     [home, taxonomyCategories],
   );
   const serialStatuses = useMemo(
-    () => [ALL, ...(home?.facets?.serialStatuses?.length ? home.facets.serialStatuses : fallbackSerialStatuses)],
+    () => [ALL, ...(home?.facets.serialStatuses ?? [])],
     [home],
   );
-  const wordRanges = home?.facets?.wordCountRanges?.length ? home.facets.wordCountRanges : fallbackWordRanges;
+  const wordRanges = home?.facets.wordCountRanges ?? [];
   const selectedWordRange = wordRanges.find((range) => range.key === filters.wordRangeKey);
+  const carouselSlides = home?.carousel ?? [];
+  const catalogPagination = useMemo(() => {
+    const total = Math.max(0, catalogMeta?.total ?? 0);
+    const size = catalogMeta?.size ?? catalogPageSize;
+    const totalPages = Math.max(1, Math.ceil(total / size));
+    const page = Math.min(catalogMeta?.page ?? catalogPage, totalPages - 1);
+    return { total, page, size };
+  }, [catalogMeta, catalogPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +198,7 @@ export default function BookstorePage() {
         if (!cancelled) setHome(response);
       })
       .catch((reason) => {
-        if (!cancelled) setHomeError(reason instanceof Error ? reason.message : '编辑推荐暂时无法加载。');
+        if (!cancelled) setHomeError(reason instanceof Error ? reason.message : '首页精选暂时无法加载。');
       })
       .finally(() => {
         if (!cancelled) setHomeLoading(false);
@@ -168,8 +222,7 @@ export default function BookstorePage() {
         setTaxonomyCategories([...new Set(names)]);
       })
       .catch(() => {
-        // The discovery home contract remains usable while an operations taxonomy deployment is
-        // unavailable, so retain the catalog/default facet fallback rather than failing the page.
+        // The discovery response owns the fallback taxonomy when the operations endpoint is unavailable.
         if (!cancelled) setTaxonomyCategories(undefined);
       });
 
@@ -184,13 +237,18 @@ export default function BookstorePage() {
     if (filters.serialStatus !== ALL) params.set('status', filters.serialStatus);
     if (selectedWordRange?.minWords != null) params.set('minWords', String(selectedWordRange.minWords));
     if (selectedWordRange?.maxWords != null) params.set('maxWords', String(selectedWordRange.maxWords));
+    params.set('page', String(catalogPage));
+    params.set('size', String(catalogPageSize));
 
     setLoading(true);
     setError('');
     const queryString = params.toString();
     void novelApi<PublicCatalogPage>(`public/books${queryString ? `?${queryString}` : ''}`)
       .then((response) => {
-        if (!cancelled) setBooks(response.items);
+        if (!cancelled) {
+          setBooks(response.items);
+          setCatalogMeta(response.meta);
+        }
       })
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : '书城暂时无法加载，请稍后重试。');
@@ -200,7 +258,7 @@ export default function BookstorePage() {
       });
 
     return () => { cancelled = true; };
-  }, [filters.category, filters.query, filters.serialStatus, selectedWordRange?.maxWords, selectedWordRange?.minWords]);
+  }, [catalogPage, filters.category, filters.query, filters.serialStatus, selectedWordRange?.maxWords, selectedWordRange?.minWords]);
 
   const hasFilters = Boolean(
     filters.query
@@ -211,11 +269,13 @@ export default function BookstorePage() {
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setCatalogPage(0);
     setFilters((current) => ({ ...current, query: query.trim() }));
   };
 
   const resetFilters = () => {
     setQuery('');
+    setCatalogPage(0);
     setFilters({ query: '', category: ALL, serialStatus: ALL, wordRangeKey: ALL });
   };
 
@@ -223,10 +283,11 @@ export default function BookstorePage() {
     const normalized = term.trim();
     if (!normalized) return;
     setQuery(normalized);
+    setCatalogPage(0);
     setFilters((current) => ({ ...current, query: normalized }));
   };
 
-  const hotSearchTerms = home?.hotSearchTerms?.filter((term) => term.enabled && term.term.trim()) ?? [];
+  const hotSearchTerms = home?.hotSearchTerms.filter((term) => term.enabled && term.term.trim()) ?? [];
 
   return (
     <NovelShell workspace="reader">
@@ -259,44 +320,51 @@ export default function BookstorePage() {
         <div className="flex items-end justify-between gap-4 border-b border-emerald-950/40 pb-3">
           <div>
             <p className="text-xs font-semibold text-emerald-700">本周选读</p>
-            <h2 id="editorial-heading" className="mt-1 text-2xl font-semibold text-stone-950">编辑推荐</h2>
+            <h2 id="editorial-heading" className="mt-1 text-2xl font-semibold text-stone-950">首页精选</h2>
           </div>
-          <span className="text-xs text-stone-700">按编辑排序</span>
+          <span className="text-xs text-stone-700">站长手动编排</span>
         </div>
 
-        {homeLoading ? <Skeleton className="mt-4 h-[360px] rounded-none border border-stone-200 bg-white sm:h-[400px]" role="status" aria-live="polite" aria-label="正在加载编辑推荐" /> : null}
+        {homeLoading ? <Skeleton className="mt-4 h-[360px] rounded-none border border-stone-200 bg-white sm:h-[400px]" role="status" aria-live="polite" aria-label="正在加载首页精选" /> : null}
         {homeError ? <div className="mt-4"><InlineNotice tone="error">{homeError}</InlineNotice></div> : null}
-        {!homeLoading && !homeError && home?.carousel.length ? (
+        {!homeLoading && !homeError && carouselSlides.length ? (
           <div ref={editorialHeroRef} className="relative mt-4">
             <Carousel
               className="overflow-hidden border border-emerald-950/80 bg-[#071d13] text-white"
-              opts={{ align: 'start', loop: home.carousel.length > 1 }}
+              opts={{ align: 'start', loop: carouselSlides.length > 1 }}
               aria-label="书城精选"
             >
               <CarouselContent className="ml-0">
-                {home.carousel.map((book, index) => {
-                  const artwork = heroArtwork(book.category);
+                {carouselSlides.map((slide, index) => {
+                  const book = slide.book;
+                  const headline = slide.headline?.trim() || book.title;
+                  const copy = slide.copy?.trim() || book.synopsis;
                   return (
                     <CarouselItem
-                      key={book.id}
+                      key={slide.slideId}
                       className="relative min-h-[360px] pl-0 sm:min-h-[400px]"
-                      aria-label={`第 ${index + 1} 张，${book.title}`}
+                      aria-label={`第 ${index + 1} 张，${headline}`}
                     >
-                      <Image
-                        src={artwork.src}
-                        alt={`${book.title}的${artwork.scene}`}
-                        fill
-                        priority={index === 0}
-                        sizes="(max-width: 1200px) 100vw, 1200px"
-                        className="object-cover object-center"
+                      <BookCover
+                        cover={slide.bannerUrl}
+                        fallbackCover={book.cover}
+                        title={book.title}
+                        category={book.category}
+                        showLabel={false}
+                        imageAlt=""
+                        className="absolute inset-0"
                       />
                       <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(4,20,13,.98)_0%,rgba(5,29,19,.92)_38%,rgba(6,27,19,.35)_72%,rgba(6,27,19,.08)_100%)]" />
                       <div className="relative z-20 flex min-h-[360px] max-w-xl flex-col justify-end p-6 sm:min-h-[400px] sm:p-9">
-                        <p className="text-xs font-semibold tracking-[0.18em] text-emerald-200">EDITOR&apos;S PICK</p>
+                        <p className="text-xs font-semibold text-emerald-200">首页精选</p>
                         <p className="mt-5 text-sm text-emerald-50/75">{book.category} · {book.serialStatus} · {formatWordCount(book.words)}</p>
-                        <h3 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">{book.title}</h3>
+                        <h3 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">{headline}</h3>
                         <p className="mt-2 text-sm text-emerald-50/75">{book.author}</p>
-                        <p className="mt-5 max-w-lg text-sm leading-7 text-emerald-50/90">{book.synopsis}</p>
+                        <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-amber-100/90" aria-label={`作品评分：${formatRating(book)}`}>
+                          <Star size={14} fill="currentColor" aria-hidden="true" />
+                          {formatRating(book)}
+                        </p>
+                        <p className="mt-4 max-w-lg text-sm leading-7 text-emerald-50/90">{copy}</p>
                         <Button asChild className="mt-6 h-auto w-fit rounded-none bg-emerald-300 px-4 py-2.5 text-emerald-950 hover:bg-emerald-200">
                           <Link href={`/reader/${book.id}`} aria-label={`开始阅读《${book.title}》`}>
                             开始阅读
@@ -308,7 +376,7 @@ export default function BookstorePage() {
                   );
                 })}
               </CarouselContent>
-              {home.carousel.length > 1 ? (
+              {carouselSlides.length > 1 ? (
                 <div className="absolute bottom-5 right-5 z-20 flex gap-2 sm:bottom-7 sm:right-7">
                   <CarouselPrevious className="static size-9 translate-x-0 translate-y-0 border-emerald-100/50 bg-emerald-950/70 text-white hover:bg-emerald-900 hover:text-white" />
                   <CarouselNext className="static size-9 translate-x-0 translate-y-0 border-emerald-100/50 bg-emerald-950/70 text-white hover:bg-emerald-900 hover:text-white" />
@@ -349,7 +417,7 @@ export default function BookstorePage() {
                 <span className="w-6 shrink-0 text-sm font-semibold text-rose-700">{String(index + 1).padStart(2, '0')}</span>
                 <div className="min-w-0 flex-1">
                   <Link href={`/reader/${book.id}`} className="block truncate text-sm font-semibold text-stone-900 hover:text-emerald-800">{book.title}</Link>
-                  <p className="mt-0.5 truncate text-xs text-stone-500">{book.author} · {book.category}</p>
+                  <p className="mt-0.5 truncate text-xs text-stone-500">{book.author} · {book.category} · {formatRating(book)}</p>
                 </div>
                 <span className="shrink-0 text-xs text-stone-500">{formatHeat(book.heat)}</span>
               </li>
@@ -405,7 +473,11 @@ export default function BookstorePage() {
             <ToggleGroup
               type="single"
               value={filters.category}
-              onValueChange={(category) => { if (category) setFilters((current) => ({ ...current, category })); }}
+              onValueChange={(category) => {
+                if (!category) return;
+                setCatalogPage(0);
+                setFilters((current) => ({ ...current, category }));
+              }}
               aria-label="按分类筛选"
               className="w-auto flex-wrap gap-2 rounded-none"
             >
@@ -417,7 +489,11 @@ export default function BookstorePage() {
             <ToggleGroup
               type="single"
               value={filters.wordRangeKey}
-              onValueChange={(wordRangeKey) => { if (wordRangeKey) setFilters((current) => ({ ...current, wordRangeKey })); }}
+              onValueChange={(wordRangeKey) => {
+                if (!wordRangeKey) return;
+                setCatalogPage(0);
+                setFilters((current) => ({ ...current, wordRangeKey }));
+              }}
               aria-label="按字数筛选"
               className="w-auto flex-wrap gap-2 rounded-none"
             >
@@ -430,7 +506,11 @@ export default function BookstorePage() {
             <ToggleGroup
               type="single"
               value={filters.serialStatus}
-              onValueChange={(serialStatus) => { if (serialStatus) setFilters((current) => ({ ...current, serialStatus })); }}
+              onValueChange={(serialStatus) => {
+                if (!serialStatus) return;
+                setCatalogPage(0);
+                setFilters((current) => ({ ...current, serialStatus }));
+              }}
               aria-label="按连载状态筛选"
               className="w-auto flex-wrap gap-2 rounded-none"
             >
@@ -471,7 +551,13 @@ export default function BookstorePage() {
                   <p className="mt-1 text-sm text-stone-600">{highlightText(book.author, filters.query)}</p>
                   <p className="mt-3 line-clamp-2 text-sm leading-5 text-stone-600">{highlightText(book.synopsis, filters.query)}</p>
                   <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-                    <span className="text-xs text-stone-500">{formatWordCount(book.words)}</span>
+                    <div className="min-w-0 space-y-1 text-xs text-stone-500">
+                      <span className="block">{formatWordCount(book.words)}</span>
+                      <span className="inline-flex items-center gap-1 text-amber-700" aria-label={`作品评分：${formatRating(book)}`}>
+                        <Star size={13} fill="currentColor" aria-hidden="true" />
+                        {formatRating(book)}
+                      </span>
+                    </div>
                     <Link href={`/reader/${book.id}`} className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-800 hover:text-emerald-950">
                       开始阅读
                       <ArrowRight size={15} aria-hidden="true" />
@@ -481,6 +567,16 @@ export default function BookstorePage() {
               </Card>
             ))}
           </div>
+        ) : null}
+
+        {!error && catalogPagination.total > 0 ? (
+          <CatalogPagination
+            total={catalogPagination.total}
+            page={catalogPagination.page}
+            size={catalogPagination.size}
+            loading={loading}
+            onPageChange={setCatalogPage}
+          />
         ) : null}
       </section>
         </div>

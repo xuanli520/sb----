@@ -29,7 +29,7 @@ public class EditorialOperationsRepository {
     public static final int MAX_RANK = 100_000;
     private static final int TEMPORARY_RANK_BASE = 1_000_000;
     private static final String BOOK_COLUMNS = "id, title, author_name, category, word_count, serial_status, "
-            + "synopsis, cover, status, author_id, heat, purchase_price";
+            + "synopsis, NULL AS cover, status, author_id, heat, purchase_price";
     private static final RowMapper<Book> BOOK_MAPPER = (resultSet, rowNumber) -> new Book(
             resultSet.getLong("id"),
             resultSet.getString("title"),
@@ -38,7 +38,7 @@ public class EditorialOperationsRepository {
             resultSet.getInt("word_count"),
             resultSet.getString("serial_status"),
             resultSet.getString("synopsis"),
-            resultSet.getString("cover"),
+            null,
             BookStatus.valueOf(resultSet.getString("status")),
             resultSet.getLong("author_id"),
             resultSet.getLong("heat"),

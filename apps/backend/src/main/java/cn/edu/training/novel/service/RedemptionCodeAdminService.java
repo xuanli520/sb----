@@ -61,12 +61,6 @@ public class RedemptionCodeAdminService {
         if (page < 0 || size < 1 || size > 100) {
             throw badRequest("page or size is out of range");
         }
-        int offset;
-        try {
-            offset = Math.multiplyExact(page, size);
-        } catch (ArithmeticException exception) {
-            throw badRequest("page is out of range");
-        }
         String normalizedBatch = optionalBatchNo(batchNo);
         String normalizedBenefitType = optionalBenefitType(benefitType);
         String normalizedStatus = optionalStatus(status);
@@ -78,13 +72,14 @@ public class RedemptionCodeAdminService {
                 normalizedBatch,
                 normalizedBenefitType,
                 normalizedStatus,
-                size,
-                offset);
+                page,
+                size);
         Instant now = Instant.now();
-        List<ManagedRedemptionCode> items = walletRepository.findManagedRedemptionCodes(filter).stream()
+        WalletRepository.ManagedCodeQueryResult result = walletRepository.findManagedRedemptionCodes(filter);
+        List<ManagedRedemptionCode> items = result.items().stream()
                 .map(code -> withEffectiveStatus(code, now))
                 .toList();
-        return new RedemptionCodePage(items, page, size, walletRepository.countManagedRedemptionCodes(filter));
+        return new RedemptionCodePage(items, page, size, result.total());
     }
 
     @Transactional

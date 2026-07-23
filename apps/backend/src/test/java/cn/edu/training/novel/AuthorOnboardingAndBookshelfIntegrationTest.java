@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import cn.edu.training.novel.domain.AuthorApplication;
 import cn.edu.training.novel.domain.Book;
+import cn.edu.training.novel.domain.BookPresentation;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.service.AuthService;
@@ -125,13 +126,16 @@ class AuthorOnboardingAndBookshelfIntegrationTest {
                 staleDraft.id());
 
         assertThat(store.shelf(userId)).containsExactly(1L);
-        assertThat(store.shelfBooks(userId)).extracting(Book::id).containsExactly(1L);
+        assertThat(store.shelfBooks(userId, 0, 12).items()).extracting(BookPresentation::id).containsExactly(1L);
         mvc.perform(get("/api/v1/account/bookshelf")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Bff-Session", session.bffSessionId()))
+                .header("X-Novel-Bff-Session", session.bffSessionId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].id").value(1));
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(1))
+                .andExpect(jsonPath("$.data.meta.total").value(1))
+                .andExpect(jsonPath("$.data.meta.page").value(0))
+                .andExpect(jsonPath("$.data.meta.size").value(12));
     }
 
     @Test

@@ -48,8 +48,8 @@ spring:
     multipart:
       # The application performs its own byte and decoded-image checks below. These limits stop
       # the servlet container from accepting an arbitrarily large multipart request first.
-      max-file-size: ${NOVEL_COVER_MAX_BYTES:5242880}
-      max-request-size: ${NOVEL_COVER_MAX_BYTES:5242880}
+      max-file-size: ${NOVEL_MULTIPART_MAX_BYTES:6291456}
+      max-request-size: ${NOVEL_MULTIPART_MAX_BYTES:6291456}
 server:
   port: ${SERVER_PORT:8080}
 management:

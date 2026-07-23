@@ -36,6 +36,30 @@ public class ContentModerationReviewService {
                 bookId, reviewerUserId, approved, reason, currentChapters, List.of());
     }
 
+    /** Appends an operator decision for the exact immutable candidate moderation attempt. */
+    @Transactional
+    public List<ContentModerationReview> recordCandidateEvidence(
+            long bookId,
+            long reviewerUserId,
+            boolean approved,
+            String reason,
+            long moderationAuditId) {
+        if (reviewerUserId <= 0) {
+            throw new IllegalArgumentException("reviewer user id is required");
+        }
+        if (moderationAuditId <= 0) {
+            throw new IllegalStateException("chapter candidate is missing moderation evidence");
+        }
+        return reviewRepository.appendAll(List.of(new ContentModerationReview(
+                0,
+                bookId,
+                moderationAuditId,
+                reviewerUserId,
+                ModerationReviewDecision.fromApproval(approved),
+                reason,
+                Instant.now())));
+    }
+
     /**
      * Appends one immutable reviewer decision for the live chapter evidence and for every chunk
      * audit belonging to the terminal whole-work snapshot. The caller obtains snapshot ids only

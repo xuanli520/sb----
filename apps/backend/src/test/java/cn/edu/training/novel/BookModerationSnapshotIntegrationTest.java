@@ -33,12 +33,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+@UseTestBffSessions
 @SpringBootTest(classes = {
         NovelPlatformApplication.class,
         BookModerationSnapshotIntegrationTest.StubModerationConfiguration.class
 }, properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.runtime-mode=TEST",
         "novel.audit.moderation.development-simulation-enabled=false",
         "novel.audit.full-book.scheduler-enabled=false",
@@ -51,7 +51,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class BookModerationSnapshotIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired NovelStore store;
     @Autowired BookModerationSnapshotService snapshotService;
@@ -98,7 +97,7 @@ class BookModerationSnapshotIntegrationTest {
         mvc.perform(get("/api/v1/admin/moderation-snapshots")
                         .param("bookId", Long.toString(book.id()))
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
                 .andExpect(jsonPath("$.data[0].aggregateDecision").value("PASS"))

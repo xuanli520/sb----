@@ -27,9 +27,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:admin_operations_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -37,7 +37,6 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class AdminOperationsIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired AuthService authService;
@@ -53,13 +52,13 @@ class AdminOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/accounts")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .param("query", "管理读者"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(get("/api/v1/admin/accounts")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("query", "managed.reader")
                         .param("status", "ENABLED")
                         .param("role", "READER")
@@ -73,7 +72,7 @@ class AdminOperationsIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/accounts/{accountId}/status", target.user().id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":false,\"reason\":\"重复发布违规内容，暂停账号\"}"))
                 .andExpect(status().isOk())
@@ -100,20 +99,20 @@ class AdminOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/accounts")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("status", "SUSPENDED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].id").value(target.user().id()));
         mvc.perform(get("/api/v1/admin/accounts/{accountId}/status-audits", target.user().id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].reason").value("重复发布违规内容，暂停账号"))
                 .andExpect(jsonPath("$.data[0].operatorUserId").value(1));
 
         mvc.perform(post("/api/v1/admin/users/{accountId}/status", target.user().id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":true,\"reason\":\"申诉复核通过，恢复账号\"}"))
                 .andExpect(status().isOk())
@@ -142,7 +141,7 @@ class AdminOperationsIntegrationTest {
     void taxonomyIsAdminManagedAuditedAndOnlyEnabledItemsReachPublicDiscovery() throws Exception {
         mvc.perform(get("/api/v1/admin/taxonomy/CATEGORY")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/public/taxonomy/categories"))
                 .andExpect(status().isOk())
@@ -150,7 +149,7 @@ class AdminOperationsIntegrationTest {
 
         String creation = mvc.perform(post("/api/v1/admin/taxonomy/TAG")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"悬念\",\"enabled\":true,\"sortOrder\":12}"))
                 .andExpect(status().isOk())
@@ -164,7 +163,7 @@ class AdminOperationsIntegrationTest {
                 .andExpect(jsonPath("$.data[0].name").value("悬念"));
         mvc.perform(put("/api/v1/admin/taxonomy/TAG/{tagId}", tagId.longValue())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"悬念\",\"enabled\":false,\"sortOrder\":3}"))
                 .andExpect(status().isOk())
@@ -175,14 +174,14 @@ class AdminOperationsIntegrationTest {
                 .andExpect(jsonPath("$.data").isEmpty());
         mvc.perform(get("/api/v1/admin/taxonomy/TAG/audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].action").value("UPDATED"))
                 .andExpect(jsonPath("$.data[0].operatorUserId").value(1));
 
         mvc.perform(post("/api/v1/admin/taxonomy/CATEGORY")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"科幻\",\"enabled\":true,\"sortOrder\":100}"))
                 .andExpect(status().isConflict());
@@ -227,16 +226,16 @@ class AdminOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-summary", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isForbidden());
 
         mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-summary", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.account.id").value(accountId))
                 .andExpect(jsonPath("$.data.readingProgressCount").value(1))
@@ -255,7 +254,7 @@ class AdminOperationsIntegrationTest {
 
         String firstPage = mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("page", "0")
                         .param("size", "2"))
                 .andExpect(status().isOk())
@@ -266,7 +265,7 @@ class AdminOperationsIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         String completeTimeline = mvc.perform(get("/api/v1/admin/accounts/{accountId}/behavior-events", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .param("page", "0")
                         .param("size", "100"))
                 .andExpect(status().isOk())
@@ -286,7 +285,7 @@ class AdminOperationsIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/accounts/999999/behavior-summary")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isNotFound());
     }
 

@@ -2,17 +2,20 @@ package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.AccountStatusAudit;
 import cn.edu.training.novel.domain.AdminAccount;
+import cn.edu.training.novel.domain.AdminAccountPage;
 import cn.edu.training.novel.domain.AdminUserBehaviorEvent;
 import cn.edu.training.novel.domain.AdminUserBehaviorEventPage;
 import cn.edu.training.novel.domain.AdminUserBehaviorSummary;
 import cn.edu.training.novel.domain.OperatingTaxonomyAudit;
 import cn.edu.training.novel.domain.OperatingTaxonomyItem;
 import cn.edu.training.novel.domain.Role;
+import cn.edu.training.novel.mapper.AdminOperationsPageMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -71,121 +74,25 @@ public class AdminOperationsRepository {
                     resultSet.getString("details"),
                     resultSet.getLong("operator_user_id"),
                     instant(resultSet.getTimestamp("created_at")));
-    private static final RowMapper<AdminUserBehaviorEvent> ACCOUNT_BEHAVIOR_EVENT_MAPPER = (resultSet, rowNumber) ->
-            new AdminUserBehaviorEvent(
-                    resultSet.getString("event_type"),
-                    instant(resultSet.getTimestamp("occurred_at")),
-                    resultSet.getObject("book_id", Long.class),
-                    resultSet.getString("book_title"),
-                    resultSet.getObject("chapter_id", Long.class),
-                    resultSet.getString("chapter_title"),
-                    resultSet.getString("event_status"));
-    private static final int ACCOUNT_BEHAVIOR_EVENT_ACCOUNT_PARAMETER_COUNT = 12;
-    private static final String ACCOUNT_BEHAVIOR_EVENT_UNION = """
-            SELECT 'READING_PROGRESS' AS event_type, progress.updated_at AS occurred_at,
-                   progress.book_id AS book_id, book.title AS book_title, progress.chapter_id AS chapter_id,
-                   chapter.title AS chapter_title, NULL AS event_status,
-                   CONCAT('progress:', progress.book_id) AS sort_key
-              FROM novel_reader_progress progress
-              LEFT JOIN novel_book book ON book.id = progress.book_id
-              LEFT JOIN novel_chapter chapter ON chapter.id = progress.chapter_id
-             WHERE progress.user_id = ?
-            UNION ALL
-            SELECT 'BOOKSHELF_ADDED', shelf.added_at, shelf.book_id, book.title, NULL, NULL, NULL,
-                   CONCAT('shelf:', shelf.book_id)
-              FROM novel_reader_bookshelf shelf
-              LEFT JOIN novel_book book ON book.id = shelf.book_id
-             WHERE shelf.user_id = ?
-            UNION ALL
-            SELECT 'CHECKIN', checkin_row.created_at, NULL, NULL, NULL, NULL, NULL,
-                   CONCAT('checkin:', checkin_row.checkin_date)
-              FROM novel_reader_daily_checkin checkin_row
-             WHERE checkin_row.user_id = ?
-            UNION ALL
-            SELECT 'BOOKMARK_CREATED', bookmark.created_at, bookmark.book_id, book.title, bookmark.chapter_id,
-                   chapter.title, NULL, CONCAT('bookmark:', bookmark.id)
-              FROM novel_reader_bookmark bookmark
-              LEFT JOIN novel_book book ON book.id = bookmark.book_id
-              LEFT JOIN novel_chapter chapter ON chapter.id = bookmark.chapter_id
-             WHERE bookmark.user_id = ?
-            UNION ALL
-            SELECT 'BOOK_PURCHASE', entitlement.acquired_at, entitlement.book_id, book.title, NULL, NULL,
-                   entitlement.source_type, CONCAT('purchase:', entitlement.book_id)
-              FROM novel_book_entitlement entitlement
-              LEFT JOIN novel_book book ON book.id = entitlement.book_id
-             WHERE entitlement.user_id = ? AND entitlement.source_type = 'PURCHASE'
-            UNION ALL
-            SELECT 'REDEMPTION', redemption.redeemed_at, redemption.book_id, book.title, NULL, NULL,
-                   redemption.benefit_type, CONCAT('redemption:', redemption.code)
-              FROM novel_redemption_code redemption
-              LEFT JOIN novel_book book ON book.id = redemption.book_id
-             WHERE redemption.redeemed_by_user_id = ? AND redemption.status = 'REDEEMED'
-            UNION ALL
-            SELECT 'REWARD_SENT', reward.created_at, reward.book_id, book.title, NULL, NULL, NULL,
-                   CONCAT('reward:', reward.id)
-              FROM novel_reward_record reward
-              LEFT JOIN novel_book book ON book.id = reward.book_id
-             WHERE reward.rewarder_user_id = ?
-            UNION ALL
-            SELECT 'COMMENT_SUBMITTED', comment_row.created_at, comment_row.book_id, book.title,
-                   comment_row.chapter_id, chapter.title, comment_row.status, CONCAT('comment:', comment_row.id)
-              FROM novel_comment comment_row
-              LEFT JOIN novel_book book ON book.id = comment_row.book_id
-              LEFT JOIN novel_chapter chapter ON chapter.id = comment_row.chapter_id
-             WHERE comment_row.user_id = ?
-            UNION ALL
-            SELECT 'ANNOTATION_SUBMITTED', annotation.created_at, annotation.book_id, book.title,
-                   annotation.chapter_id, chapter.title, annotation.status, CONCAT('annotation:', annotation.id)
-              FROM novel_paragraph_annotation annotation
-              LEFT JOIN novel_book book ON book.id = annotation.book_id
-              LEFT JOIN novel_chapter chapter ON chapter.id = annotation.chapter_id
-             WHERE annotation.user_id = ?
-            UNION ALL
-            SELECT 'RATING_RECORDED', rating.updated_at, rating.book_id, book.title, NULL, NULL, NULL,
-                   CONCAT('rating:', rating.book_id)
-              FROM novel_book_rating rating
-              LEFT JOIN novel_book book ON book.id = rating.book_id
-             WHERE rating.user_id = ?
-            UNION ALL
-            SELECT 'VOTE_CAST', vote.created_at, vote.book_id, book.title, NULL, NULL, vote.vote_type,
-                   CONCAT('vote:', vote.book_id, ':', vote.vote_type)
-              FROM novel_book_vote vote
-              LEFT JOIN novel_book book ON book.id = vote.book_id
-             WHERE vote.user_id = ?
-            UNION ALL
-            SELECT 'READING_ACTIVITY', activity.occurred_at, activity.book_id, book.title, activity.chapter_id,
-                   chapter.title, activity.event_type, CONCAT('activity:', activity.id)
-              FROM novel_reader_activity_event activity
-              LEFT JOIN novel_book book ON book.id = activity.book_id
-              LEFT JOIN novel_chapter chapter ON chapter.id = activity.chapter_id
-             WHERE activity.user_id = ?
-            """;
-
     private final JdbcTemplate jdbc;
+    private final AdminOperationsPageMapper pageMapper;
 
-    public AdminOperationsRepository(JdbcTemplate jdbc) {
+    public AdminOperationsRepository(JdbcTemplate jdbc, AdminOperationsPageMapper pageMapper) {
         this.jdbc = jdbc;
+        this.pageMapper = pageMapper;
     }
 
-    public List<AdminAccount> findAccounts(String query, AccountFilter filter, int limit, int offset) {
-        QueryParts parts = accountWhere(query, filter);
-        List<Object> args = new ArrayList<>(parts.args());
-        args.add(limit);
-        args.add(offset);
-        return jdbc.query(
-                "SELECT " + ACCOUNT_COLUMNS + " FROM novel_account" + parts.sql()
-                        + " ORDER BY id DESC LIMIT ? OFFSET ?",
-                ACCOUNT_MAPPER,
-                args.toArray());
-    }
-
-    public long countAccounts(String query, AccountFilter filter) {
-        QueryParts parts = accountWhere(query, filter);
-        Long count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM novel_account" + parts.sql(),
-                Long.class,
-                parts.args().toArray());
-        return count == null ? 0L : count;
+    public AdminAccountPage findAccounts(String query, AccountFilter filter, int page, int size) {
+        IPage<AdminOperationsPageMapper.AdminAccountRow> result = pageMapper.selectAccountPage(
+                pageRequest(page, size, true),
+                accountPattern(query),
+                filter.enabled(),
+                filter.role() == null ? null : "%" + filter.role().name() + "%");
+        return new AdminAccountPage(
+                result.getRecords().stream().map(AdminOperationsRepository::toAdminAccount).toList(),
+                result.getTotal(),
+                page,
+                size);
     }
 
     public Optional<AdminAccount> findAccount(long accountId) {
@@ -257,12 +164,11 @@ public class AdminOperationsRepository {
     }
 
     public List<AccountStatusAudit> findAccountStatusAudits(long accountId, int limit) {
-        return jdbc.query(
-                "SELECT id, account_id, previous_enabled, enabled, reason, operator_user_id, created_at "
-                        + "FROM novel_account_status_audit WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-                ACCOUNT_STATUS_AUDIT_MAPPER,
-                accountId,
-                limit);
+        return pageMapper.selectAccountStatusAuditPage(limitRequest(limit), accountId)
+                .getRecords()
+                .stream()
+                .map(AdminOperationsRepository::toAccountStatusAudit)
+                .toList();
     }
 
     public AdminUserBehaviorSummary accountBehaviorSummary(AdminAccount account) {
@@ -285,23 +191,13 @@ public class AdminOperationsRepository {
     }
 
     public AdminUserBehaviorEventPage findAccountBehaviorEvents(long accountId, int page, int size) {
-        int offset = Math.multiplyExact(page, size);
-        List<Object> countArgs = accountBehaviorEventArguments(accountId);
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM (" + ACCOUNT_BEHAVIOR_EVENT_UNION + ") behavior_events",
-                Long.class,
-                countArgs.toArray());
-
-        List<Object> pageArgs = accountBehaviorEventArguments(accountId);
-        pageArgs.add(size);
-        pageArgs.add(offset);
-        List<AdminUserBehaviorEvent> items = jdbc.query(
-                "SELECT event_type, occurred_at, book_id, book_title, chapter_id, chapter_title, event_status "
-                        + "FROM (" + ACCOUNT_BEHAVIOR_EVENT_UNION + ") behavior_events "
-                        + "ORDER BY occurred_at DESC, event_type ASC, sort_key DESC LIMIT ? OFFSET ?",
-                ACCOUNT_BEHAVIOR_EVENT_MAPPER,
-                pageArgs.toArray());
-        return new AdminUserBehaviorEventPage(items, total == null ? 0L : total, page, size);
+        IPage<AdminOperationsPageMapper.AdminUserBehaviorEventRow> result =
+                pageMapper.selectAccountBehaviorEventPage(pageRequest(page, size, true), accountId);
+        return new AdminUserBehaviorEventPage(
+                result.getRecords().stream().map(AdminOperationsRepository::toBehaviorEvent).toList(),
+                result.getTotal(),
+                page,
+                size);
     }
 
     public List<OperatingTaxonomyItem> findTaxonomy(TaxonomyType type) {
@@ -413,13 +309,11 @@ public class AdminOperationsRepository {
     }
 
     public List<OperatingTaxonomyAudit> findTaxonomyAudits(TaxonomyType type, int limit) {
-        return jdbc.query(
-                "SELECT id, taxonomy_id, taxonomy_type, action, details, operator_user_id, created_at "
-                        + "FROM novel_operating_taxonomy_audit WHERE taxonomy_type = ? "
-                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
-                TAXONOMY_AUDIT_MAPPER,
-                type.name(),
-                limit);
+        return pageMapper.selectTaxonomyAuditPage(limitRequest(limit), type.name())
+                .getRecords()
+                .stream()
+                .map(AdminOperationsRepository::toTaxonomyAudit)
+                .toList();
     }
 
     private Optional<AccountStatusAudit> findAccountStatusAudit(long auditId) {
@@ -460,32 +354,66 @@ public class AdminOperationsRepository {
         return timestamps.isEmpty() ? null : nullableInstant(timestamps.getFirst());
     }
 
-    private static List<Object> accountBehaviorEventArguments(long accountId) {
-        List<Object> arguments = new ArrayList<>(ACCOUNT_BEHAVIOR_EVENT_ACCOUNT_PARAMETER_COUNT);
-        for (int index = 0; index < ACCOUNT_BEHAVIOR_EVENT_ACCOUNT_PARAMETER_COUNT; index++) {
-            arguments.add(accountId);
-        }
-        return arguments;
+    private static AdminAccount toAdminAccount(AdminOperationsPageMapper.AdminAccountRow row) {
+        return new AdminAccount(
+                row.getId(),
+                row.getLoginName(),
+                row.getDisplayName(),
+                parseRoles(row.getRoles()),
+                row.isEnabled(),
+                instant(row.getCreatedAt()),
+                instant(row.getUpdatedAt()));
     }
 
-    private QueryParts accountWhere(String query, AccountFilter filter) {
-        List<String> predicates = new ArrayList<>();
-        List<Object> args = new ArrayList<>();
-        if (query != null && !query.isBlank()) {
-            String needle = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
-            predicates.add("(LOWER(login_name) LIKE ? OR LOWER(display_name) LIKE ?)");
-            args.add(needle);
-            args.add(needle);
+    private static AdminUserBehaviorEvent toBehaviorEvent(AdminOperationsPageMapper.AdminUserBehaviorEventRow row) {
+        return new AdminUserBehaviorEvent(
+                row.getEventType(),
+                instant(row.getOccurredAt()),
+                row.getBookId(),
+                row.getBookTitle(),
+                row.getChapterId(),
+                row.getChapterTitle(),
+                row.getEventStatus());
+    }
+
+    private static AccountStatusAudit toAccountStatusAudit(AdminOperationsPageMapper.AccountStatusAuditRow row) {
+        return new AccountStatusAudit(
+                row.getId(),
+                row.getAccountId(),
+                row.isPreviousEnabled(),
+                row.isEnabled(),
+                row.getReason(),
+                row.getOperatorUserId(),
+                instant(row.getCreatedAt()));
+    }
+
+    private static OperatingTaxonomyAudit toTaxonomyAudit(AdminOperationsPageMapper.OperatingTaxonomyAuditRow row) {
+        return new OperatingTaxonomyAudit(
+                row.getId(),
+                row.getTaxonomyId(),
+                row.getTaxonomyType(),
+                row.getAction(),
+                row.getDetails(),
+                row.getOperatorUserId(),
+                instant(row.getCreatedAt()));
+    }
+
+    private static String accountPattern(String query) {
+        return query == null || query.isBlank() ? null : "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
+    }
+
+    private static <T> Page<T> pageRequest(int page, int size, boolean searchCount) {
+        if (page < 0) {
+            throw new IllegalArgumentException("page must be non-negative");
         }
-        if (filter.enabled() != null) {
-            predicates.add("enabled = ?");
-            args.add(filter.enabled());
+        if (size < 1 || size > 100) {
+            throw new IllegalArgumentException("size must be between 1 and 100");
         }
-        if (filter.role() != null) {
-            predicates.add("roles LIKE ?");
-            args.add("%" + filter.role().name() + "%");
-        }
-        return new QueryParts(predicates.isEmpty() ? "" : " WHERE " + String.join(" AND ", predicates), args);
+        return new Page<>(Math.addExact((long) page, 1L), size, searchCount);
+    }
+
+    private static <T> Page<T> limitRequest(int limit) {
+        return pageRequest(0, limit, false);
     }
 
     private static Set<Role> parseRoles(String serialized) {
@@ -541,6 +469,4 @@ public class AdminOperationsRepository {
             return displayName;
         }
     }
-
-    private record QueryParts(String sql, List<Object> args) {}
 }

@@ -43,6 +43,7 @@ type PageMode = 'slide' | 'cover' | 'simulation';
 type RewardHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type AnnotationHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type PurchaseHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+type SubscriptionHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type ChapterCommentsHandler = (chapterId: number, input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type CommentPostHandler = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type ReaderApiOptions = {
@@ -59,6 +60,9 @@ type ReaderApiOptions = {
   interactionStats?: { visibleCommentCount: number; ratingCount: number; averageRating: number; recommendationVoteCount: number; monthlyVoteCount: number };
   wallet?: { tokens: number };
   entitlements?: { membership: unknown; books: unknown[] };
+  shelfSaved?: boolean;
+  subscription?: { bookId: number; subscribed: boolean; subscribedAt: string | null };
+  subscriptionHandler?: SubscriptionHandler;
 };
 
 function response(data: unknown) {
@@ -92,7 +96,7 @@ function preference(pageMode: PageMode) {
   };
 }
 
-function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: ReaderApiOptions = {}) {
+function mockReaderApi(pageMode: PageMode, progress: unknown = null, options: ReaderApiOptions = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
 
@@ -118,9 +122,20 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = [], options: Read
       if (init?.method === 'PUT') return Promise.resolve(response(JSON.parse(String(init.body))));
       return Promise.resolve(response(preference(pageMode)));
     }
-    if (path.endsWith('/account/bookshelf')) return Promise.resolve(response([]));
+    if (path.endsWith('/account/bookshelf/7')) return Promise.resolve(response({ saved: options.shelfSaved ?? false }));
+    if (path.endsWith('/account/subscriptions/7')) {
+      if (options.subscriptionHandler) return options.subscriptionHandler(input, init);
+      if (init?.method === 'PUT') return Promise.resolve(response({ bookId: 7, subscribed: true, subscribedAt: '2026-07-23T00:00:00Z' }));
+      if (init?.method === 'DELETE') return Promise.resolve(response({ bookId: 7, subscribed: false, subscribedAt: null }));
+      return Promise.resolve(response(options.subscription ?? { bookId: 7, subscribed: false, subscribedAt: null }));
+    }
     if (path.endsWith('/account/books/7/bookmarks')) return Promise.resolve(response([]));
-    if (path.endsWith('/account/progress')) return Promise.resolve(response(progress));
+    if (path.endsWith('/account/books/7/progress')) {
+      const currentBookProgress = Array.isArray(progress)
+        ? progress.find((item) => typeof item === 'object' && item !== null && (item as { bookId?: unknown }).bookId === 7) ?? null
+        : progress;
+      return Promise.resolve(response(currentBookProgress));
+    }
     if (path.endsWith('/account/annotations?bookId=7&size=100')) {
       return Promise.resolve(response({ items: options.annotations ?? [], meta: { total: options.annotations?.length ?? 0, page: 0, size: 100 } }));
     }
@@ -178,7 +193,7 @@ function mockMotionPreference(matches: boolean) {
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches, addEventListener, removeEventListener }));
 }
 
-async function renderReader(mode: PageMode = 'slide', progress: unknown = [], chapterTitle = '潮汐之前', options: ReaderApiOptions = {}) {
+async function renderReader(mode: PageMode = 'slide', progress: unknown = null, chapterTitle = '潮汐之前', options: ReaderApiOptions = {}) {
   const fetchMock = mockReaderApi(mode, progress, options);
   render(<Reader params={Promise.resolve({ id: '7' })} />);
   await screen.findByRole('heading', { name: chapterTitle });
@@ -334,12 +349,17 @@ describe('reader page modes', () => {
   });
 
   it('restores the saved chapter for this book without overwriting valid progress', async () => {
-    const fetchMock = await renderReader('slide', [
-      { bookId: 99, chapterId: 1, offset: 0, updatedAt: '2026-07-20T00:00:00Z' },
+    const fetchMock = await renderReader('slide',
       { bookId: 7, chapterId: 102, offset: 24, updatedAt: '2026-07-20T00:01:00Z' },
-    ], '灯塔来信');
+      '灯塔来信',
+      { shelfSaved: true });
 
     expect(screen.getByRole('heading', { name: '灯塔来信' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '已加入书架' })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/bookshelf/7', expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith('/api/novel/account/books/7/progress', expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/novel/account/bookshelf', expect.anything());
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/novel/account/progress', expect.anything());
     expect(fetchMock).not.toHaveBeenCalledWith(
       '/api/novel/account/progress',
       expect.objectContaining({ method: 'PUT' }),
@@ -347,9 +367,10 @@ describe('reader page modes', () => {
   });
 
   it('falls back to the first chapter when saved progress refers to a missing chapter', async () => {
-    const fetchMock = await renderReader('slide', [
+    const fetchMock = await renderReader('slide',
       { bookId: 7, chapterId: 999, offset: 24, updatedAt: '2026-07-20T00:01:00Z' },
-    ]);
+      '潮汐之前',
+      { protectedReading: detail });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/novel/account/progress',
@@ -377,7 +398,7 @@ describe('reader page modes', () => {
   });
 
   it('opens the mobile chapter directory and selects a chapter from its scroll area', async () => {
-    const fetchMock = await renderReader();
+    const fetchMock = await renderReader('slide', [], '潮汐之前', { protectedReading: detail });
 
     fireEvent.click(screen.getByRole('button', { name: '打开阅读目录' }));
 
@@ -392,6 +413,92 @@ describe('reader page modes', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ bookId: 7, chapterId: 102, offset: 0 }),
+      }),
+    ));
+  });
+
+  it('restores the protected reader rating after a refresh', async () => {
+    await renderReader('slide', [], '潮汐之前', {
+      protectedReading: { ...detail, currentUserRating: 4 },
+    });
+
+    expect(screen.getByRole('button', { name: '评分 4 星' }).querySelector('svg')?.getAttribute('fill')).toBe('currentColor');
+    expect(screen.getByRole('button', { name: '评分 5 星' }).querySelector('svg')?.getAttribute('fill')).toBe('none');
+  });
+
+  it('restores the authenticated reader free-subscription state separately from the bookshelf', async () => {
+    const fetchMock = await renderReader('slide', null, '潮汐之前', {
+      protectedReading: detail,
+      shelfSaved: true,
+      subscription: { bookId: 7, subscribed: true, subscribedAt: '2026-07-23T00:00:00Z' },
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/subscriptions/7',
+      expect.anything(),
+    ));
+    const subscriptionButton = await screen.findByRole('button', { name: '取消订阅' });
+    expect(subscriptionButton.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '已加入书架' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '免费订阅' })).toBeTruthy();
+  });
+
+  it('does not request free-subscription state for an anonymous preview reader', async () => {
+    const fetchMock = await renderReader();
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      '/api/novel/account/subscriptions/7',
+      expect.anything(),
+    );
+    expect(screen.getByRole('button', { name: '订阅作品' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('subscribes and unsubscribes a free work through the dedicated idempotent endpoints', async () => {
+    const fetchMock = await renderReader('slide', null, '潮汐之前', { protectedReading: detail });
+
+    fireEvent.click(screen.getByRole('button', { name: '订阅作品' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/subscriptions/7',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    expect(await screen.findByText('已免费订阅本作品。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '取消订阅' }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: '取消订阅' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/subscriptions/7',
+      expect.objectContaining({ method: 'DELETE' }),
+    ));
+    expect(await screen.findByText('已取消订阅本作品。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '订阅作品' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('keeps a loaded free subscription state when cancellation fails', async () => {
+    await renderReader('slide', null, '潮汐之前', {
+      protectedReading: detail,
+      subscriptionHandler: (_input, init) => init?.method === 'DELETE'
+        ? Promise.resolve(failedResponse('订阅服务暂不可用'))
+        : Promise.resolve(response({ bookId: 7, subscribed: true, subscribedAt: '2026-07-23T00:00:00Z' })),
+    });
+
+    const subscriptionButton = await screen.findByRole('button', { name: '取消订阅' });
+    fireEvent.click(subscriptionButton);
+
+    expect(await screen.findByText('订阅服务暂不可用')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '取消订阅' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('writes authenticated reading progress on a page-hide heartbeat without blocking reading', async () => {
+    const fetchMock = await renderReader('slide', [], '潮汐之前', { protectedReading: detail });
+
+    fireEvent(window, new Event('pagehide'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/account/progress',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ bookId: 7, chapterId: 101, offset: 0 }),
+        keepalive: true,
       }),
     ));
   });

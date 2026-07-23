@@ -18,7 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * {@code GET /api/v1/author/analytics} returns author-owned FR-08 dashboard data. Supplying
  * {@code from} and {@code to} selects inclusive Shanghai calendar days; omitting both selects the
- * most recent bounded window. Subscription and retention availability are explicit in the body.
+ * most recent bounded window. Subscription, favorite-history, and retention availability are
+ * explicit in the body.
  */
 @RestController
 @Validated

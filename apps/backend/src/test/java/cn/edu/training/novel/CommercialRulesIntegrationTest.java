@@ -20,16 +20,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 /** Exercises D-10 policy updates through the same controllers and transactional writes as production. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=commercial-rules-test-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:commercial_rules_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class CommercialRulesIntegrationTest {
     private static final String INTERNAL_KEY = "commercial-rules-test-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -40,7 +39,7 @@ class CommercialRulesIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 
@@ -55,18 +54,18 @@ class CommercialRulesIntegrationTest {
 
         updateRules(7, 1, 1, 3, 10, 10, "收紧首期额度");
         mvc.perform(get("/api/v1/admin/commercial-rules")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.membershipDaysMaximumPerCode").value(7))
                 .andExpect(jsonPath("$.data.rewardMaximumTokensPerDay").value(10));
 
         mvc.perform(post("/api/v1/admin/redemption-codes/import")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"MEMBER-OVER-CAP\",\"batchNo\":\"D10\",\"membershipDays\":8}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(post("/api/v1/admin/redemption-codes/import")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"MEMBER-AT-CAP\",\"batchNo\":\"D10\",\"membershipDays\":7}"))
                 .andExpect(status().isOk())
@@ -142,7 +141,7 @@ class CommercialRulesIntegrationTest {
                 "SELECT COUNT(*) FROM novel_reward_record WHERE rewarder_user_id = 3", Long.class)).isEqualTo(1L);
 
         mvc.perform(get("/api/v1/admin/commercial-rules/audits")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(3))
                 .andExpect(jsonPath("$.data[2].reason").value("收紧首期额度"))
@@ -160,7 +159,7 @@ class CommercialRulesIntegrationTest {
             int rewardMaximumTokensPerDay,
             String reason) throws Exception {
         mvc.perform(put("/api/v1/admin/commercial-rules")
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"membershipDaysMaximumPerCode":%d,"recommendationVotesPerDay":%d,"monthlyVotesPerMonth":%d,

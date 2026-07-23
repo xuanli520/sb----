@@ -7,6 +7,8 @@ import static org.assertj.core.groups.Tuple.tuple;
 import cn.edu.training.novel.domain.Bookmark;
 import cn.edu.training.novel.domain.ReadingPreference;
 import cn.edu.training.novel.domain.ReadingProgress;
+import cn.edu.training.novel.mapper.InteractionPageMapper;
+import cn.edu.training.novel.mapper.WalletPageMapper;
 import cn.edu.training.novel.service.AuditTrail;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.CommercialRuleService;
@@ -19,6 +21,7 @@ import cn.edu.training.novel.service.ReaderRepository;
 import cn.edu.training.novel.service.WalletRepository;
 import cn.edu.training.novel.service.AuthService;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
+import cn.edu.training.novel.service.BookPageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -40,6 +43,9 @@ class ReaderPersistenceIntegrationTest {
     @Autowired ContentModerationService contentModerationService;
     @Autowired ContentModerationReviewService contentModerationReviewService;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
+    @Autowired BookPageService bookPageService;
+    @Autowired InteractionPageMapper interactionPageMapper;
+    @Autowired WalletPageMapper walletPageMapper;
 
     @Test
     void readerStateSurvivesFreshRepositoryAndServiceLookup() {
@@ -70,15 +76,16 @@ class ReaderPersistenceIntegrationTest {
         NovelStore reloadedStore = new NovelStore(
                 auditTrail,
                 new CatalogRepository(jdbcTemplate),
-                new WalletRepository(jdbcTemplate),
+                new WalletRepository(jdbcTemplate, walletPageMapper),
                 commercialRuleService,
                 reloadedReaderRepository,
-                new InteractionRepository(jdbcTemplate),
+                new InteractionRepository(jdbcTemplate, interactionPageMapper),
                 operationsRepository,
                 authService,
                 contentModerationService,
                 contentModerationReviewService,
-                bookModerationSnapshotService);
+                bookModerationSnapshotService,
+                bookPageService);
 
         assertThat(reloadedStore.shelf(readerId)).containsExactly(1L);
         assertThat(reloadedStore.pointBalance(readerId)).isEqualTo(10);
