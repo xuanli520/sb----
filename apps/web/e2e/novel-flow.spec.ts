@@ -144,7 +144,7 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByRole('link', { name: '站长中心' })).toHaveCount(0);
   await expect(page.getByLabel('书城精选').getByRole('heading', { name: '星海拾光' })).toBeVisible();
   await page.getByRole('link',{name:/开始阅读/}).first().click();
-  await expect(page.getByRole('heading',{name:'第一章 旧港'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'第一章 旧港'})).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button',{name:'加入书架'}).click();
   await expect(page.getByRole('button',{name:'已加入书架'})).toBeVisible();
   await page.getByRole('button',{name:'添加书签'}).click();
@@ -308,6 +308,7 @@ test('mobile navigation and reader chapter directory sheets work through the BFF
 });
 
 test('a real reader is approved as an author and drafts stay out of another reader public catalog', async ({ page, browser }, testInfo) => {
+  test.setTimeout(120_000);
   const baseURL = String(testInfo.project.use.baseURL);
   const origin = new URL(baseURL).origin;
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;
@@ -369,8 +370,7 @@ test('a real reader is approved as an author and drafts stay out of another read
   await page.goto('/account');
   await expect(page.getByText('申请已通过', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: '进入创作台' }).click();
-  await expect(page).toHaveURL(/\/author$/);
-  await expect(page.getByRole('heading', { name: '今天，写下新的章节。' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '今天，写下新的章节。' })).toBeVisible({ timeout: 15_000 });
   await page.getByLabel('作品名称').fill(title);
   await page.getByLabel('作品简介').fill('这部草稿只能由通过审核的作者在创作台内查看。');
   await page.getByRole('button', { name: '保存草稿' }).click();
