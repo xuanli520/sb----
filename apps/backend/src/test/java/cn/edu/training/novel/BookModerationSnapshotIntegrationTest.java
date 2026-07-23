@@ -178,7 +178,7 @@ class BookModerationSnapshotIntegrationTest {
     }
 
     @Test
-    void laterAuthorRevisionSupersedesTheUnprocessedSnapshot() {
+    void publishedChapterRevisionDoesNotInvalidateThePendingInitialWorkSnapshot() {
         Book book = store.createBook(2L, "Replacement", "科幻", "queued snapshot replacement");
         Chapter original = store.addChapter(2L, book.id(), "First version", "first version content", true);
         BookModerationSnapshot first = current(book.id());
@@ -187,14 +187,16 @@ class BookModerationSnapshotIntegrationTest {
                 2L, book.id(), original.id(), "Second version", "second version content", null);
         BookModerationSnapshot current = current(book.id());
 
-        assertThat(revised.content()).isEqualTo("second version content");
-        assertThat(current.id()).isNotEqualTo(first.id());
+        // A published chapter revision is a separate candidate. The reader-visible text and the
+        // initial whole-work evidence remain immutable until their respective reviews complete.
+        assertThat(revised.content()).isEqualTo("first version content");
+        assertThat(current.id()).isEqualTo(first.id());
         assertThat(current.current()).isTrue();
         assertThat(store.moderationSnapshots(book.id(), 10))
                 .filteredOn(snapshot -> snapshot.id() == first.id())
                 .allSatisfy(snapshot -> {
-                    assertThat(snapshot.current()).isFalse();
-                    assertThat(snapshot.status()).isEqualTo(BookModerationSnapshotStatus.STALE);
+                    assertThat(snapshot.current()).isTrue();
+                    assertThat(snapshot.status()).isEqualTo(BookModerationSnapshotStatus.QUEUED);
                 });
 
         snapshotService.processAvailableChunks();
