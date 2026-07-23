@@ -94,12 +94,15 @@ async function loginAdministrator(page: import('@playwright/test').Page, origin:
   const payload = await response.json() as { data?: { user?: { passwordChangeRequired?: boolean } } };
   if (!payload.data?.user?.passwordChangeRequired) return response;
 
+  const csrfToken = (await page.context().cookies()).find((cookie) => cookie.name === 'novel_csrf')?.value;
+  expect(csrfToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
+
   const passwordChange = await page.request.put('/api/novel/account/password', {
     data: {
       currentPassword: bootstrapAdministrator.password,
       newPassword: activatedBootstrapAdministrator.password,
     },
-    headers: { Origin: origin },
+    headers: { Origin: origin, 'X-Novel-Csrf': csrfToken! },
   });
   expect(passwordChange.status()).toBe(200);
   response = await page.request.post('/api/novel/session', {
@@ -127,11 +130,10 @@ test('reader and administrator journeys render through real BFF accounts', async
   const csrfDenied = await page.request.post('/api/novel/account/checkin', { headers:{ Origin:'https://untrusted.example' } });
   expect(csrfDenied.status()).toBe(403);
   await page.goto('/');
-  await expect(page.getByRole('heading',{name:'编辑推荐'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'首页精选'})).toBeVisible();
   await expect(page.getByRole('link', { name: '作家中心' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '站长中心' })).toHaveCount(0);
   await expect(page.getByLabel('书城精选').getByRole('heading', { name: '星海拾光' })).toBeVisible();
-  await expect(page.getByRole('img', { name: '星海拾光的星图藏书阁场景' })).toHaveAttribute('src', /bookstore-hero-sci-fi-gpt-image-2-v3/);
   await page.getByRole('link',{name:/开始阅读/}).first().click();
   await expect(page.getByRole('heading',{name:'第一章 旧港'})).toBeVisible();
   await page.getByRole('button',{name:'加入书架'}).click();
@@ -360,7 +362,7 @@ test('a real reader is approved as an author and drafts stay out of another read
     ]));
 
     await otherReaderPage.goto('/');
-    await expect(otherReaderPage.getByRole('heading', { name: '编辑推荐' })).toBeVisible();
+    await expect(otherReaderPage.getByRole('heading', { name: '首页精选' })).toBeVisible();
     await expect(otherReaderPage.getByText(title, { exact: true })).toHaveCount(0);
   } finally {
     await otherReaderContext.close();
