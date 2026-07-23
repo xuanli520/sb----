@@ -70,7 +70,7 @@ services:
       QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE: ${QWEN_AUDIT_MAX_REQUESTS_PER_MINUTE:-60}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       # Storage credentials are server-only. The browser receives only relative /media URLs.
-      NOVEL_COVER_STORAGE_ENABLED: ${NOVEL_COVER_STORAGE_ENABLED:-false}
+      NOVEL_COVER_STORAGE_ENABLED: ${NOVEL_COVER_STORAGE_ENABLED:-true}
       NOVEL_COVER_STORAGE_ENDPOINT: http://minio:9000
       NOVEL_COVER_STORAGE_ACCESS_KEY: ${MINIO_COVER_ACCESS_KEY:?MINIO_COVER_ACCESS_KEY is required}
       NOVEL_COVER_STORAGE_SECRET_KEY: ${MINIO_COVER_SECRET_KEY:?MINIO_COVER_SECRET_KEY is required}
@@ -222,15 +222,19 @@ services:
             *) printf '%s\n' "Could not create MinIO cover writer: $$user_add_error" >&2; exit 1 ;;
           esac
         fi
-        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*","arn:aws:s3:::novel-covers/banners/*","arn:aws:s3:::novel-covers/staging/*"]}]}' > /tmp/novel-cover-writer-policy.json
+        # The Java S3 client resolves the bucket region before the first object operation. Keep
+        # that bucket-level permission separate from the narrow object-prefix permissions.
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation"],"Resource":["arn:aws:s3:::novel-covers"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::novel-covers/covers/*","arn:aws:s3:::novel-covers/banners/*","arn:aws:s3:::novel-covers/staging/*"]}]}' > /tmp/novel-cover-writer-policy.json
         mc admin policy create local novel-cover-writer /tmp/novel-cover-writer-policy.json || mc admin policy update local novel-cover-writer /tmp/novel-cover-writer-policy.json
         mc admin policy attach local novel-cover-writer --user "$$MINIO_COVER_ACCESS_KEY"
         # A pre-existing access key can have a different secret. Verify the configured writer
         # can use its final narrow policy instead of treating that condition as success.
         mc alias set cover-writer http://minio:9000 "$$MINIO_COVER_ACCESS_KEY" "$$MINIO_COVER_SECRET_KEY"
         printf '%s' minio-init-writer-check > /tmp/minio-cover-writer-check
-        mc cp /tmp/minio-cover-writer-check cover-writer/novel-covers/covers/.minio-init-writer-check
-        mc rm --force cover-writer/novel-covers/covers/.minio-init-writer-check
+        for prefix in covers banners staging; do
+          mc cp /tmp/minio-cover-writer-check "cover-writer/novel-covers/$$prefix/.minio-init-writer-check"
+          mc rm --force "cover-writer/novel-covers/$$prefix/.minio-init-writer-check"
+        done
     depends_on:
       minio:
         condition: service_healthy

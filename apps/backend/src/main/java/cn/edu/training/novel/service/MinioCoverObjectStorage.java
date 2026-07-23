@@ -12,9 +12,12 @@ import java.io.InputStream;
 import java.net.URI;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** MinIO implementation backed by a private endpoint and relative public Nginx media URLs. */
 public final class MinioCoverObjectStorage implements CoverObjectStorage {
+    private static final Logger LOGGER = LoggerFactory.getLogger(MinioCoverObjectStorage.class);
     private static final String PREFIX = "covers/";
     private static final String BANNER_PREFIX = "banners/";
     private static final String STAGING_PREFIX = "staging/";
@@ -62,6 +65,7 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
                     .build());
             return new StoredCover(publicUrl(objectKey), objectKey);
         } catch (Exception exception) {
+            logStorageFailure("copy", objectKey, exception);
             throw new CoverStorageUnavailableException("cover candidate promotion storage is unavailable", exception);
         }
     }
@@ -81,6 +85,7 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
                     .contentType(image.contentType())
                     .build());
         } catch (Exception exception) {
+            logStorageFailure("upload", objectKey, exception);
             throw new CoverStorageUnavailableException("cover upload storage is unavailable", exception);
         }
     }
@@ -92,6 +97,7 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
         try {
             client.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey.orElseThrow()).build());
         } catch (Exception exception) {
+            logStorageFailure("delete", objectKey.orElseThrow(), exception);
             throw new CoverStorageUnavailableException("cover upload storage cleanup is unavailable", exception);
         }
     }
@@ -118,6 +124,7 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
             InputStream stream = client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey.orElseThrow()).build());
             return new StoredMedia(stream, objectKey.orElseThrow().endsWith(".png") ? "image/png" : "image/jpeg");
         } catch (Exception exception) {
+            logStorageFailure("read", objectKey.orElseThrow(), exception);
             throw new CoverStorageUnavailableException("media storage is unavailable", exception);
         }
     }
@@ -129,6 +136,7 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
             InputStream stream = client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build());
             return new StoredMedia(stream, objectKey.endsWith(".png") ? "image/png" : "image/jpeg");
         } catch (Exception exception) {
+            logStorageFailure("read staging", objectKey, exception);
             throw new CoverStorageUnavailableException("cover candidate storage is unavailable", exception);
         }
     }
@@ -156,5 +164,10 @@ public final class MinioCoverObjectStorage implements CoverObjectStorage {
 
     private static String extension(String objectKey) {
         return objectKey.endsWith(".png") ? ".png" : ".jpg";
+    }
+
+    private void logStorageFailure(String operation, String objectKey, Exception exception) {
+        LOGGER.warn("MinIO media {} failed for bucket '{}' object '{}' ({}: {}).",
+                operation, bucket, objectKey, exception.getClass().getSimpleName(), exception.getMessage());
     }
 }

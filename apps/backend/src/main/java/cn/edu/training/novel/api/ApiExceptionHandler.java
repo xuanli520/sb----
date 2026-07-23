@@ -2,6 +2,7 @@ package cn.edu.training.novel.api;
 
 import cn.edu.training.novel.service.CoverStorageUnavailableException;
 import cn.edu.training.novel.service.InvalidCoverImageException;
+import cn.edu.training.novel.service.InvalidChapterImportException;
 import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,9 @@ class ApiExceptionHandler {
     @ExceptionHandler(InvalidCoverImageException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     ApiResponse<Void> invalidCover(InvalidCoverImageException exception) { return new ApiResponse<>(400, exception.getMessage(), null); }
+    @ExceptionHandler(InvalidChapterImportException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    ApiResponse<Void> invalidChapterImport(InvalidChapterImportException exception) { return new ApiResponse<>(400, exception.getMessage(), null); }
     @ExceptionHandler({MissingServletRequestPartException.class, MaxUploadSizeExceededException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     ApiResponse<Void> invalidMultipart(Exception exception) { return new ApiResponse<>(400, "media image upload is invalid or too large", null); }

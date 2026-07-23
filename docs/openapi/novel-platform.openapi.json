@@ -776,6 +776,21 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
+    "/api/v1/author/books/{bookId}/chapters/import": {
+      "post": {
+        "tags": ["Author workspace"],
+        "operationId": "importAuthorChapters",
+        "summary": "Import TXT or DOCX chapters as drafts",
+        "description": "Imports UTF-8 or GB18030 TXT and DOCX files. Imported chapters remain drafts and must follow the normal review and publication workflow.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "AUTHOR",
+        "x-response-data-schema": "#/components/schemas/ChapterImportResult",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/ChapterImportRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
     "/api/v1/author/books/{bookId}/chapters/{chapterId}": {
       "put": {
         "tags": ["Author workspace"],
@@ -2045,6 +2060,7 @@
       "BookRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookRequest" } } } },
       "BookUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookUpdateRequest" } } } },
       "CoverUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; filename and declared MIME type are not trusted." } }, "additionalProperties": false } } } },
+      "ChapterImportRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "TXT or DOCX manuscript. TXT is decoded as UTF-8 with GB18030 fallback." }, "volumeId": { "type": "integer", "format": "int64", "minimum": 1 } }, "additionalProperties": false } } } },
       "BannerUploadRequest": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary", "description": "Actual PNG or JPEG bytes; 1200x400 minimum and 2:1 to 4:1 aspect ratio." }, "label": { "type": "string", "maxLength": 128 } }, "additionalProperties": false } } } },
       "HomeCarouselCreateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HomeCarouselCreateRequest" } } } },
       "HomeCarouselUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HomeCarouselUpdateRequest" } } } },
@@ -2135,6 +2151,8 @@
       "AuthorWorkspaceVolumePage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorWorkspaceVolume" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
       "VolumeDeleteResult": { "type": "object", "required": ["id", "deleted", "detachedChapterCount"], "properties": { "id": { "type": "integer", "format": "int64" }, "deleted": { "type": "boolean", "const": true }, "detachedChapterCount": { "type": "integer", "minimum": 0 } } },
       "Chapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": "string" }, "published": { "type": "boolean" }, "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "PUBLISHED", "NEEDS_REVIEW"] }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": "string" }, "orderNo": { "type": "integer" } } },
+      "ChapterImportResult": { "type": "object", "required": ["createdChapterCount", "wordCount", "chapters"], "properties": { "createdChapterCount": { "type": "integer", "minimum": 1 }, "wordCount": { "type": "integer", "format": "int64", "minimum": 0 }, "chapters": { "type": "array", "items": { "$ref": "#/components/schemas/ImportedChapter" } } }, "additionalProperties": false },
+      "ImportedChapter": { "type": "object", "required": ["id", "title", "orderNo"], "properties": { "id": { "type": "integer", "format": "int64" }, "title": { "type": "string" }, "orderNo": { "type": "integer", "minimum": 1 } }, "additionalProperties": false },
       "ChapterList": { "type": "array", "items": { "$ref": "#/components/schemas/Chapter" } },
       "AuthorWorkspaceChapter": { "type": "object", "required": ["id", "bookId", "title", "content", "published", "status", "orderNo", "latestCandidate"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "volumeId": { "type": ["integer", "null"], "format": "int64" }, "title": { "type": "string" }, "content": { "type": "string" }, "published": { "type": "boolean" }, "status": { "type": "string", "enum": ["DRAFT", "SCHEDULED", "PUBLISHED", "NEEDS_REVIEW"] }, "scheduledPublishAt": { "type": ["string", "null"], "format": "date-time" }, "publishedAt": { "type": ["string", "null"], "format": "date-time" }, "reviewReason": { "type": ["string", "null"] }, "orderNo": { "type": "integer", "minimum": 1 }, "volumeTitle": { "type": ["string", "null"] }, "volumeOrderNo": { "type": ["integer", "null"], "minimum": 1 }, "latestCandidate": { "oneOf": [{ "type": "null" }, { "$ref": "#/components/schemas/ChapterCandidate" }], "description": "The latest candidate only when it is pending review or rejected; an approved latest candidate is omitted." } } },
       "AuthorWorkspaceChapterPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorWorkspaceChapter" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },

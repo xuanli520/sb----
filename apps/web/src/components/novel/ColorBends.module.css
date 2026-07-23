@@ -1,4 +1,5 @@
 .root {
+  background: rgb(243 245 241);
   height: 100%;
   overflow: hidden;
   pointer-events: none;

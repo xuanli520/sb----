@@ -107,7 +107,8 @@ public class CatalogRepository {
      */
     public List<Book> findPublished(CatalogDiscoveryQuery criteria) {
         String term = criteria.query();
-        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_COLUMNS).append(" FROM novel_book WHERE status = ?");
+        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_COLUMNS).append(" FROM novel_book WHERE status = ?")
+                .append(" AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED')");
         List<Object> parameters = new ArrayList<>();
         parameters.add(BookStatus.PUBLISHED.name());
         if (!term.isEmpty()) {
@@ -144,21 +145,21 @@ public class CatalogRepository {
 
     public List<String> findPublishedCategories() {
         return jdbcTemplate.queryForList(
-                "SELECT DISTINCT category FROM novel_book WHERE status = ? ORDER BY category ASC",
+                "SELECT DISTINCT category FROM novel_book WHERE status = ? AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED') ORDER BY category ASC",
                 String.class,
                 BookStatus.PUBLISHED.name());
     }
 
     public List<String> findPublishedSerialStatuses() {
         return jdbcTemplate.queryForList(
-                "SELECT DISTINCT serial_status FROM novel_book WHERE status = ? ORDER BY serial_status ASC",
+                "SELECT DISTINCT serial_status FROM novel_book WHERE status = ? AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED') ORDER BY serial_status ASC",
                 String.class,
                 BookStatus.PUBLISHED.name());
     }
 
     public List<Book> findHot(int limit) {
         return jdbcTemplate.query(
-                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE status = ? ORDER BY heat DESC, id ASC LIMIT ?",
+                "SELECT " + BOOK_COLUMNS + " FROM novel_book WHERE status = ? AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED') ORDER BY heat DESC, id ASC LIMIT ?",
                 BOOK_MAPPER,
                 BookStatus.PUBLISHED.name(),
                 limit);
@@ -167,7 +168,7 @@ public class CatalogRepository {
     public List<Book> findEditorRecommendations(int limit) {
         return jdbcTemplate.query(
                 "SELECT " + BOOK_COLUMNS + " FROM novel_book "
-                        + "WHERE status = ? AND editorial_rank IS NOT NULL "
+                        + "WHERE status = ? AND editorial_rank IS NOT NULL AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED') "
                         + "ORDER BY editorial_rank ASC, id ASC LIMIT ?",
                 BOOK_MAPPER,
                 BookStatus.PUBLISHED.name(),

@@ -116,6 +116,7 @@ public class NovelStore {
         Book book = publishedBook(bookId);
         String fullAccessSource = fullBookAccessSource(actor, book);
         List<Chapter> chapters = publishedChapters(bookId);
+        if (chapters.isEmpty()) throw new NoSuchElementException("book has no published chapters");
         List<ReaderChapter> readerChapters = new ArrayList<>(chapters.size());
         for (int index = 0; index < chapters.size(); index++) {
             Chapter chapter = chapters.get(index);

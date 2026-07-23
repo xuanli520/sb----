@@ -1,4 +1,6 @@
 spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/test-migration
   ai:
     # Test classpath configuration shadows the main application.yml, so preserve the production
     # zero-model default here as well. No test context may construct a remote provider client.

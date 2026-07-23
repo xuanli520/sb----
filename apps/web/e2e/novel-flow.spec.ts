@@ -382,6 +382,55 @@ test('a real reader is approved as an author and drafts stay out of another read
   expect(authorBooks.items).toEqual(expect.arrayContaining([
     expect.objectContaining({ title, author: penName, status: 'DRAFT' }),
   ]));
+  const importedBook = authorBooks.items.find((book) => book.title === title);
+  expect(importedBook).toBeTruthy();
+  if (!importedBook) throw new Error('new author book was not returned by the BFF');
+  await page.getByRole('button', { name: new RegExp(`^${title} `) }).click();
+  await expect(page.getByRole('heading', { name: title, exact: true }).last()).toBeVisible();
+
+  const manuscript = [
+    '第1章 浏览器导入',
+    ...Array.from({ length: 280 }, (_, index) => `第 ${index + 1} 段，来自浏览器上传的正文，用于分页验证。`),
+  ].join('\n');
+  await page.getByLabel('导入 TXT 或 DOCX 章节').setInputFiles({
+    name: 'browser-import.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(manuscript),
+  });
+  const importResponse = page.waitForResponse((response) => response.url().endsWith(`/api/novel/author/books/${importedBook.id}/chapters/import`) && response.status() === 200);
+  await page.getByRole('button', { name: '导入 TXT/DOCX' }).click();
+  await importResponse;
+  await expect(page.getByRole('status').filter({ hasText: '已导入 1 个章节草稿' })).toBeVisible();
+
+  const importedChaptersResponse = await page.request.get(`/api/novel/author/books/${importedBook.id}/chapters`);
+  expect(importedChaptersResponse.status()).toBe(200);
+  const importedChapters = (await importedChaptersResponse.json() as ApiEnvelope<{ items: Array<{ id: number; title: string; status: string }> }>).data.items;
+  const importedChapter = importedChapters.find((chapter) => chapter.title === '第1章 浏览器导入');
+  expect(importedChapter).toBeTruthy();
+  if (!importedChapter) throw new Error('imported chapter was not returned by the BFF');
+
+  const authorCsrf = (await page.context().cookies()).find((cookie) => cookie.name === 'novel_csrf')?.value;
+  expect(authorCsrf).toBeTruthy();
+  const chapterSubmission = await page.request.post(`/api/novel/author/books/${importedBook.id}/chapters/${importedChapter.id}/submit`, {
+    headers: { Origin: origin, 'X-Novel-CSRF': authorCsrf! },
+  });
+  expect(chapterSubmission.status()).toBe(200);
+
+  await loginAdministrator(page, origin);
+  await page.goto('/novel-admin/review/books');
+  await expect(page.getByRole('heading', { name: '作品审核' })).toBeVisible();
+  await page.waitForTimeout(2_000);
+  await page.reload();
+  const review = page.locator('article').filter({ has: page.getByText(title, { exact: true }) });
+  await expect(review).toBeVisible();
+  await review.getByRole('button', { name: '批准上线' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '作品已发布' })).toBeVisible();
+
+  await page.goto(`/reader/${importedBook.id}`);
+  await expect(page.getByRole('heading', { name: '第1章 浏览器导入' })).toBeVisible();
+  await expect(page.getByText(/第 1 \/ [2-9]\d*/)).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByText(/第 2 \/ [2-9]\d*/)).toBeVisible();
 
   const otherReaderContext = await browser.newContext({ baseURL });
   try {
@@ -398,7 +447,7 @@ test('a real reader is approved as an author and drafts stay out of another read
     const publicBooksResponse = await otherReaderPage.request.get(`/api/novel/public/books?q=${encodeURIComponent(title)}`);
     expect(publicBooksResponse.status()).toBe(200);
     const publicBooks = (await publicBooksResponse.json() as ApiEnvelope<PublicBookList>).data;
-    expect(publicBooks.items).not.toEqual(expect.arrayContaining([
+    expect(publicBooks.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ title }),
     ]));
 
@@ -408,4 +457,28 @@ test('a real reader is approved as an author and drafts stay out of another read
   } finally {
     await otherReaderContext.close();
   }
+});
+
+test('homepage WebGL bands keep one rendered canvas across focus changes', async ({ page }, testInfo) => {
+  await page.goto('/');
+  const canvas = page.locator('canvas[data-engine^="three.js"]');
+  await expect(canvas).toHaveCount(1);
+  await expect.poll(async () => canvas.evaluate((element) => element.width > 0 && element.height > 0)).toBe(true);
+  const initialContextAvailable = await canvas.evaluate((element) => {
+    const gl = element.getContext('webgl2') ?? element.getContext('webgl');
+    return Boolean(gl && !gl.isContextLost());
+  });
+  expect(initialContextAvailable).toBe(true);
+
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.waitForTimeout(180);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.waitForTimeout(180);
+  await expect(canvas).toHaveCount(1);
+  await expect.poll(async () => canvas.evaluate((element) => element.width > 0 && element.height > 0)).toBe(true);
+  await expect.poll(async () => canvas.evaluate((element) => {
+    const gl = element.getContext('webgl2') ?? element.getContext('webgl');
+    return Boolean(gl && !gl.isContextLost());
+  })).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('homepage-color-bends-focus.png'), fullPage: true });
 });

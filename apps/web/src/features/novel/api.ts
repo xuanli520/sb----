@@ -542,5 +542,13 @@ export async function novelApi<T>(path:string, _role='reader', init:RequestInit=
   // The BFF derives identity from the server-side session. Retain this argument
   // temporarily so existing role-aware call sites do not transmit a spoofable role.
   void _role;
-  const method=(init.method||'GET').toUpperCase();const headers=new Headers(init.headers);if(!isFormDataBody(init.body)&&!headers.has('Content-Type'))headers.set('Content-Type','application/json');if(['POST','PUT','PATCH','DELETE'].includes(method))headers.set('X-Novel-CSRF',csrfToken());const response=await fetch(`/api/novel/${path}`,{...init,headers});const body=await response.json();if(!response.ok)throw new Error(body.msg||'请求失败');return body.data as T;
+  const method=(init.method||'GET').toUpperCase();const headers=new Headers(init.headers);if(!isFormDataBody(init.body)&&!headers.has('Content-Type'))headers.set('Content-Type','application/json');if(['POST','PUT','PATCH','DELETE'].includes(method))headers.set('X-Novel-CSRF',csrfToken());
+  let response:Response;
+  try { response=await fetch(`/api/novel/${path}`,{...init,headers}); } catch { throw new Error('网络连接失败，请检查服务后重试。'); }
+  const raw=typeof response.text==='function' ? await response.text() : JSON.stringify(await response.json());let body:unknown;
+  try { body=raw ? JSON.parse(raw) : undefined; } catch { body=undefined; }
+  const message=body&&typeof body==='object'&&'msg' in body&&typeof body.msg==='string' ? body.msg : '';
+  if(!response.ok)throw new Error(message||`请求失败（HTTP ${response.status}）`);
+  if(!body||typeof body!=='object'||!('data' in body))throw new Error('服务返回了无效响应，请稍后重试。');
+  return body.data as T;
 }

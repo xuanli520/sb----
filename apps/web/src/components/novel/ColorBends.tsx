@@ -162,8 +162,13 @@ export function ColorBends({
   const rendererRef = useRef<THREE.WebGLRenderer>();
   const pointerTargetRef = useRef(new THREE.Vector2());
   const pointerCurrentRef = useRef(new THREE.Vector2());
+  const configRef = useRef({ autoRotate, rotation });
   const [reducedMotion, setReducedMotion] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    configRef.current = { autoRotate, rotation };
+  }, [autoRotate, rotation]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -243,11 +248,15 @@ export function ColorBends({
     const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(resize);
     resizeObserver?.observe(container);
     let frame = 0;
-    let lastDraw = 0;
+    let disposed = false;
+    let activeElapsed = 0;
+    let lastTimestamp = 0;
+    let windowFocused = true;
 
-    const draw = (time: number) => {
-      material.uniforms.uTime.value = time / 1000;
-      const degrees = (rotation % 360) + autoRotate * time / 1000;
+    const draw = () => {
+      const config = configRef.current;
+      material.uniforms.uTime.value = activeElapsed / 1000;
+      const degrees = (config.rotation % 360) + config.autoRotate * activeElapsed / 1000;
       const radians = degrees * Math.PI / 180;
       material.uniforms.uRot.value.set(Math.cos(radians), Math.sin(radians));
       pointerCurrentRef.current.lerp(pointerTargetRef.current, 0.1);
@@ -255,31 +264,38 @@ export function ColorBends({
       renderer.render(scene, camera);
     };
 
+    const canAnimate = () => !reducedMotion && !document.hidden && windowFocused;
     const animate = (time: number) => {
-      if (document.hidden) return;
-      if (time - lastDraw >= 33) {
-        lastDraw = time;
-        draw(time);
-      }
+      if (disposed || !canAnimate()) return;
+      if (!lastTimestamp) lastTimestamp = time;
+      activeElapsed += Math.min(100, Math.max(0, time - lastTimestamp));
+      lastTimestamp = time;
+      draw();
+      frame = window.requestAnimationFrame(animate);
+    };
+    const synchronize = () => {
+      window.cancelAnimationFrame(frame);
+      frame = 0;
+      lastTimestamp = 0;
+      if (!canAnimate()) return;
+      draw();
       frame = window.requestAnimationFrame(animate);
     };
 
-    const handleVisibility = () => {
-      if (document.hidden) {
-        window.cancelAnimationFrame(frame);
-        return;
-      }
-      draw(performance.now());
-      if (!reducedMotion) frame = window.requestAnimationFrame(animate);
-    };
-
-    draw(performance.now());
-    if (!reducedMotion && !document.hidden) frame = window.requestAnimationFrame(animate);
-    document.addEventListener('visibilitychange', handleVisibility);
+    draw();
+    synchronize();
+    const resume = () => { windowFocused = true; synchronize(); };
+    const pause = () => { windowFocused = false; synchronize(); };
+    document.addEventListener('visibilitychange', synchronize);
+    window.addEventListener('focus', resume);
+    window.addEventListener('blur', pause);
 
     return () => {
       window.cancelAnimationFrame(frame);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      disposed = true;
+      document.removeEventListener('visibilitychange', synchronize);
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('blur', pause);
       resizeObserver?.disconnect();
       scene.remove(mesh);
       geometry.dispose();
@@ -291,22 +307,8 @@ export function ColorBends({
       if (rendererRef.current === renderer) rendererRef.current = undefined;
     };
   }, [
-    autoRotate,
-    bandWidth,
-    colors,
-    frequency,
-    intensity,
-    iterations,
-    mouseInfluence,
-    noise,
-    parallax,
     reducedMotion,
-    rotation,
-    scale,
-    speed,
-    transparent,
     unavailable,
-    warpStrength,
   ]);
 
   useEffect(() => {

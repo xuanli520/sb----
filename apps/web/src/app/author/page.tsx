@@ -330,6 +330,7 @@ export default function AuthorPage() {
   const [volumeTitle, setVolumeTitle] = useState('');
   const [chapterTitle, setChapterTitle] = useState('');
   const [chapterContent, setChapterContent] = useState('');
+  const [chapterImportFile, setChapterImportFile] = useState<File>();
   const [publishAt, setPublishAt] = useState('');
   const [editingBook, setEditingBook] = useState<Book>();
   const [bookEditTitle, setBookEditTitle] = useState('');
@@ -368,6 +369,7 @@ export default function AuthorPage() {
   const rewardRequestId = useRef(0);
   const analyticsRequestId = useRef(0);
   const bookCoverInputRef = useRef<HTMLInputElement>(null);
+  const chapterImportInputRef = useRef<HTMLInputElement>(null);
 
   const selectDraftVolume = useCallback((volume?: Volume) => {
     setSelectedVolumeId(volume?.id);
@@ -1111,6 +1113,28 @@ export default function AuthorPage() {
     }
   };
 
+  const importChapters = async () => {
+    if (!selectedBookId || !chapterImportFile) {
+      announce('请选择作品和 TXT 或 DOCX 文件。', 'error');
+      return;
+    }
+    setPendingAction('import-chapters');
+    try {
+      const body = new FormData();
+      body.append('file', chapterImportFile);
+      if (selectedVolumeId !== undefined) body.append('volumeId', selectedVolumeId.toString());
+      const result = await novelApi<{ createdChapterCount:number; wordCount:number }>(`author/books/${selectedBookId}/chapters/import`, 'author', { method: 'POST', body });
+      setChapterImportFile(undefined);
+      if (chapterImportInputRef.current) chapterImportInputRef.current.value = '';
+      announce(`已导入 ${result.createdChapterCount} 个章节草稿，共 ${formatWordCount(result.wordCount)}。`);
+      await Promise.all([loadBooks(booksPageIndex), loadBookWorkspace(selectedBookId)]);
+    } catch (reason) {
+      announce(failureMessage(reason, '章节导入失败。'), 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
   const scheduleDraft = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedBookId || !selectedDraft) {
@@ -1589,6 +1613,14 @@ export default function AuthorPage() {
           <div className="mt-4">
             <Label htmlFor="chapter-content" className="text-stone-700">正文</Label>
             <Textarea id="chapter-content" aria-label="章节正文" required value={chapterContent} onChange={(event) => setChapterContent(event.target.value)} className="mt-2 h-56 resize-y rounded-none border-stone-300 bg-white leading-7 text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" placeholder="开始写作..." />
+          </div>
+          <div className="mt-5 border-y border-stone-200 py-4">
+            <Label htmlFor="chapter-import" className="text-sm font-semibold text-stone-700">导入章节草稿</Label>
+            <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Input ref={chapterImportInputRef} id="chapter-import" aria-label="导入 TXT 或 DOCX 章节" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setChapterImportFile(event.target.files?.[0])} disabled={pendingAction !== undefined} className="h-11 rounded-none border-stone-300 bg-white text-stone-900" />
+              <Button type="button" variant="outline" onClick={() => void importChapters()} disabled={pendingAction !== undefined} className="h-auto shrink-0 rounded-none border-emerald-700 bg-white px-4 py-2.5 text-emerald-800 hover:bg-emerald-50"><FileText size={16} aria-hidden="true" />{pendingAction === 'import-chapters' ? '导入中' : '导入 TXT/DOCX'}</Button>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-stone-500">按“第 X 章”标题自动拆分；导入内容均保存为草稿，提交后才会进入审核。</p>
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             <Button type="button" variant="outline" onClick={() => void saveChapter(false)} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-4 py-2.5 text-stone-700 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Save size={16} aria-hidden="true" />保存章节草稿</Button>

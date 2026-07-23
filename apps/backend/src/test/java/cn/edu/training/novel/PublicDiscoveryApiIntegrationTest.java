@@ -85,4 +85,19 @@ class PublicDiscoveryApiIntegrationTest {
                 .andExpect(jsonPath("$.data.carousel[0].book.id").value(3))
                 .andExpect(jsonPath("$.data.hot[0].id").value(2));
     }
+
+    @Test
+    void publicCatalogAndReaderRejectPublishedMetadataWithoutAReadableChapter() throws Exception {
+        jdbc.update("UPDATE novel_chapter SET published = FALSE, status = 'DRAFT' WHERE book_id = ?", 1L);
+
+        mvc.perform(get("/api/v1/public/books").param("q", "星海"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0));
+        mvc.perform(get("/api/v1/public/books/{bookId}", 1L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.msg").value("book has no published chapters"));
+        mvc.perform(get("/api/v1/public/home"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.carousel[0].book.id").value(3));
+    }
 }

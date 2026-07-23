@@ -202,6 +202,10 @@ class HomeCarouselIntegrationTest {
                         + "author_id, heat, purchase_price, created_at, updated_at) "
                         + "VALUES (?, ?, '测试作者', '科幻', 1000, '连载中', '测试简介', '#234567', ?, 2, 0, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 id, title, BookStatus.PUBLISHED.name());
+        jdbc.update(
+                "INSERT INTO novel_chapter(id, book_id, title, content, published, status, order_no, published_at) "
+                        + "VALUES (?, ?, '第一章', '用于公开轮播的真实章节正文。', TRUE, 'PUBLISHED', 1, CURRENT_TIMESTAMP)",
+                id * 10, id);
     }
 
     private static MockMultipartFile bannerFile() throws Exception {

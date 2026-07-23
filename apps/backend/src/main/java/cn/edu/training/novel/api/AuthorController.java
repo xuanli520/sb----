@@ -30,7 +30,8 @@ public class AuthorController implements UserResolver {
     private final BookPresentationService bookPresentations;
     private final MediaAssetService mediaAssets;
     private final AuthorWorkspacePageService workspacePages;
-    public AuthorController(NovelStore store,CoverUploadService coverUploadService,BookPresentationService bookPresentations,MediaAssetService mediaAssets,AuthorWorkspacePageService workspacePages){this.store=store;this.coverUploadService=coverUploadService;this.bookPresentations=bookPresentations;this.mediaAssets=mediaAssets;this.workspacePages=workspacePages;}
+    private final ChapterImportService chapterImportService;
+    public AuthorController(NovelStore store,CoverUploadService coverUploadService,BookPresentationService bookPresentations,MediaAssetService mediaAssets,AuthorWorkspacePageService workspacePages,ChapterImportService chapterImportService){this.store=store;this.coverUploadService=coverUploadService;this.bookPresentations=bookPresentations;this.mediaAssets=mediaAssets;this.workspacePages=workspacePages;this.chapterImportService=chapterImportService;}
     @GetMapping("/books")
     ApiResponse<BookPresentationPage> list(
             HttpServletRequest request,
@@ -64,6 +65,15 @@ public class AuthorController implements UserResolver {
     @DeleteMapping("/books/{bookId}/volumes/{volumeId}") ApiResponse<VolumeDeleteResult> deleteVolume(HttpServletRequest request,@PathVariable long bookId,@PathVariable long volumeId){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.deleteVolume(u.id(),bookId,volumeId));}
     @GetMapping("/books/{bookId}/chapters") ApiResponse<AuthorWorkspaceChapterPage> chapters(HttpServletRequest request,@PathVariable long bookId,@RequestParam(defaultValue="0") @Min(0) int page,@RequestParam(defaultValue="20") @Min(1) @Max(AuthorWorkspacePageService.MAX_PAGE_SIZE) int size){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(workspacePages.chapters(u.id(),bookId,page,size));}
     @PostMapping("/books/{bookId}/chapters") ApiResponse<Chapter> chapter(HttpServletRequest request,@PathVariable long bookId,@Valid @RequestBody ChapterRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.addChapter(u.id(),bookId,body.volumeId(),body.title(),body.content(),body.submit()));}
+    @PostMapping(path="/books/{bookId}/chapters/import", consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    ApiResponse<ChapterImportService.ImportResult> importChapters(
+            HttpServletRequest request,
+            @PathVariable long bookId,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(required=false) Long volumeId) {
+        CurrentUser user=current(request); user.require(Role.AUTHOR);
+        return ApiResponse.ok(chapterImportService.importFile(user.id(), bookId, volumeId, file));
+    }
     @PutMapping("/books/{bookId}/chapters/{chapterId}") ApiResponse<Chapter> updateChapter(HttpServletRequest request,@PathVariable long bookId,@PathVariable long chapterId,@Valid @RequestBody ChapterUpdateRequest body){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.updateChapter(u.id(),bookId,chapterId,body.title(),body.content(),body.volumeId()));}
     @DeleteMapping("/books/{bookId}/chapters/{chapterId}") ApiResponse<DeleteResult> deleteChapter(HttpServletRequest request,@PathVariable long bookId,@PathVariable long chapterId){CurrentUser u=current(request);u.require(Role.AUTHOR);store.deleteChapter(u.id(),bookId,chapterId);return ApiResponse.ok(new DeleteResult(chapterId,true));}
     @PostMapping("/books/{bookId}/chapters/{chapterId}/submit") ApiResponse<Chapter> submitChapter(HttpServletRequest request,@PathVariable long bookId,@PathVariable long chapterId){CurrentUser u=current(request);u.require(Role.AUTHOR);return ApiResponse.ok(store.submitChapter(u.id(),bookId,chapterId));}

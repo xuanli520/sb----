@@ -17,6 +17,7 @@ public interface CatalogPageMapper {
                    author_id AS authorId, heat, purchase_price AS purchasePrice
             FROM novel_book
             WHERE status = 'PUBLISHED'
+              AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = novel_book.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED')
             <if test='pattern != null'>
               AND (LOWER(title) LIKE #{pattern} ESCAPE '!' OR LOWER(author_name) LIKE #{pattern} ESCAPE '!'
                    OR LOWER(synopsis) LIKE #{pattern} ESCAPE '!')

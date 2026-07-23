@@ -654,7 +654,7 @@ public class MediaCarouselRepository {
                 + "LEFT JOIN novel_media_asset_binding binding ON binding.binding_type = 'HOME_CAROUSEL_BANNER' AND binding.target_id = s.id "
                 + "LEFT JOIN novel_media_asset ma ON ma.id = binding.asset_id AND ma.state = 'ACTIVE' ";
         if (publicOnly) {
-            sql += "WHERE s.enabled = TRUE AND b.status = 'PUBLISHED' ORDER BY s.display_rank ASC, s.id ASC";
+            sql += "WHERE s.enabled = TRUE AND b.status = 'PUBLISHED' AND EXISTS (SELECT 1 FROM novel_chapter public_chapter WHERE public_chapter.book_id = b.id AND public_chapter.published = TRUE AND public_chapter.status = 'PUBLISHED') ORDER BY s.display_rank ASC, s.id ASC";
         } else {
             sql += "ORDER BY s.display_rank ASC, s.id ASC";
         }
