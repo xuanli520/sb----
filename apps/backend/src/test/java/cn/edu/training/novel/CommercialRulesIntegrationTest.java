@@ -140,12 +140,14 @@ class CommercialRulesIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_reward_record WHERE rewarder_user_id = 3", Long.class)).isEqualTo(1L);
 
-        mvc.perform(get("/api/v1/admin/commercial-rules/audits")
+        mvc.perform(get("/api/v1/admin/commercial-rules/audits?page=2&size=1")
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(3))
-                .andExpect(jsonPath("$.data[2].reason").value("收紧首期额度"))
-                .andExpect(jsonPath("$.data[2].updatedRules.membershipDaysMaximumPerCode").value(7));
+                .andExpect(jsonPath("$.data.meta.total").value(3))
+                .andExpect(jsonPath("$.data.meta.page").value(2))
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].reason").value("收紧首期额度"))
+                .andExpect(jsonPath("$.data.items[0].updatedRules.membershipDaysMaximumPerCode").value(7));
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_audit_event WHERE action LIKE '%commercial-rules operator=1%'", Long.class)).isEqualTo(3L);
     }

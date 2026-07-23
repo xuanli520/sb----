@@ -5,7 +5,10 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
 import cn.edu.training.novel.domain.ChapterStatus;
+import cn.edu.training.novel.domain.ModerationReviewScope;
 import cn.edu.training.novel.domain.Volume;
 import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.NovelStore;
@@ -48,7 +51,7 @@ class ScheduledChapterPublicationIntegrationTest {
         assertThat(published.publishedAt()).isNotNull();
         assertThat(store.book(1).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(store.publishedChapters(1)).extracting(Chapter::id).contains(draft.id());
-        assertThat(auditCount("%scheduled chapter=" + draft.id() + " published%")).isEqualTo(1);
+        assertThat(auditCount("%publish incremental chapter=" + draft.id() + " candidate=%")).isEqualTo(1);
     }
 
     @Test
@@ -58,15 +61,18 @@ class ScheduledChapterPublicationIntegrationTest {
         store.scheduleChapter(2, 1, draft.id(), Instant.now().plusMillis(200));
 
         await("risky chapter review transition", () -> catalogRepository.findChapterById(draft.id())
-                .map(chapter -> chapter.status() == ChapterStatus.NEEDS_REVIEW && !chapter.published())
+                .map(chapter -> chapter.status() == ChapterStatus.DRAFT && !chapter.published())
                 .orElse(false));
 
         Chapter held = catalogRepository.findChapterById(draft.id()).orElseThrow();
+        ChapterCandidate candidate = PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.NEW_CHAPTER, draft.id());
         assertThat(held.scheduledPublishAt()).isNull();
-        assertThat(held.reviewReason()).isEqualTo("命中本地敏感词，已暂停定时发布");
-        assertThat(store.book(1).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(held.reviewReason()).isEqualTo("命中本地敏感词，已暂停定时发布，等待增量审核");
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(store.publishedChapters(1)).extracting(Chapter::id).doesNotContain(draft.id());
-        assertThat(auditCount("%scheduled chapter=" + draft.id() + " blocked=sensitive-word%")).isEqualTo(1);
+        assertThat(auditCount("%hold incremental chapter=" + draft.id() + " candidate=%")).isEqualTo(1);
     }
 
     private int auditCount(String pattern) {

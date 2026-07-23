@@ -18,9 +18,9 @@ import org.springframework.mock.web.MockMultipartFile;
 import cn.edu.training.novel.service.NovelStore;
 
 /** Normal test/runtime configuration must not require a reachable MinIO server. */
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.cover-storage.enabled=false",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:cover_unavailable_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
@@ -37,7 +37,7 @@ class CoverUploadUnavailableIntegrationTest {
         mvc.perform(multipart("/api/v1/author/books/{bookId}/cover", bookId)
                         .file(imageFile())
                         .header("X-Novel-Internal-Key", "local-novel-internal-key")
-                        .header("X-Novel-Development-Principal", "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value(503))
                 .andExpect(jsonPath("$.msg").value("cover upload storage is disabled"));

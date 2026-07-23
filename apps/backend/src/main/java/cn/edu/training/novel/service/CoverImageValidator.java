@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @Component
 public class CoverImageValidator {
+    private static final long MAX_UPLOAD_BYTES = 5L * 1024 * 1024;
     private static final long MAX_PIXELS = 16_777_216L;
     private final CoverStorageProperties properties;
 
@@ -27,7 +28,9 @@ public class CoverImageValidator {
     public CoverImage validate(MultipartFile file) {
         if (file == null || file.isEmpty()) throw new InvalidCoverImageException("cover image file is required");
         long maxBytes = properties.maxBytes();
-        if (maxBytes < 1024) throw new IllegalStateException("cover image upload limit is not configured");
+        if (maxBytes < 1024 || maxBytes > MAX_UPLOAD_BYTES) {
+            throw new IllegalStateException("cover image upload limit must be between 1 KiB and 5 MiB");
+        }
         byte[] bytes = readBounded(file, maxBytes);
 
         try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {

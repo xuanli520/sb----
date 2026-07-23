@@ -96,8 +96,8 @@ NOVEL_EMAIL_VERIFICATION_HASH_SECRET=replace-with-a-separate-long-random-secret
 `object-storage` 内部网络，Nginx 是唯一的公开入口，且只允许
 `GET /media/covers/<uuid>.png|jpg` 或 `GET /media/banners/<uuid>.png|jpg`，会移除浏览器携带的
 `Authorization`、Cookie 和转发身份头。
-所有其他 `/media` 路径及非 GET 方法都会被 Nginx 拒绝；不要把 MinIO endpoint 或桶名改写进
-`Book.cover`。
+所有其他 `/media` 路径及非 GET 方法都会被 Nginx 拒绝；不要把 MinIO endpoint 或桶名写入
+任何作品元数据字段。
 
 后端端点只允许作者上传封面、站长上传首页横幅；它不会
 信任 filename 或请求 MIME，而是以 ImageIO 解码验证 PNG/JPEG、5 MiB 字节上限、4096x4096
@@ -105,7 +105,7 @@ NOVEL_EMAIL_VERIFICATION_HASH_SECRET=replace-with-a-separate-long-random-secret
 图片限制为 5 MiB。
 配置关闭、不完整或存储不可用时会返回明确的 `503`，不会降级为本地磁盘。
 每次上传使用随机对象键；替换会建立新资产绑定，旧对象只有零引用且经过回收宽限期后才会删除。
-旧的 CSS 颜色封面保持兼容。
+历史 `novel_book.cover` 列不再参与任何运行时读取或写入；客户端只能处理受管的 `/media/covers/<uuid>.png|jpg` 路径，缺失时使用中性回退面板。
 
 ## 启动与健康检查
 
@@ -183,7 +183,7 @@ docker compose start backend
 ## 对象恢复边界
 
 MySQL 备份不包含 `minio-data`。恢复数据库前后必须从同一时间点的受控对象存储备份或
-版本化副本恢复 `novel-covers`，否则 `Book.cover` 可能引用不存在的对象。生产环境应使用
+版本化副本恢复 `novel-covers`，否则活跃媒体绑定可能引用不存在的对象。生产环境应使用
 受管理对象存储的版本化、跨区域复制或加密快照，并定期演练“数据库 + 桶”一致性恢复；本
 仓库的 MySQL smoke 演练不替代对象存储灾备。
 

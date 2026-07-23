@@ -229,14 +229,6 @@ public class CatalogRepository {
         return chapters.stream().findFirst();
     }
 
-    public List<ChapterCandidate> findChapterCandidatesByBookId(long bookId) {
-        return jdbcTemplate.query(
-                "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate WHERE book_id = ? "
-                        + "ORDER BY created_at DESC, id DESC",
-                CHAPTER_CANDIDATE_MAPPER,
-                bookId);
-    }
-
     public Optional<ChapterCandidate> findChapterCandidateById(long candidateId) {
         return jdbcTemplate.query(
                         "SELECT " + CHAPTER_CANDIDATE_COLUMNS + " FROM novel_chapter_candidate WHERE id = ?",

@@ -13,7 +13,7 @@ public interface CatalogPageMapper {
     @Select("""
             <script>
             SELECT id, title, author_name AS author, category, word_count AS words,
-                   serial_status AS serialStatus, synopsis, cover, status,
+                   serial_status AS serialStatus, synopsis, NULL AS cover, status,
                    author_id AS authorId, heat, purchase_price AS purchasePrice
             FROM novel_book
             WHERE status = 'PUBLISHED'

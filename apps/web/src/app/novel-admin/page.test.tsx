@@ -56,6 +56,19 @@ type RedemptionCodeFixture = {
   redeemedAt: string | null;
 };
 
+type AuthorApplicationFixture = {
+  id: number;
+  userId: number;
+  penName: string;
+  statement: string;
+  status: 'PENDING';
+  reason: string;
+  createdAt: string;
+  decidedAt: null;
+  decidedByUserId: null;
+  reapplyAvailableAt: null;
+};
+
 function redemptionCode(overrides: Partial<RedemptionCodeFixture> & Pick<RedemptionCodeFixture, 'code' | 'batchNo'>): RedemptionCodeFixture {
   return {
     benefitType: 'TOKEN',
@@ -78,6 +91,14 @@ const initialRedemptionCodes = [
 
 function response(data: unknown) {
   return { ok: true, json: async () => ({ data }) } as Response;
+}
+
+function pageEnvelope<T>(items: T[], page: number, size: number) {
+  return { items: items.slice(page * size, (page + 1) * size), meta: { total: items.length, page, size } };
+}
+
+function flatPage<T>(items: T[], page: number, size: number) {
+  return { items: items.slice(page * size, (page + 1) * size), total: items.length, page, size };
 }
 
 function retentionReport() {
@@ -110,8 +131,9 @@ function retentionReport() {
   };
 }
 
-function mockAdminApi(seedCodes = initialRedemptionCodes) {
+function mockAdminApi(seedCodes = initialRedemptionCodes, seedApplications: AuthorApplicationFixture[] = []) {
   let redemptionCodes = seedCodes.map((code) => ({ ...code }));
+  let applications = seedApplications.map((application) => ({ ...application }));
   let sensitiveWords: Array<{ normalizedWord: string; word: string; enabled: boolean; disabledAt: string | null }> = [{
     normalizedWord: '敏感词', word: '敏感词', enabled: true, disabledAt: null,
   }];
@@ -164,6 +186,7 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
     updatedAt: '2026-07-21T08:00:00Z',
   };
   const commercialRuleAudits: Array<Record<string, unknown>> = [];
+  const sensitiveWordAudits: Array<Record<string, unknown>> = [];
   const accountAudits = [{ id: 501, accountId: 41, previousEnabled: true, enabled: false, reason: '违规内容需要暂停', operatorUserId: 1, createdAt: '2026-07-21T08:00:00Z' }];
   const accountBehaviorEvents = Array.from({ length: 21 }, (_, index) => ({
     eventType: index === 0 ? 'READING_PROGRESS' : index === 1 ? 'BOOKSHELF_ADDED' : index === 2 ? 'COMMENT_SUBMITTED' : 'READING_ACTIVITY',
@@ -178,7 +201,8 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
     if (path.endsWith('/admin/dashboard')) return Promise.resolve(response({ activeReaders: 14, todayReads: 33, publishedBooks: 5, pendingReviews: 1, auditLog: [] }));
-    if (path.endsWith('/admin/commercial-rules/audits?limit=20')) return Promise.resolve(response(commercialRuleAudits));
+    const commercialRuleAuditsMatch = path.match(/\/admin\/commercial-rules\/audits\?page=(\d+)&size=(\d+)$/);
+    if (commercialRuleAuditsMatch) return Promise.resolve(response(pageEnvelope(commercialRuleAudits, Number(commercialRuleAuditsMatch[1]), Number(commercialRuleAuditsMatch[2]))));
     if (path.endsWith('/admin/commercial-rules') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(commercialRules));
     if (path.endsWith('/admin/commercial-rules') && init?.method === 'PUT') {
       const previousRules = commercialRules;
@@ -195,10 +219,17 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       return Promise.resolve(response(commercialRules));
     }
     if (path.endsWith('/admin/analytics/retention')) return Promise.resolve(response(retentionReport()));
-    if (path.endsWith('/admin/reviews')) return Promise.resolve(response([]));
-    if (path.endsWith('/admin/books')) return Promise.resolve(response(availabilityBooks));
-    const bookStatusAuditsMatch = path.match(/\/admin\/books\/(\d+)\/status-audits\?limit=20$/);
-    if (bookStatusAuditsMatch) return Promise.resolve(response(bookStatusAudits.filter((audit) => audit.bookId === Number(bookStatusAuditsMatch[1]))));
+    const reviewQueueMatch = path.match(/\/admin\/reviews\/queue\?scope=(NEW_CHAPTER|CHAPTER_REVISION)&page=(\d+)&size=(\d+)$/);
+    if (reviewQueueMatch) return Promise.resolve(response(pageEnvelope([], Number(reviewQueueMatch[2]), Number(reviewQueueMatch[3]))));
+    const reviewsMatch = path.match(/\/admin\/reviews\?page=(\d+)&size=(\d+)$/);
+    if (reviewsMatch) return Promise.resolve(response(pageEnvelope([], Number(reviewsMatch[1]), Number(reviewsMatch[2]))));
+    const availabilityBooksMatch = path.match(/\/admin\/books\?page=(\d+)&size=(\d+)$/);
+    if (availabilityBooksMatch) return Promise.resolve(response(pageEnvelope(availabilityBooks, Number(availabilityBooksMatch[1]), Number(availabilityBooksMatch[2]))));
+    const bookStatusAuditsMatch = path.match(/\/admin\/books\/(\d+)\/status-audits\?page=(\d+)&size=(\d+)$/);
+    if (bookStatusAuditsMatch) {
+      const audits = bookStatusAudits.filter((audit) => audit.bookId === Number(bookStatusAuditsMatch[1]));
+      return Promise.resolve(response(pageEnvelope(audits, Number(bookStatusAuditsMatch[2]), Number(bookStatusAuditsMatch[3]))));
+    }
     const bookAvailabilityAction = path.match(/\/admin\/books\/(\d+)\/(takedown|restore)$/);
     if (bookAvailabilityAction) {
       const bookId = Number(bookAvailabilityAction[1]);
@@ -222,8 +253,26 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       });
       return Promise.resolve(response(updated));
     }
-    if (path.endsWith('/admin/author-applications')) return Promise.resolve(response([]));
-    if (path.endsWith('/admin/sensitive-words') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(sensitiveWords));
+    const authorApplicationPageMatch = path.match(/\/admin\/author-applications\?page=(\d+)&size=(\d+)$/);
+    if (authorApplicationPageMatch && (init?.method ?? 'GET') === 'GET') {
+      return Promise.resolve(response(pageEnvelope(
+        applications,
+        Number(authorApplicationPageMatch[1]),
+        Number(authorApplicationPageMatch[2]),
+      )));
+    }
+    const authorApplicationDecisionMatch = path.match(/\/admin\/author-applications\/(\d+)$/);
+    if (authorApplicationDecisionMatch && init?.method === 'POST') {
+      const applicationId = Number(authorApplicationDecisionMatch[1]);
+      const application = applications.find((item) => item.id === applicationId);
+      if (!application) return Promise.reject(new Error(`Unknown author application: ${applicationId}`));
+      applications = applications.filter((item) => item.id !== applicationId);
+      return Promise.resolve(response({ ...application, status: body.approve ? 'APPROVED' : 'REJECTED' }));
+    }
+    const sensitiveWordAuditsMatch = path.match(/\/admin\/sensitive-words\/audits\?page=(\d+)&size=(\d+)$/);
+    if (sensitiveWordAuditsMatch) return Promise.resolve(response(pageEnvelope(sensitiveWordAudits, Number(sensitiveWordAuditsMatch[1]), Number(sensitiveWordAuditsMatch[2]))));
+    const sensitiveWordsMatch = path.match(/\/admin\/sensitive-words\?page=(\d+)&size=(\d+)$/);
+    if (sensitiveWordsMatch && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(pageEnvelope(sensitiveWords, Number(sensitiveWordsMatch[1]), Number(sensitiveWordsMatch[2]))));
     if (path.endsWith('/admin/sensitive-words') && init?.method === 'POST') {
       const created = { normalizedWord: String(body.word), word: String(body.word), enabled: true, disabledAt: null };
       sensitiveWords = [...sensitiveWords, created];
@@ -252,13 +301,15 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       sensitiveWords = sensitiveWords.filter((item) => item.normalizedWord !== normalizedWord);
       return Promise.resolve(response(null));
     }
-    if (path.endsWith('/admin/comments?status=PENDING_REVIEW&size=20')) return Promise.resolve(response({ items: [pendingComment], meta: { total: 1, page: 0, size: 20 } }));
+    const pendingCommentsMatch = path.match(/\/admin\/comments\?status=PENDING_REVIEW&page=(\d+)&size=(\d+)$/);
+    if (pendingCommentsMatch) return Promise.resolve(response(pageEnvelope([pendingComment], Number(pendingCommentsMatch[1]), Number(pendingCommentsMatch[2]))));
     if (path.endsWith('/admin/comments/81/review')) {
       return Promise.resolve(response({ ...pendingComment, status: body.approve ? 'VISIBLE' : 'REJECTED' }));
     }
-    if (path.endsWith('/admin/annotations?status=PENDING_REVIEW&size=20')) {
+    const pendingAnnotationsMatch = path.match(/\/admin\/annotations\?status=PENDING_REVIEW&page=(\d+)&size=(\d+)$/);
+    if (pendingAnnotationsMatch) {
       const pendingAnnotations = annotations.filter((annotation) => annotation.status === 'PENDING_REVIEW');
-      return Promise.resolve(response({ items: pendingAnnotations, meta: { total: pendingAnnotations.length, page: 0, size: 20 } }));
+      return Promise.resolve(response(pageEnvelope(pendingAnnotations, Number(pendingAnnotationsMatch[1]), Number(pendingAnnotationsMatch[2]))));
     }
     const annotationReviewMatch = path.match(/\/admin\/annotations\/(\d+)\/review$/);
     if (annotationReviewMatch) {
@@ -269,9 +320,12 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       annotations = annotations.map((annotation) => annotation.id === annotationId ? reviewed : annotation);
       return Promise.resolve(response(reviewed));
     }
-    if (path.endsWith('/admin/redemption-codes?size=20')) return Promise.resolve(response({ items: redemptionCodes, page: 0, size: 20, total: redemptionCodes.length }));
-    if (path.endsWith('/admin/editorial/recommendations')) return Promise.resolve(response(editorialRecommendations));
-    if (path.endsWith('/admin/hot-searches')) return Promise.resolve(response(hotSearchTerms));
+    const redemptionCodesMatch = path.match(/\/admin\/redemption-codes\?page=(\d+)&size=(\d+)$/);
+    if (redemptionCodesMatch) return Promise.resolve(response(flatPage(redemptionCodes, Number(redemptionCodesMatch[1]), Number(redemptionCodesMatch[2]))));
+    const editorialRecommendationsMatch = path.match(/\/admin\/editorial\/recommendations\?page=(\d+)&size=(\d+)$/);
+    if (editorialRecommendationsMatch) return Promise.resolve(response(pageEnvelope(editorialRecommendations, Number(editorialRecommendationsMatch[1]), Number(editorialRecommendationsMatch[2]))));
+    const hotSearchTermsMatch = path.match(/\/admin\/hot-searches\?page=(\d+)&size=(\d+)$/);
+    if (hotSearchTermsMatch) return Promise.resolve(response(pageEnvelope(hotSearchTerms, Number(hotSearchTermsMatch[1]), Number(hotSearchTermsMatch[2]))));
     const behaviorSummaryMatch = path.match(/\/admin\/accounts\/(\d+)\/behavior-summary$/);
     if (behaviorSummaryMatch) {
       const accountId = Number(behaviorSummaryMatch[1]);
@@ -315,8 +369,8 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
       accountAudits.unshift(audit);
       return Promise.resolve(response({ userId: accountId, enabled, account, changed: true, audit }));
     }
-    const accountAuditsMatch = path.match(/\/admin\/accounts\/(\d+)\/status-audits\?limit=20$/);
-    if (accountAuditsMatch) return Promise.resolve(response(accountAudits));
+    const accountAuditsMatch = path.match(/\/admin\/accounts\/(\d+)\/status-audits\?page=(\d+)&size=(\d+)$/);
+    if (accountAuditsMatch) return Promise.resolve(response(flatPage(accountAudits, Number(accountAuditsMatch[2]), Number(accountAuditsMatch[3]))));
     if ((init?.method ?? 'GET') === 'GET' && path.endsWith('/admin/taxonomy/CATEGORY')) return Promise.resolve(response(categories));
     if ((init?.method ?? 'GET') === 'GET' && path.endsWith('/admin/taxonomy/TAG')) return Promise.resolve(response(tags));
     const taxonomyItemMatch = path.match(/\/admin\/taxonomy\/(CATEGORY|TAG)\/(\d+)$/);
@@ -384,6 +438,57 @@ function mockAdminApi(seedCodes = initialRedemptionCodes) {
   return fetchMock;
 }
 
+describe('admin author-application pagination', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    push.mockReset();
+    refresh.mockReset();
+  });
+
+  it('loads a bounded review page and returns to the prior page after deciding the final row', async () => {
+    const applications = Array.from({ length: 21 }, (_, index): AuthorApplicationFixture => ({
+      id: index + 1,
+      userId: index + 100,
+      penName: `申请人 ${index + 1}`,
+      statement: `第 ${index + 1} 份作者申请材料。`,
+      status: 'PENDING',
+      reason: '',
+      createdAt: '2026-07-21T08:00:00Z',
+      decidedAt: null,
+      decidedByUserId: null,
+      reapplyAvailableAt: null,
+    }));
+    const fetchMock = mockAdminApi(initialRedemptionCodes, applications);
+    render(<NovelAdminPage view="accounts-applications" />);
+
+    await screen.findByText('申请人 1');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/admin/author-applications?page=0&size=20',
+      expect.anything(),
+    ));
+
+    fireEvent.click(screen.getByRole('link', { name: '第 2 页' }));
+    await screen.findByText('申请人 21');
+    expect(screen.queryByText('申请人 1')).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/admin/author-applications?page=1&size=20',
+      expect.anything(),
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: '通过' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/admin/author-applications/21',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    await screen.findByText('申请人 1');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/admin/author-applications?page=0&size=20',
+      expect.anything(),
+    ));
+  });
+});
+
 describe('admin comment review queue', () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -402,7 +507,7 @@ describe('admin comment review queue', () => {
     expect(screen.getAllByText('1 条等待人工决定').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('审核说明 81').getAttribute('data-slot')).toBe('input');
     expect(screen.getByRole('button', { name: '通过' }).getAttribute('data-slot')).toBe('button');
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/comments?status=PENDING_REVIEW&size=20', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/comments?status=PENDING_REVIEW&page=0&size=20', expect.anything()));
   });
 
   it('keeps standalone carousel resources out of the aggregate workspace', async () => {
@@ -446,6 +551,7 @@ describe('admin sensitive-word lifecycle', () => {
     render(<NovelAdminPage />);
 
     await screen.findByRole('heading', { name: '敏感词库' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/sensitive-words?page=0&size=20', expect.anything()));
     fireEvent.change(screen.getByLabelText('敏感词 敏感词'), { target: { value: '新敏感词' } });
     fireEvent.change(screen.getByLabelText('敏感词操作说明 敏感词'), { target: { value: '更正词条内容' } });
     fireEvent.click(screen.getByRole('button', { name: '保存敏感词 敏感词' }));
@@ -468,6 +574,18 @@ describe('admin sensitive-word lifecycle', () => {
     })));
     await screen.findByText('已删除停用的敏感词，并保留审计记录。');
     expect(screen.queryByLabelText('敏感词 新敏感词')).toBeNull();
+  });
+
+  it('opens the paged sensitive-word audit history', async () => {
+    const fetchMock = mockAdminApi();
+    render(<NovelAdminPage />);
+
+    await screen.findByRole('heading', { name: '敏感词库' });
+    fireEvent.click(screen.getByRole('button', { name: '查看敏感词审计' }));
+
+    await screen.findByRole('heading', { name: '敏感词审计' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/sensitive-words/audits?page=0&size=20', expect.anything()));
+    expect(screen.getByText('暂无敏感词操作记录。')).toBeTruthy();
   });
 });
 
@@ -550,7 +668,7 @@ describe('admin paragraph annotation review queue', () => {
     expect(screen.getByText('作品 #7 · 章节 #701 · 第 3 段')).toBeTruthy();
     expect(screen.getByText('这一段很有画面感。')).toBeTruthy();
     expect(screen.getByLabelText('段评审核说明 91').getAttribute('data-slot')).toBe('input');
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/annotations?status=PENDING_REVIEW&size=20', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/annotations?status=PENDING_REVIEW&page=0&size=20', expect.anything()));
   });
 
   it('submits the default approval reason and refreshes the queue', async () => {
@@ -689,7 +807,7 @@ describe('admin account and taxonomy operations', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看账号审计 41' }));
     await screen.findByRole('heading', { name: '账号状态审计' });
     expect(screen.getAllByText('违规内容需要暂停').length).toBeGreaterThan(0);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/status-audits?limit=20', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/accounts/41/status-audits?page=0&size=20', expect.anything()));
   });
 
   it('opens a redacted, paged behavior drawer from the existing account row', async () => {

@@ -228,21 +228,28 @@ public class MediaCarouselRepository {
     }
 
     public CandidatePage findCoverCandidatePage(BookCoverCandidateStatus requestedStatus, int page, int size) {
-        String where = requestedStatus == null ? "" : " WHERE status = ?";
-        Object[] arguments = requestedStatus == null ? new Object[0] : new Object[] {requestedStatus.name()};
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM novel_book_cover_candidate" + where,
-                Long.class,
-                arguments);
-        List<Object> pageArguments = new ArrayList<>(List.of(arguments));
-        pageArguments.add(size);
-        pageArguments.add(Math.multiplyExact(page, size));
-        List<BookCoverCandidate> items = jdbc.query(
-                "SELECT " + coverCandidateColumns() + " FROM novel_book_cover_candidate" + where
-                        + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                COVER_CANDIDATE_MAPPER,
-                pageArguments.toArray());
-        return new CandidatePage(items, total == null ? 0 : total, page, size);
+        Page<MediaAssetPageMapper.CoverCandidateRow> request = new Page<>(Math.addExact((long) page, 1L), size, true);
+        IPage<MediaAssetPageMapper.CoverCandidateRow> result = mediaAssetPageMapper.selectCoverCandidatePage(
+                request,
+                requestedStatus == null ? null : requestedStatus.name());
+        return new CandidatePage(
+                result.getRecords().stream().map(MediaCarouselRepository::coverCandidate).toList(),
+                result.getTotal(),
+                page,
+                size);
+    }
+
+    /** Resolves candidate-page books in one query; the caller adds cover bindings in its own batch. */
+    public Map<Long, Book> findBooksByIds(List<Long> bookIds) {
+        if (bookIds == null || bookIds.isEmpty()) return Map.of();
+        List<Long> ids = bookIds.stream().distinct().toList();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        return jdbc.query(
+                        "SELECT " + rawBookColumns() + " FROM novel_book WHERE id IN (" + placeholders + ")",
+                        rawBookMapper(),
+                        ids.toArray())
+                .stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(Book::id, book -> book));
     }
 
     public void resolveCoverCandidate(
@@ -694,6 +701,20 @@ public class MediaCarouselRepository {
                 instant(row.getUpdatedAt()),
                 instant(row.getArchivedAt()),
                 instant(row.getDeletedAt()));
+    }
+
+    private static BookCoverCandidate coverCandidate(MediaAssetPageMapper.CoverCandidateRow row) {
+        return new BookCoverCandidate(
+                row.getId(),
+                row.getBookId(),
+                UUID.fromString(row.getAssetId()),
+                uuid(row.getApprovedAssetId()),
+                BookCoverCandidateStatus.valueOf(row.getStatus()),
+                row.getReviewReason(),
+                row.getCreatedByUserId(),
+                instant(row.getCreatedAt()),
+                row.getReviewedByUserId(),
+                instant(row.getReviewedAt()));
     }
 
     private static long generatedId(KeyHolder keyHolder, String label) {

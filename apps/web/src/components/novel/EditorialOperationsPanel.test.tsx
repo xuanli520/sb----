@@ -25,9 +25,9 @@ function mockEditorialApi() {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
-    if (path.endsWith('/admin/editorial/recommendations/audits?limit=20')) return Promise.resolve(response([]));
-    if (path.endsWith('/admin/hot-searches/audits?limit=20')) return Promise.resolve(response([]));
-    if (path.endsWith('/admin/editorial/recommendations') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(recommendations));
+    if (path.endsWith('/admin/editorial/recommendations/audits?page=0&size=20')) return Promise.resolve(response({ items: [], meta: { total: 0, page: 0, size: 20 } }));
+    if (path.endsWith('/admin/hot-searches/audits?page=0&size=20')) return Promise.resolve(response({ items: [], meta: { total: 0, page: 0, size: 20 } }));
+    if (path.endsWith('/admin/editorial/recommendations?page=0&size=20') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: recommendations, meta: { total: recommendations.length, page: 0, size: 20 } }));
     if (path.endsWith('/admin/editorial/recommendations') && init?.method === 'POST') {
       const created = {
         book: { ...recommendationBook, id: Number(body.bookId), title: '新上架作品' },
@@ -50,7 +50,7 @@ function mockEditorialApi() {
       recommendations = recommendations.filter((item) => item.book.id !== id);
       return Promise.resolve(response(null));
     }
-    if (path.endsWith('/admin/hot-searches') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(terms));
+    if (path.endsWith('/admin/hot-searches?page=0&size=20') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: terms, meta: { total: terms.length, page: 0, size: 20 } }));
     if (path.endsWith('/admin/hot-searches') && init?.method === 'POST') {
       const created = { id: 12, term: String(body.term), enabled: Boolean(body.enabled), rank: Number(body.rank), createdByUserId: 1, updatedByUserId: 1, createdAt: '2026-07-21T08:01:00Z', updatedAt: '2026-07-21T08:01:00Z' };
       terms = [created, ...terms];

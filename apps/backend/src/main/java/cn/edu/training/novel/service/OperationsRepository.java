@@ -3,7 +3,6 @@ package cn.edu.training.novel.service;
 import cn.edu.training.novel.domain.AuthorApplication;
 import cn.edu.training.novel.domain.AuthorProfile;
 import cn.edu.training.novel.domain.SensitiveWord;
-import cn.edu.training.novel.domain.SensitiveWordAudit;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -54,17 +53,6 @@ public class OperationsRepository {
             nullableInstant(resultSet.getTimestamp("disabled_at")),
             instant(resultSet.getTimestamp("created_at")),
             instant(resultSet.getTimestamp("updated_at")));
-    private static final RowMapper<SensitiveWordAudit> SENSITIVE_WORD_AUDIT_MAPPER = (resultSet, rowNumber) -> new SensitiveWordAudit(
-            resultSet.getLong("id"),
-            resultSet.getString("normalized_word"),
-            resultSet.getString("previous_word"),
-            resultSet.getString("word"),
-            resultSet.getObject("previous_enabled", Boolean.class),
-            resultSet.getObject("enabled", Boolean.class),
-            resultSet.getString("action"),
-            resultSet.getString("reason"),
-            resultSet.getLong("operator_user_id"),
-            instant(resultSet.getTimestamp("created_at")));
 
     private final JdbcTemplate jdbc;
 
@@ -225,22 +213,6 @@ public class OperationsRepository {
                 "SELECT word FROM novel_sensitive_word WHERE enabled = TRUE ORDER BY normalized_word ASC",
                 (resultSet, rowNumber) -> resultSet.getString(1));
         return Set.copyOf(new LinkedHashSet<>(words));
-    }
-
-    /** Returns both enabled and disabled terms for the administrator's lifecycle console. */
-    public List<SensitiveWord> sensitiveWordEntries() {
-        return jdbc.query(
-                "SELECT " + SENSITIVE_WORD_COLUMNS + " FROM novel_sensitive_word ORDER BY enabled DESC, normalized_word ASC",
-                SENSITIVE_WORD_MAPPER);
-    }
-
-    public List<SensitiveWordAudit> sensitiveWordAudits(int limit) {
-        return jdbc.query(
-                "SELECT id, normalized_word, previous_word, word, previous_enabled, enabled, action, reason, "
-                        + "operator_user_id, created_at FROM novel_sensitive_word_audit "
-                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
-                SENSITIVE_WORD_AUDIT_MAPPER,
-                limit);
     }
 
     public Optional<SensitiveWord> lockSensitiveWord(String rawNormalizedWord) {

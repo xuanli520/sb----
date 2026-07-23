@@ -1,6 +1,7 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.AccountStatusAudit;
+import cn.edu.training.novel.domain.AccountStatusAuditPage;
 import cn.edu.training.novel.domain.AccountStatusChange;
 import cn.edu.training.novel.domain.AdminAccount;
 import cn.edu.training.novel.domain.AdminAccountPage;
@@ -34,9 +35,9 @@ public class AdminOperationsService {
         return repository.findAccounts(query, filter, page, size);
     }
 
-    public List<AccountStatusAudit> accountStatusAudits(long accountId, int limit) {
+    public AccountStatusAuditPage accountStatusAudits(long accountId, int page, int size) {
         requireExistingAccount(accountId);
-        return repository.findAccountStatusAudits(accountId, limit);
+        return repository.findAccountStatusAudits(accountId, page, size);
     }
 
     /** Every sensitive behavior inspection identifies both the operator and target in audit. */

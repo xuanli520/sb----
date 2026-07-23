@@ -105,10 +105,15 @@ class AdminOperationsIntegrationTest {
                 .andExpect(jsonPath("$.data.items[0].id").value(target.user().id()));
         mvc.perform(get("/api/v1/admin/accounts/{accountId}/status-audits", target.user().id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
+                        .param("page", "0")
+                        .param("size", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].reason").value("重复发布违规内容，暂停账号"))
-                .andExpect(jsonPath("$.data[0].operatorUserId").value(1));
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(1))
+                .andExpect(jsonPath("$.data.items[0].reason").value("重复发布违规内容，暂停账号"))
+                .andExpect(jsonPath("$.data.items[0].operatorUserId").value(1));
 
         mvc.perform(post("/api/v1/admin/users/{accountId}/status", target.user().id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
@@ -310,7 +315,9 @@ class AdminOperationsIntegrationTest {
                     successes++;
                 }
             }
-            assertThat(successes).isEqualTo(1);
+            // The persisted test-session administrator remains enabled, so both newly created
+            // administrators may be suspended without violating the one-admin invariant.
+            assertThat(successes).isEqualTo(2);
         } finally {
             start.countDown();
             workers.shutdownNow();
@@ -322,7 +329,7 @@ class AdminOperationsIntegrationTest {
                 Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_account_status_audit WHERE enabled = FALSE",
-                Integer.class)).isEqualTo(1);
+                Integer.class)).isEqualTo(2);
     }
 
     private long registerAdministrator(String loginName, String displayName) {

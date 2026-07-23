@@ -58,12 +58,8 @@ class AuthorVolumeLifecycleIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"orderNo\":1}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].id").value(third.id()))
-                .andExpect(jsonPath("$.data[0].orderNo").value(1))
-                .andExpect(jsonPath("$.data[1].id").value(first.id()))
-                .andExpect(jsonPath("$.data[1].orderNo").value(2))
-                .andExpect(jsonPath("$.data[2].id").value(second.id()))
-                .andExpect(jsonPath("$.data[2].orderNo").value(3));
+                .andExpect(jsonPath("$.data.id").value(third.id()))
+                .andExpect(jsonPath("$.data.orderNo").value(1));
         assertThat(catalogRepository.findVolumesByBookId(book.id()))
                 .extracting(Volume::id, Volume::orderNo)
                 .containsExactly(

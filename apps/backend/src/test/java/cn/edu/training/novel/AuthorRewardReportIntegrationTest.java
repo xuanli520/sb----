@@ -19,16 +19,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:author_reward_report_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class AuthorRewardReportIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -40,7 +39,7 @@ class AuthorRewardReportIntegrationTest {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
     }
 
@@ -52,7 +51,7 @@ class AuthorRewardReportIntegrationTest {
         successfulReward(4L, 2L, 401L, 900L, Instant.parse("2026-07-05T05:00:00Z"));
 
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items.length()").value(2))
                 .andExpect(jsonPath("$.data.items[0].id").value(newer))
@@ -77,7 +76,7 @@ class AuthorRewardReportIntegrationTest {
                 .hasMessage("insufficient tokens");
 
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items.length()").value(0))
                 .andExpect(jsonPath("$.data.summary.rewardCount").value(0))
@@ -92,7 +91,7 @@ class AuthorRewardReportIntegrationTest {
         successfulReward(2L, 1L, 314L, 11L, Instant.parse("2026-07-01T16:00:00Z"));
 
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("bookId", "1")
                         .param("from", "2026-07-01")
                         .param("to", "2026-07-01"))
@@ -107,7 +106,7 @@ class AuthorRewardReportIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.to").value("2026-07-01"));
 
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("bookId", "2"))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/author/reward-records")
@@ -115,7 +114,7 @@ class AuthorRewardReportIntegrationTest {
                         .param("to", "2026-07-01"))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("from", "2026-07-02")
                         .param("to", "2026-07-01"))
                 .andExpect(status().isBadRequest());
@@ -129,7 +128,7 @@ class AuthorRewardReportIntegrationTest {
         long third = successfulReward(2L, 1L, 323L, 30L, sameMoment);
 
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("page", "0")
                         .param("size", "1"))
                 .andExpect(status().isOk())
@@ -139,7 +138,7 @@ class AuthorRewardReportIntegrationTest {
                 .andExpect(jsonPath("$.data.summary.rewardCount").value(3))
                 .andExpect(jsonPath("$.data.summary.totalTokens").value(60));
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("page", "1")
                         .param("size", "1"))
                 .andExpect(status().isOk())
@@ -148,7 +147,7 @@ class AuthorRewardReportIntegrationTest {
 
         // The first row is not on page one, but verifies that insertion-id tiebreaking is descending.
         mvc.perform(get("/api/v1/author/reward-records")
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .param("page", "2")
                         .param("size", "1"))
                 .andExpect(status().isOk())

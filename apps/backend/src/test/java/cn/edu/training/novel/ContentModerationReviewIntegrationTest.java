@@ -16,6 +16,7 @@ import cn.edu.training.novel.domain.ModerationDecision;
 import cn.edu.training.novel.domain.ModerationReviewDecision;
 import cn.edu.training.novel.service.NovelStore;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
+import cn.edu.training.novel.service.CatalogRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -30,9 +31,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.runtime-mode=TEST",
         "novel.audit.moderation.development-simulation-enabled=true",
         "novel.scheduled-publication.enabled=false",
@@ -42,45 +43,37 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ContentModerationReviewIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired NovelStore store;
     @Autowired MockMvc mvc;
     @Autowired BookModerationSnapshotService bookModerationSnapshotService;
+    @Autowired CatalogRepository catalogRepository;
 
     @Test
-    void adminReviewAppendsOnlyCurrentEvidenceIncludingAlreadyPublishedChapters() throws Exception {
+    void wholeBookReviewAppendsOnlyCurrentEvidenceForTheSubmittedSnapshot() throws Exception {
         Book book = store.createBook(2L, "Evidence linkage", "科幻", "moderation evidence test");
         Chapter original = store.addChapter(
                 2L, book.id(), "Revision candidate", "original safe chapter text", true);
         Chapter stable = store.addChapter(
                 2L, book.id(), "Stable chapter", "stable safe chapter text", true);
-        Chapter revised = store.updateChapter(
-                2L, book.id(), original.id(), "Revision candidate v2", "revised safe chapter text", null);
 
         assertThat(original.status()).isEqualTo(ChapterStatus.PUBLISHED);
         assertThat(stable.status()).isEqualTo(ChapterStatus.PUBLISHED);
-        assertThat(revised.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
-        assertThat(store.book(book.id()).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(store.book(book.id()).status()).isEqualTo(BookStatus.PENDING_REVIEW);
 
         List<ContentModerationAudit> auditsBeforeReview = store.moderationAudits("CHAPTER", 50);
-        ContentModerationAudit staleOriginalAudit = auditFor(
+        ContentModerationAudit originalAudit = auditFor(
                 auditsBeforeReview,
                 original.id(),
                 chapterHash(original.title(), original.content()));
-        ContentModerationAudit currentRevisionAudit = auditFor(
-                auditsBeforeReview,
-                revised.id(),
-                chapterHash(revised.title(), revised.content()));
-        ContentModerationAudit currentPublishedAudit = auditFor(
+        ContentModerationAudit stableAudit = auditFor(
                 auditsBeforeReview,
                 stable.id(),
                 chapterHash(stable.title(), stable.content()));
-        Set<Long> expectedCurrentAuditIds = Set.of(currentRevisionAudit.id(), currentPublishedAudit.id());
+        Set<Long> expectedCurrentAuditIds = Set.of(originalAudit.id(), stableAudit.id());
 
-        assertThat(staleOriginalAudit.id()).isNotIn(expectedCurrentAuditIds);
-        assertThat(currentRevisionAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
-        assertThat(currentPublishedAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
+        assertThat(originalAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
+        assertThat(stableAudit.decision()).isEqualTo(ModerationDecision.SIMULATED_PASS);
 
         assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
         Set<Long> expectedReviewAuditIds = new java.util.LinkedHashSet<>(expectedCurrentAuditIds);
@@ -91,7 +84,7 @@ class ContentModerationReviewIntegrationTest {
         String reason = "current evidence approved by administrator";
         mvc.perform(post("/api/v1/admin/reviews/{bookId}", book.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"" + reason + "\"}"))
                 .andExpect(status().isOk())
@@ -114,12 +107,13 @@ class ContentModerationReviewIntegrationTest {
         mvc.perform(get("/api/v1/admin/moderation-reviews")
                         .param("bookId", Long.toString(book.id()))
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(expectedReviewAuditIds.size()))
-                .andExpect(jsonPath("$.data[0].reviewerUserId").value(1))
-                .andExpect(jsonPath("$.data[0].decision").value("APPROVED"))
-                .andExpect(jsonPath("$.data[0].reason").value(reason));
+                .andExpect(jsonPath("$.data.items.length()").value(expectedReviewAuditIds.size()))
+                .andExpect(jsonPath("$.data.meta.total").value(expectedReviewAuditIds.size()))
+                .andExpect(jsonPath("$.data.items[0].reviewerUserId").value(1))
+                .andExpect(jsonPath("$.data.items[0].decision").value("APPROVED"))
+                .andExpect(jsonPath("$.data.items[0].reason").value(reason));
 
         assertThat(store.moderationAudits("CHAPTER", 50))
                 .containsExactlyInAnyOrderElementsOf(auditsBeforeReview);
@@ -137,7 +131,7 @@ class ContentModerationReviewIntegrationTest {
         assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
 
         Book rejected = store.review(1L, book.id(), false, "rewrite required");
-        Chapter returnedDraft = store.authorChapters(2L, book.id()).getFirst();
+        Chapter returnedDraft = catalogRepository.findChaptersByBookId(book.id()).getFirst();
         List<ContentModerationReview> archivedReviews = store.moderationReviews(book.id(), 50);
 
         assertThat(rejected.status()).isEqualTo(BookStatus.REJECTED);

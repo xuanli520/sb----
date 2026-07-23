@@ -111,12 +111,14 @@ function mockReaderApi(pageMode: PageMode, progress: unknown = null, options: Re
       recommendationVoteCount: 0,
       monthlyVoteCount: 0,
     }));
-    const chapterCommentsMatch = path.match(/\/public\/books\/7\/comments\?chapterId=(\d+)$/);
+    const chapterCommentsMatch = path.match(/\/(?:public|account)\/books\/7\/comments\?chapterId=(\d+)&page=(\d+)&size=(\d+)$/);
     if (chapterCommentsMatch) {
       const chapterId = Number(chapterCommentsMatch[1]);
+      const page = Number(chapterCommentsMatch[2]);
+      const size = Number(chapterCommentsMatch[3]);
       const items = options.chapterComments?.[chapterId] ?? [];
       return options.chapterCommentsHandler?.(chapterId, input, init)
-        ?? Promise.resolve(response({ items, meta: { total: items.length, page: 0, size: 20 } }));
+        ?? Promise.resolve(response({ items, meta: { total: items.length, page, size } }));
     }
     if (path.endsWith('/account/preferences/reading')) {
       if (init?.method === 'PUT') return Promise.resolve(response(JSON.parse(String(init.body))));
@@ -586,11 +588,40 @@ describe('reader page modes', () => {
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/novel/public/books/7/comments?chapterId=101',
+      '/api/novel/public/books/7/comments?chapterId=101&page=0&size=20',
       expect.anything(),
     ));
     expect(await screen.findByText('只属于第一章的评论')).toBeTruthy();
     expect(screen.queryByText('详情接口中的全书评论')).toBeNull();
+  });
+
+  it('paginates chapter comments through the shared reader controls', async () => {
+    const fetchMock = await renderReader('slide', [], '潮汐之前', {
+      chapterCommentsHandler: (_chapterId, input) => {
+        const page = Number(new URL(String(input), 'https://novel.test').searchParams.get('page'));
+        return Promise.resolve(response({
+          items: [{
+            id: 400 + page,
+            bookId: 7,
+            chapterId: 101,
+            userId: 9,
+            authorName: '分页读者',
+            content: page === 0 ? '第一页章评' : '第二页章评',
+            status: 'VISIBLE',
+            createdAt: '2026-07-21T00:00:00Z',
+          }],
+          meta: { total: 21, page, size: 20 },
+        }));
+      },
+    });
+
+    expect(await screen.findByText('第一页章评')).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: '下一页' }));
+    expect(await screen.findByText('第二页章评')).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/novel/public/books/7/comments?chapterId=101&page=1&size=20',
+      expect.anything(),
+    ));
   });
 
   it('ignores a slower comment response from the previously selected chapter', async () => {
@@ -603,13 +634,13 @@ describe('reader page modes', () => {
     });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/novel/public/books/7/comments?chapterId=101',
+      '/api/novel/public/books/7/comments?chapterId=101&page=0&size=20',
       expect.anything(),
     ));
     fireEvent.click(screen.getByRole('button', { name: '下一章' }));
     await screen.findByRole('heading', { name: '灯塔来信' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/novel/public/books/7/comments?chapterId=102',
+      '/api/novel/public/books/7/comments?chapterId=102&page=0&size=20',
       expect.anything(),
     ));
 
@@ -718,7 +749,7 @@ describe('reader page modes', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('评论服务暂不可用');
     fireEvent.click(screen.getByRole('button', { name: '重新加载本章评论' }));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith('/public/books/7/comments?chapterId=101'))).toHaveLength(2));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith('/public/books/7/comments?chapterId=101&page=0&size=20'))).toHaveLength(2));
     expect(await screen.findByText('重新加载后的本章评论')).toBeTruthy();
   });
 

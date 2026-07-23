@@ -173,13 +173,13 @@ public class AdminHomeCarouselController implements UserResolver {
     @GetMapping("/media/assets/{assetId}")
     ApiResponse<MediaAsset> asset(HttpServletRequest request, @PathVariable UUID assetId) {
         administrator(request);
-        return ApiResponse.ok(mediaAssets.asset(assetId));
+        return ApiResponse.ok(mediaAssets.platformBannerAsset(assetId));
     }
 
     @GetMapping("/media/assets/{assetId}/bindings")
     ApiResponse<List<MediaAssetBinding>> bindings(HttpServletRequest request, @PathVariable UUID assetId) {
         administrator(request);
-        return ApiResponse.ok(mediaAssets.bindings(assetId));
+        return ApiResponse.ok(mediaAssets.platformBannerBindings(assetId));
     }
 
     @GetMapping("/media/assets/{assetId}/audits")
@@ -188,7 +188,7 @@ public class AdminHomeCarouselController implements UserResolver {
             @PathVariable UUID assetId,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
         administrator(request);
-        return ApiResponse.ok(mediaAssets.audits(assetId, limit));
+        return ApiResponse.ok(mediaAssets.platformBannerAudits(assetId, limit));
     }
 
     @PostMapping("/media/assets/{assetId}/archive")

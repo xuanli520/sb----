@@ -39,6 +39,7 @@ type AccountStatusAudit = {
   operatorUserId: number;
   createdAt: string;
 };
+type AccountStatusAuditPage = { items: AccountStatusAudit[]; total: number; page: number; size: number };
 type AccountStatusChange = { account: Account; changed: boolean; audit: AccountStatusAudit | null };
 type AccountBehaviorSummary = {
   account: Account;
@@ -285,7 +286,8 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
   const [tags, setTags] = useState<TaxonomyItem[]>([]);
   const [statusReasons, setStatusReasons] = useState<Record<number, string>>({});
   const [auditAccount, setAuditAccount] = useState<Account>();
-  const [accountAudits, setAccountAudits] = useState<AccountStatusAudit[]>([]);
+  const [accountAuditPage, setAccountAuditPage] = useState<AccountStatusAuditPage>();
+  const [accountAuditsLoading, setAccountAuditsLoading] = useState(false);
   const [behaviorAccount, setBehaviorAccount] = useState<Account>();
   const [behaviorSummary, setBehaviorSummary] = useState<AccountBehaviorSummary>();
   const [behaviorEvents, setBehaviorEvents] = useState<AccountBehaviorEventPage>();
@@ -360,14 +362,23 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
     }
   };
 
+  const loadAccountAudits = async (account: Account, page: number, openDialog = false) => {
+    setAccountAuditsLoading(true);
+    try {
+      const next = await novelApi<AccountStatusAuditPage>(`admin/accounts/${account.id}/status-audits?page=${page}&size=20`, 'admin');
+      setAccountAuditPage(next);
+      if (openDialog) setAuditAccount(account);
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '账号审计记录暂时无法加载。' });
+    } finally {
+      setAccountAuditsLoading(false);
+    }
+  };
+
   const openAccountAudit = async (account: Account) => {
     setPendingAction(`account-audit-${account.id}`);
     try {
-      const audits = await novelApi<AccountStatusAudit[]>(`admin/accounts/${account.id}/status-audits?limit=20`, 'admin');
-      setAccountAudits(audits);
-      setAuditAccount(account);
-    } catch (reason) {
-      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '账号审计记录暂时无法加载。' });
+      await loadAccountAudits(account, 0, true);
     } finally {
       setPendingAction(undefined);
     }
@@ -557,12 +568,20 @@ export function AdminOperationsPanels({ mode = 'all' }: { mode?: 'all' | 'accoun
         <TaxonomyCard type="TAG" items={tags} loading={taxonomyLoading} hasLoaded={taxonomyLoaded} busyAction={pendingAction} onCreate={createTaxonomy} onUpdate={updateTaxonomy} />
       </div> : null}
 
-      <Dialog open={Boolean(auditAccount)} onOpenChange={(open) => { if (!open) setAuditAccount(undefined); }}>
+      <Dialog open={Boolean(auditAccount)} onOpenChange={(open) => {
+        if (!open) {
+          setAuditAccount(undefined);
+          setAccountAuditPage(undefined);
+        }
+      }}>
         <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-xl">
-          <DialogHeader><DialogTitle className="text-stone-950">账号状态审计</DialogTitle><DialogDescription className="text-stone-600">{auditAccount ? `${auditAccount.displayName} 的最近状态决定` : ''}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="text-stone-950">账号状态审计</DialogTitle><DialogDescription className="text-stone-600">{auditAccount ? `${auditAccount.displayName} 的状态决定记录` : ''}</DialogDescription></DialogHeader>
           <div className="max-h-80 overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">
-            {accountAudits.length === 0 ? <p className="py-6 text-center text-sm text-stone-500">暂未记录状态变更。</p> : accountAudits.map((audit) => <article key={audit.id} className="py-4"><div className="flex items-center gap-2"><AccountState enabled={audit.enabled} /><span className="text-xs text-stone-500">操作人 #{audit.operatorUserId} · {displayTime(audit.createdAt)}</span></div><p className="mt-2 text-sm leading-6 text-stone-700">{audit.reason}</p></article>)}
+            {accountAuditsLoading ? <div className="space-y-3 py-5"><Skeleton className="h-14 rounded-none bg-stone-100" /><Skeleton className="h-14 rounded-none bg-stone-100" /></div> : null}
+            {!accountAuditsLoading && !accountAuditPage?.items.length ? <p className="py-6 text-center text-sm text-stone-500">暂未记录状态变更。</p> : null}
+            {!accountAuditsLoading && accountAuditPage?.items.map((audit) => <article key={audit.id} className="py-4"><div className="flex items-center gap-2"><AccountState enabled={audit.enabled} /><span className="text-xs text-stone-500">操作人 #{audit.operatorUserId} · {displayTime(audit.createdAt)}</span></div><p className="mt-2 text-sm leading-6 text-stone-700">{audit.reason}</p></article>)}
           </div>
+          {auditAccount && accountAuditPage ? <PageControls label="账号状态审计" page={accountAuditPage.page} size={accountAuditPage.size} total={accountAuditPage.total} loading={accountAuditsLoading} onPageChange={(page) => void loadAccountAudits(auditAccount, page)} /> : null}
         </DialogContent>
       </Dialog>
 

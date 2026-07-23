@@ -17,23 +17,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/ta
 import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice, NovelPageHeader, NovelShell, NovelStatusBadge, formatWordCount } from '@/components/novel/NovelShell';
 import { BookCover } from '@/components/novel/BookCover';
-import { AuthorAnalyticsReport, AuthorBookPage, AuthorCommentPage, AuthorCoverUploadResult, AuthorModerationAdvice, Book, BookCoverCandidate, BookStatusAuditPage, ChapterCandidate, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
+import { AuthorAnalyticsReport, AuthorBookPage, AuthorCommentPage, AuthorCoverUploadResult, AuthorModerationAdvice, AuthorWorkspaceChapter, AuthorWorkspaceChapterPage, AuthorWorkspaceVolume, AuthorWorkspaceVolumePage, Book, BookCoverCandidate, BookStatusAuditPage, ParagraphAnnotationPage, novelApi } from '@/features/novel/api';
 
-type Volume = { id: number; bookId: number; title: string; orderNo: number; createdAt: string };
+type Volume = AuthorWorkspaceVolume;
 type VolumeDeleteResult = { id: number; deleted: boolean; detachedChapterCount: number };
-type AuthorChapter = {
-  id: number;
-  bookId: number;
-  volumeId: number | null;
-  title: string;
-  content: string;
-  published: boolean;
-  status: string;
-  scheduledPublishAt: string | null;
-  publishedAt: string | null;
-  reviewReason: string;
-  orderNo: number;
-};
+type AuthorChapter = AuthorWorkspaceChapter;
 type RewardRecord = { id: number; bookId: number; bookTitle: string; rewarderUserId: number; tokenAmount: number; rewardedAt: string };
 type RewardReport = {
   items: RewardRecord[];
@@ -53,6 +41,7 @@ const rewardPageSize = 10;
 const feedbackPageSize = 20;
 const authorBooksPageSize = 12;
 const bookStatusAuditPageSize = 12;
+const workspacePageSize = 20;
 
 function canEditBook(book: Book) {
   return book.status === 'DRAFT' || book.status === 'REJECTED';
@@ -103,6 +92,11 @@ function bookStatusAuditsPath(bookId: number, page: number) {
   return `author/books/${bookId}/status-audits?${parameters.toString()}`;
 }
 
+function workspacePath(bookId: number, resource: 'volumes' | 'chapters', page: number) {
+  const parameters = new URLSearchParams({ page: page.toString(), size: workspacePageSize.toString() });
+  return `author/books/${bookId}/${resource}?${parameters.toString()}`;
+}
+
 function InteractionStatusBadge({ status }: { status: string }) {
   const meta = {
     PENDING_REVIEW: { label: '待审核', className: 'border-amber-300 bg-amber-50 text-amber-900' },
@@ -119,11 +113,13 @@ function FeedbackPagination({
   meta,
   loading,
   onPageChange,
+  anchor = '#author-feedback-heading',
 }: {
   label: string;
   meta: FeedbackPageMeta;
   loading: boolean;
   onPageChange: (page: number) => void;
+  anchor?: string;
 }) {
   const totalPages = Math.max(1, Math.ceil(meta.total / meta.size));
   if (totalPages <= 1) return null;
@@ -137,7 +133,7 @@ function FeedbackPagination({
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
-              href="#author-feedback-heading"
+              href={anchor}
               onClick={(event) => {
                 event.preventDefault();
                 if (!previousDisabled) onPageChange(meta.page - 1);
@@ -152,7 +148,7 @@ function FeedbackPagination({
           </PaginationItem>
           <PaginationItem>
             <PaginationNext
-              href="#author-feedback-heading"
+              href={anchor}
               onClick={(event) => {
                 event.preventDefault();
                 if (!nextDisabled) onPageChange(meta.page + 1);
@@ -295,8 +291,11 @@ export default function AuthorPage() {
   const [booksPageIndex, setBooksPageIndex] = useState(0);
   const [selectedBookId, setSelectedBookId] = useState<number>();
   const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [volumePage, setVolumePage] = useState<AuthorWorkspaceVolumePage>();
+  const [volumePageIndex, setVolumePageIndex] = useState(0);
   const [chapters, setChapters] = useState<AuthorChapter[]>([]);
-  const [chapterCandidates, setChapterCandidates] = useState<ChapterCandidate[]>([]);
+  const [chapterPage, setChapterPage] = useState<AuthorWorkspaceChapterPage>();
+  const [chapterPageIndex, setChapterPageIndex] = useState(0);
   const [selectedVolumeId, setSelectedVolumeId] = useState<number>();
   const [selectedDraftId, setSelectedDraftId] = useState<number>();
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>('comments');
@@ -433,28 +432,31 @@ export default function AuthorPage() {
     setWorkspaceLoading(true);
     setWorkspaceError('');
     try {
-      const [volumeItems, chapterItems, candidateItems] = await Promise.all([
-        novelApi<Volume[]>(`author/books/${bookId}/volumes`, 'author'),
-        novelApi<AuthorChapter[]>(`author/books/${bookId}/chapters`, 'author'),
-        novelApi<ChapterCandidate[]>(`author/books/${bookId}/chapter-candidates`, 'author'),
+      const [volumeResult, chapterResult] = await Promise.all([
+        novelApi<AuthorWorkspaceVolumePage>(workspacePath(bookId, 'volumes', volumePageIndex), 'author'),
+        novelApi<AuthorWorkspaceChapterPage>(workspacePath(bookId, 'chapters', chapterPageIndex), 'author'),
       ]);
       if (requestId === workspaceRequestId.current) {
-        setVolumes(volumeItems);
-        setChapters(chapterItems);
-        setChapterCandidates(candidateItems);
+        setVolumes(volumeResult.items);
+        setVolumePage(volumeResult);
+        setChapters(chapterResult.items);
+        setChapterPage(chapterResult);
+        if (volumeResult.meta.page !== volumePageIndex) setVolumePageIndex(volumeResult.meta.page);
+        if (chapterResult.meta.page !== chapterPageIndex) setChapterPageIndex(chapterResult.meta.page);
       }
     } catch (reason) {
       if (requestId === workspaceRequestId.current) {
         const message = reason instanceof Error ? reason.message : '卷册和章节暂时无法加载。';
         setVolumes([]);
+        setVolumePage(undefined);
         setChapters([]);
-        setChapterCandidates([]);
+        setChapterPage(undefined);
         setWorkspaceError(message);
       }
     } finally {
       if (requestId === workspaceRequestId.current) setWorkspaceLoading(false);
     }
-  }, []);
+  }, [chapterPageIndex, volumePageIndex]);
 
   const loadBookStatusAudits = useCallback(async (bookId: number, page: number) => {
     const requestId = ++bookStatusAuditRequestId.current;
@@ -480,18 +482,24 @@ export default function AuthorPage() {
     if (!selectedBookId) {
       workspaceRequestId.current += 1;
       setVolumes([]);
+      setVolumePage(undefined);
       setChapters([]);
-      setChapterCandidates([]);
+      setChapterPage(undefined);
       setSelectedVolumeId(undefined);
       setSelectedDraftId(undefined);
       setWorkspaceLoading(false);
       setWorkspaceError('');
       return;
     }
+    void loadBookWorkspace(selectedBookId);
+  }, [chapterPageIndex, loadBookWorkspace, selectedBookId, volumePageIndex]);
+
+  useEffect(() => {
     setSelectedVolumeId(undefined);
     setSelectedDraftId(undefined);
-    void loadBookWorkspace(selectedBookId);
-  }, [loadBookWorkspace, selectedBookId]);
+    setVolumePageIndex(0);
+    setChapterPageIndex(0);
+  }, [selectedBookId]);
 
   useEffect(() => {
     if (!selectedBookId) {
@@ -510,15 +518,13 @@ export default function AuthorPage() {
   }, [selectedBookId]);
 
   useEffect(() => {
-    setSelectedVolumeId((current) => volumes.some((volume) => volume.id === current) ? current : volumes[0]?.id);
+    setSelectedVolumeId((current) => current ?? volumes[0]?.id);
   }, [volumes]);
 
   const draftChapters = useMemo(() => chapters.filter((chapter) => chapter.status === 'DRAFT'), [chapters]);
-  const pendingCandidateByTargetChapterId = useMemo(() => new Map(
-    chapterCandidates
-      .filter((candidate) => candidate.status === 'PENDING_REVIEW')
-      .map((candidate) => [candidate.targetChapterId, candidate]),
-  ), [chapterCandidates]);
+  const latestCandidateByTargetChapterId = useMemo(() => new Map(
+    chapters.flatMap((chapter) => chapter.latestCandidate ? [[chapter.id, chapter.latestCandidate] as const] : []),
+  ), [chapters]);
 
   useEffect(() => {
     setSelectedDraftId((current) => draftChapters.some((chapter) => chapter.id === current) ? current : draftChapters[0]?.id);
@@ -786,7 +792,8 @@ export default function AuthorPage() {
   };
 
   const openChapterEditor = (chapter: AuthorChapter) => {
-    const pendingCandidate = pendingCandidateByTargetChapterId.get(chapter.id);
+    const latestCandidate = latestCandidateByTargetChapterId.get(chapter.id);
+    const pendingCandidate = latestCandidate?.status === 'PENDING_REVIEW' ? latestCandidate : undefined;
     if (!canEditChapter(chapter) || pendingCandidate) {
       announce(
         pendingCandidate?.type === 'NEW_CHAPTER'
@@ -894,16 +901,18 @@ export default function AuthorPage() {
   const moveVolume = async (volume: Volume, offset: number) => {
     if (!selectedBookId) return;
     const orderNo = volume.orderNo + offset;
-    if (orderNo < 1 || orderNo > volumes.length) return;
+    const totalVolumes = volumePage?.meta.total ?? volumes.length;
+    if (orderNo < 1 || orderNo > totalVolumes) return;
 
     setPendingAction('reorder-volume');
     try {
-      const reordered = await novelApi<Volume[]>(`author/books/${selectedBookId}/volumes/${volume.id}/order`, 'author', {
+      const reordered = await novelApi<Volume>(`author/books/${selectedBookId}/volumes/${volume.id}/order`, 'author', {
         method: 'PUT',
         body: JSON.stringify({ orderNo }),
       });
-      setVolumes(reordered);
+      setVolumes((current) => current.map((item) => item.id === reordered.id ? { ...item, ...reordered } : item));
       announce(`《${volume.title}》已移动到第 ${orderNo} 卷`);
+      await loadBookWorkspace(selectedBookId);
     } catch (reason) {
       announce(`卷册排序未保存：${failureMessage(reason, '服务暂时无法调整卷册顺序。')}`, 'error');
     } finally {
@@ -1001,9 +1010,9 @@ export default function AuthorPage() {
         body: JSON.stringify({ title: volumeTitle.trim() }),
       });
       setVolumeTitle('');
-      setSelectedVolumeId(volume.id);
       announce(`《${selectedBook?.title ?? '当前作品'}》已新建${volume.title}`);
       await loadBookWorkspace(selectedBookId);
+      setSelectedVolumeId(volume.id);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '新建卷册失败，请稍后重试。', 'error');
     } finally {
@@ -1022,19 +1031,14 @@ export default function AuthorPage() {
     }
     setPendingAction(submit ? 'submit-chapter' : 'draft-chapter');
     try {
-      const path = submit
-        ? `author/books/${selectedBookId}/chapters`
-        : `author/books/${selectedBookId}/volumes/${selectedVolumeId}/chapters`;
-      const result = await novelApi<AuthorChapter>(path, 'author', {
+      const result = await novelApi<AuthorChapter>(`author/books/${selectedBookId}/chapters`, 'author', {
         method: 'POST',
-        body: JSON.stringify(submit
-          ? {
-              title: chapterTitle.trim(),
-              content: chapterContent.trim(),
-              submit: true,
-              ...(selectedVolumeId ? { volumeId: selectedVolumeId } : {}),
-            }
-          : { title: chapterTitle.trim(), content: chapterContent.trim() }),
+        body: JSON.stringify({
+          title: chapterTitle.trim(),
+          content: chapterContent.trim(),
+          submit,
+          ...(selectedVolumeId ? { volumeId: selectedVolumeId } : {}),
+        }),
       });
       setChapterTitle('');
       setChapterContent('');
@@ -1341,7 +1345,7 @@ export default function AuthorPage() {
                 <div className="divide-y divide-stone-100" aria-label="卷册列表">
                   {volumes.map((volume) => {
                     const active = volume.id === selectedVolumeId;
-                    const chapterCount = chapters.filter((chapter) => chapter.volumeId === volume.id).length;
+                    const chapterCount = volume.chapterCount;
                     return (
                       <div key={volume.id} className={`flex items-center gap-2 px-5 py-3 ${active ? 'bg-emerald-50' : 'hover:bg-stone-50'}`}>
                         <Button type="button" variant="ghost" onClick={() => setSelectedVolumeId(volume.id)} aria-pressed={active} className="h-auto min-w-0 flex-1 justify-between gap-4 rounded-none px-0 py-1 text-left text-inherit hover:bg-transparent">
@@ -1350,7 +1354,7 @@ export default function AuthorPage() {
                         </Button>
                         <div className="flex shrink-0 items-center gap-1">
                           <Button type="button" variant="outline" size="icon" title="上移卷册" aria-label={`上移第 ${volume.orderNo} 卷`} onClick={() => void moveVolume(volume, -1)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE' || volume.orderNo === 1} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowUp size={15} aria-hidden="true" /></Button>
-                          <Button type="button" variant="outline" size="icon" title="下移卷册" aria-label={`下移第 ${volume.orderNo} 卷`} onClick={() => void moveVolume(volume, 1)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE' || volume.orderNo === volumes.length} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowDown size={15} aria-hidden="true" /></Button>
+                          <Button type="button" variant="outline" size="icon" title="下移卷册" aria-label={`下移第 ${volume.orderNo} 卷`} onClick={() => void moveVolume(volume, 1)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE' || volume.orderNo === (volumePage?.meta.total ?? volumes.length)} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowDown size={15} aria-hidden="true" /></Button>
                           <Button type="button" variant="outline" size="icon" title="编辑卷册" aria-label={`编辑第 ${volume.orderNo} 卷`} onClick={() => openVolumeEditor(volume)} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE'} className="size-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" /></Button>
                           <Button type="button" variant="outline" size="icon" title="删除卷册" aria-label={`删除第 ${volume.orderNo} 卷`} onClick={() => openDeleteConfirmation({ kind: 'volume', item: volume })} disabled={pendingAction !== undefined || selectedBook.status === 'OFFLINE'} className="size-8 rounded-none border-rose-200 bg-white text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" /></Button>
                         </div>
@@ -1359,6 +1363,7 @@ export default function AuthorPage() {
                   })}
                 </div>
               ) : null}
+              {!workspaceLoading && !workspaceError && volumePage ? <FeedbackPagination label="卷册列表" meta={volumePage.meta} loading={workspaceLoading} onPageChange={setVolumePageIndex} anchor="#author-volumes-heading" /> : null}
             </>
           ) : null}
         </section>
@@ -1369,7 +1374,7 @@ export default function AuthorPage() {
               <p className="text-xs font-semibold text-emerald-700">章节与存稿</p>
               <h2 id="author-chapters-heading" className="mt-1 text-xl font-semibold text-stone-950">每一章都有明确状态</h2>
             </div>
-            <span className="text-sm text-stone-500">{selectedBook ? `${chapters.length.toLocaleString('zh-CN')} 个章节` : '选择作品后查看'}</span>
+            <span className="text-sm text-stone-500">{selectedBook ? `${(chapterPage?.meta.total ?? chapters.length).toLocaleString('zh-CN')} 个章节` : '选择作品后查看'}</span>
           </div>
 
           {!selectedBook ? <div className="px-5 py-10 text-sm leading-6 text-stone-600">章节、存稿和已排期内容都会按当前作品显示在这里。</div> : null}
@@ -1385,7 +1390,9 @@ export default function AuthorPage() {
             <div className="divide-y divide-stone-100" aria-label="章节列表">
               {chapters.map((chapter) => {
                 const volume = volumes.find((item) => item.id === chapter.volumeId);
-                const pendingCandidate = pendingCandidateByTargetChapterId.get(chapter.id);
+                const latestCandidate = latestCandidateByTargetChapterId.get(chapter.id);
+                const pendingCandidate = latestCandidate?.status === 'PENDING_REVIEW' ? latestCandidate : undefined;
+                const rejectedCandidate = latestCandidate?.status === 'REJECTED' ? latestCandidate : undefined;
                 const schedule = formatPublishTime(chapter.scheduledPublishAt);
                 const canSchedule = chapter.status === 'DRAFT';
                 const editable = canEditChapter(chapter) && !pendingCandidate;
@@ -1395,8 +1402,8 @@ export default function AuthorPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-stone-950">第 {chapter.orderNo} 章 · {chapter.title}</h3><ChapterStatusBadge status={chapter.status} /></div>
-                        <p className="mt-1 text-xs text-stone-500">{volume ? `第 ${volume.orderNo} 卷 · ${volume.title}` : '未归入卷册'}{schedule ? ` · 计划 ${schedule} 发布` : ''}</p>
-                        {pendingCandidate ? <p className="mt-2 text-xs leading-5 text-amber-800">{pendingCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${pendingCandidate.title}》待审核：当前已发布正文保持不变且对读者可读。` : `新章节候选《${pendingCandidate.title}》待审核：通过前不会向读者公开。`}{pendingCandidate.reviewReason ? ` ${pendingCandidate.reviewReason}` : ''}</p> : chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
+                        <p className="mt-1 text-xs text-stone-500">{volume ? `第 ${volume.orderNo} 卷 · ${volume.title}` : chapter.volumeTitle ? `第 ${chapter.volumeOrderNo ?? '?'} 卷 · ${chapter.volumeTitle}` : '未归入卷册'}{schedule ? ` · 计划 ${schedule} 发布` : ''}</p>
+                        {pendingCandidate ? <p className="mt-2 text-xs leading-5 text-amber-800">{pendingCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${pendingCandidate.title}》待审核：当前已发布正文保持不变且对读者可读。` : `新章节候选《${pendingCandidate.title}》待审核：通过前不会向读者公开。`}{pendingCandidate.reviewReason ? ` ${pendingCandidate.reviewReason}` : ''}</p> : rejectedCandidate ? <p className="mt-2 text-xs leading-5 text-rose-700">{rejectedCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${rejectedCandidate.title}》未通过：当前已发布正文保持不变，可修改后重新提交。` : `新章节候选《${rejectedCandidate.title}》未通过，可修改后重新提交。`}{rejectedCandidate.reviewReason ? ` ${rejectedCandidate.reviewReason}` : ''}</p> : chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         {canSchedule ? <Button type="button" variant="outline" onClick={() => setSelectedDraftId(chapter.id)} aria-pressed={selectedDraftId === chapter.id} className={`h-auto rounded-none px-3 py-2 text-sm ${selectedDraftId === chapter.id ? 'border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'}`}>{selectedDraftId === chapter.id ? '待排期草稿' : '选择草稿'}</Button> : null}
@@ -1410,6 +1417,7 @@ export default function AuthorPage() {
               })}
             </div>
           ) : null}
+          {!workspaceLoading && !workspaceError && chapterPage ? <FeedbackPagination label="章节列表" meta={chapterPage.meta} loading={workspaceLoading} onPageChange={setChapterPageIndex} anchor="#author-chapters-heading" /> : null}
         </section>
       </section>
 

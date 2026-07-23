@@ -4,8 +4,16 @@ import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.EditorialRecommendation;
 import cn.edu.training.novel.domain.EditorialRecommendationAudit;
+import cn.edu.training.novel.domain.EditorialRecommendationAuditPage;
+import cn.edu.training.novel.domain.EditorialRecommendationPage;
 import cn.edu.training.novel.domain.HotSearchTerm;
 import cn.edu.training.novel.domain.HotSearchTermAudit;
+import cn.edu.training.novel.domain.HotSearchTermAuditPage;
+import cn.edu.training.novel.domain.HotSearchTermPage;
+import cn.edu.training.novel.domain.PageMeta;
+import cn.edu.training.novel.mapper.EditorialOperationsPageMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -77,9 +85,11 @@ public class EditorialOperationsRepository {
                     instant(resultSet.getTimestamp("created_at")));
 
     private final JdbcTemplate jdbc;
+    private final EditorialOperationsPageMapper pageMapper;
 
-    public EditorialOperationsRepository(JdbcTemplate jdbc) {
+    public EditorialOperationsRepository(JdbcTemplate jdbc, EditorialOperationsPageMapper pageMapper) {
         this.jdbc = jdbc;
+        this.pageMapper = pageMapper;
     }
 
     /** Serializes any request that can rewrite an editorial or hot-search order. */
@@ -93,11 +103,12 @@ public class EditorialOperationsRepository {
         jdbc.update("UPDATE novel_editorial_operation_lock SET updated_at = CURRENT_TIMESTAMP WHERE id = 1");
     }
 
-    public List<EditorialRecommendation> findRecommendations() {
-        return jdbc.query(
-                "SELECT " + BOOK_COLUMNS + ", editorial_rank FROM novel_book "
-                        + "WHERE editorial_rank IS NOT NULL ORDER BY editorial_rank ASC, id ASC",
-                RECOMMENDATION_MAPPER);
+    public EditorialRecommendationPage findRecommendationPage(int page, int size) {
+        IPage<EditorialOperationsPageMapper.EditorialRecommendationRow> result =
+                pageMapper.selectRecommendationPage(pageRequest(page, size, true));
+        return new EditorialRecommendationPage(
+                result.getRecords().stream().map(EditorialOperationsRepository::toRecommendation).toList(),
+                new PageMeta(result.getTotal(), page, size));
     }
 
     public List<EditorialRecommendation> lockRecommendations() {
@@ -165,19 +176,20 @@ public class EditorialOperationsRepository {
                 .orElseThrow(() -> new IllegalStateException("recommendation audit was not saved"));
     }
 
-    public List<EditorialRecommendationAudit> findRecommendationAudits(int limit) {
-        return jdbc.query(
-                "SELECT id, book_id, action, previous_rank, new_rank, details, operator_user_id, created_at "
-                        + "FROM novel_editorial_recommendation_audit ORDER BY created_at DESC, id DESC LIMIT ?",
-                RECOMMENDATION_AUDIT_MAPPER,
-                limit);
+    public EditorialRecommendationAuditPage findRecommendationAuditPage(int page, int size) {
+        IPage<EditorialOperationsPageMapper.EditorialRecommendationAuditRow> result =
+                pageMapper.selectRecommendationAuditPage(pageRequest(page, size, true));
+        return new EditorialRecommendationAuditPage(
+                result.getRecords().stream().map(EditorialOperationsRepository::toRecommendationAudit).toList(),
+                new PageMeta(result.getTotal(), page, size));
     }
 
-    public List<HotSearchTerm> findHotSearchTerms() {
-        return jdbc.query(
-                "SELECT id, term, enabled, display_rank, created_by_user_id, updated_by_user_id, created_at, updated_at "
-                        + "FROM novel_hot_search_term ORDER BY display_rank ASC, id ASC",
-                HOT_SEARCH_TERM_MAPPER);
+    public HotSearchTermPage findHotSearchTermPage(int page, int size) {
+        IPage<EditorialOperationsPageMapper.HotSearchTermRow> result =
+                pageMapper.selectHotSearchTermPage(pageRequest(page, size, true));
+        return new HotSearchTermPage(
+                result.getRecords().stream().map(EditorialOperationsRepository::toHotSearchTerm).toList(),
+                new PageMeta(result.getTotal(), page, size));
     }
 
     public List<HotSearchTerm> lockHotSearchTerms() {
@@ -187,12 +199,12 @@ public class EditorialOperationsRepository {
                 HOT_SEARCH_TERM_MAPPER);
     }
 
-    public List<HotSearchTerm> findEnabledHotSearchTerms(int limit) {
-        return jdbc.query(
-                "SELECT id, term, enabled, display_rank, created_by_user_id, updated_by_user_id, created_at, updated_at "
-                        + "FROM novel_hot_search_term WHERE enabled = TRUE ORDER BY display_rank ASC, id ASC LIMIT ?",
-                HOT_SEARCH_TERM_MAPPER,
-                limit);
+    public List<HotSearchTerm> findEnabledHotSearchTerms(int size) {
+        return pageMapper.selectEnabledHotSearchTermPage(pageRequest(0, size, false))
+                .getRecords()
+                .stream()
+                .map(EditorialOperationsRepository::toHotSearchTerm)
+                .toList();
     }
 
     public Optional<HotSearchTerm> findHotSearchTerm(long termId) {
@@ -302,12 +314,12 @@ public class EditorialOperationsRepository {
                 .orElseThrow(() -> new IllegalStateException("hot-search audit was not saved"));
     }
 
-    public List<HotSearchTermAudit> findHotSearchTermAudits(int limit) {
-        return jdbc.query(
-                "SELECT id, term_id, term, action, previous_rank, new_rank, details, operator_user_id, created_at "
-                        + "FROM novel_hot_search_term_audit ORDER BY created_at DESC, id DESC LIMIT ?",
-                HOT_SEARCH_AUDIT_MAPPER,
-                limit);
+    public HotSearchTermAuditPage findHotSearchTermAuditPage(int page, int size) {
+        IPage<EditorialOperationsPageMapper.HotSearchTermAuditRow> result =
+                pageMapper.selectHotSearchTermAuditPage(pageRequest(page, size, true));
+        return new HotSearchTermAuditPage(
+                result.getRecords().stream().map(EditorialOperationsRepository::toHotSearchTermAudit).toList(),
+                new PageMeta(result.getTotal(), page, size));
     }
 
     public int temporaryRankFor(int index) {
@@ -332,6 +344,72 @@ public class EditorialOperationsRepository {
 
     private <T> Optional<T> queryOne(String sql, RowMapper<T> mapper, Object... args) {
         return jdbc.query(sql, mapper, args).stream().findFirst();
+    }
+
+    private static EditorialRecommendation toRecommendation(EditorialOperationsPageMapper.EditorialRecommendationRow row) {
+        return new EditorialRecommendation(
+                new Book(
+                        row.getBookId(),
+                        row.getBookTitle(),
+                        row.getBookAuthor(),
+                        row.getBookCategory(),
+                        row.getBookWords(),
+                        row.getBookSerialStatus(),
+                        row.getBookSynopsis(),
+                        null,
+                        BookStatus.valueOf(row.getBookStatus()),
+                        row.getBookAuthorId(),
+                        row.getBookHeat(),
+                        row.getBookPurchasePrice()),
+                row.getRank());
+    }
+
+    private static EditorialRecommendationAudit toRecommendationAudit(
+            EditorialOperationsPageMapper.EditorialRecommendationAuditRow row) {
+        return new EditorialRecommendationAudit(
+                row.getId(),
+                row.getBookId(),
+                row.getAction(),
+                row.getPreviousRank(),
+                row.getRank(),
+                row.getDetails(),
+                row.getOperatorUserId(),
+                instant(row.getCreatedAt()));
+    }
+
+    private static HotSearchTerm toHotSearchTerm(EditorialOperationsPageMapper.HotSearchTermRow row) {
+        return new HotSearchTerm(
+                row.getId(),
+                row.getTerm(),
+                row.isEnabled(),
+                row.getRank(),
+                row.getCreatedByUserId(),
+                row.getUpdatedByUserId(),
+                instant(row.getCreatedAt()),
+                instant(row.getUpdatedAt()));
+    }
+
+    private static HotSearchTermAudit toHotSearchTermAudit(EditorialOperationsPageMapper.HotSearchTermAuditRow row) {
+        return new HotSearchTermAudit(
+                row.getId(),
+                row.getTermId(),
+                row.getTerm(),
+                row.getAction(),
+                row.getPreviousRank(),
+                row.getRank(),
+                row.getDetails(),
+                row.getOperatorUserId(),
+                instant(row.getCreatedAt()));
+    }
+
+    private static <T> Page<T> pageRequest(int page, int size, boolean searchCount) {
+        if (page < 0) {
+            throw new IllegalArgumentException("page must be non-negative");
+        }
+        if (size < 1 || size > 100) {
+            throw new IllegalArgumentException("size must be between 1 and 100");
+        }
+        return new Page<>(Math.addExact((long) page, 1L), size, searchCount);
     }
 
     private static int temporaryRank(int index) {

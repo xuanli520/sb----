@@ -108,7 +108,7 @@ class MybatisPaginationRepositoryIntegrationTest {
             assertThat(event.eventType()).isEqualTo("READING_PROGRESS");
             assertThat(event.bookId()).isEqualTo(1L);
         });
-        assertThat(operations.findAccountStatusAudits(accountId, 1)).singleElement()
+        assertThat(operations.findAccountStatusAudits(accountId, 0, 1).items()).singleElement()
                 .satisfies(audit -> assertThat(audit.reason()).isEqualTo("分页测试"));
         assertThat(operations.findTaxonomyAudits(AdminOperationsRepository.TaxonomyType.CATEGORY, 1)).singleElement()
                 .satisfies(audit -> assertThat(audit.details()).isEqualTo("分页测试"));

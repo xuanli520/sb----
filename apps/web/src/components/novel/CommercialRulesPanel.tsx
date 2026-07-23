@@ -6,10 +6,11 @@ import { Button } from '@/app/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Textarea } from '@/app/components/ui/textarea';
 import { InlineNotice } from '@/components/novel/NovelShell';
-import { type CommercialRuleAudit, type CommercialRules, novelApi } from '@/features/novel/api';
+import { type CommercialRuleAudit, type CommercialRuleAuditPage, type CommercialRules, novelApi } from '@/features/novel/api';
 
 type RuleDraft = {
   membershipDaysMaximumPerCode: string;
@@ -22,6 +23,9 @@ type RuleDraft = {
 };
 
 type Notice = { tone: 'success' | 'error'; message: string };
+type PageMeta = { total: number; page: number; size: number };
+
+const auditPageSize = 20;
 
 const emptyDraft: RuleDraft = {
   membershipDaysMaximumPerCode: '',
@@ -74,6 +78,25 @@ function ruleChanges(audit: CommercialRuleAudit) {
   ].filter(([, before, after]) => before !== after);
 }
 
+function AuditPagination({ meta, loading, onPageChange }: { meta: PageMeta; loading: boolean; onPageChange: (page: number) => void }) {
+  const totalPages = Math.max(1, Math.ceil(meta.total / meta.size));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || meta.page <= 0;
+  const nextDisabled = loading || meta.page >= totalPages - 1;
+  return (
+    <div className="flex flex-col gap-3 border-t border-stone-100 pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-stone-500">共 {meta.total.toLocaleString('zh-CN')} 条</p>
+      <Pagination aria-label="商业规则审计分页" className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem><PaginationPrevious href="#commercial-rules-heading" onClick={(event) => { event.preventDefault(); if (!previousDisabled) onPageChange(meta.page - 1); }} aria-disabled={previousDisabled} tabIndex={previousDisabled ? -1 : undefined} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" /></PaginationItem>
+          <PaginationItem><span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-stone-600" aria-live="polite">第 {meta.page + 1} / {totalPages} 页</span></PaginationItem>
+          <PaginationItem><PaginationNext href="#commercial-rules-heading" onClick={(event) => { event.preventDefault(); if (!nextDisabled) onPageChange(meta.page + 1); }} aria-disabled={nextDisabled} tabIndex={nextDisabled ? -1 : undefined} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" /></PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
+}
+
 export function CommercialRulesPanel() {
   const [rules, setRules] = useState<CommercialRules>();
   const [draft, setDraft] = useState<RuleDraft>(emptyDraft);
@@ -82,6 +105,8 @@ export function CommercialRulesPanel() {
   const [notice, setNotice] = useState<Notice>();
   const [auditOpen, setAuditOpen] = useState(false);
   const [audits, setAudits] = useState<CommercialRuleAudit[]>([]);
+  const [auditMeta, setAuditMeta] = useState<PageMeta>();
+  const [auditPage, setAuditPage] = useState(0);
   const [auditsLoading, setAuditsLoading] = useState(false);
   const [auditsError, setAuditsError] = useState('');
 
@@ -148,17 +173,24 @@ export function CommercialRulesPanel() {
     }
   };
 
-  const openAudits = async () => {
-    setAuditOpen(true);
+  const loadAudits = async (page: number) => {
     setAuditsLoading(true);
     setAuditsError('');
     try {
-      setAudits(await novelApi<CommercialRuleAudit[]>('admin/commercial-rules/audits?limit=20', 'admin'));
+      const response = await novelApi<CommercialRuleAuditPage>(`admin/commercial-rules/audits?page=${page}&size=${auditPageSize}`, 'admin');
+      setAudits(response.items);
+      setAuditMeta(response.meta);
+      setAuditPage(response.meta.page);
     } catch (reason) {
       setAuditsError(reason instanceof Error ? reason.message : '商业规则审计暂时无法加载。');
     } finally {
       setAuditsLoading(false);
     }
+  };
+
+  const openAudits = () => {
+    setAuditOpen(true);
+    void loadAudits(0);
   };
 
   return (
@@ -169,7 +201,7 @@ export function CommercialRulesPanel() {
           <h2 id="commercial-rules-heading" className="mt-1 text-xl font-semibold text-stone-950">会员、票与打赏规则</h2>
           <p className="mt-2 text-sm leading-6 text-stone-600">新发放的会员兑换码、读者投票和打赏请求都按当前额度校验。</p>
         </div>
-        <Button type="button" variant="outline" size="icon" title="查看商业规则审计" aria-label="查看商业规则审计" onClick={() => void openAudits()} disabled={auditsLoading} className="h-9 w-9 shrink-0 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><History size={16} aria-hidden="true" /></Button>
+        <Button type="button" variant="outline" size="icon" title="查看商业规则审计" aria-label="查看商业规则审计" onClick={openAudits} disabled={auditsLoading} className="h-9 w-9 shrink-0 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><History size={16} aria-hidden="true" /></Button>
       </div>
 
       {notice ? <div className="px-5 pt-5"><InlineNotice tone={notice.tone}>{notice.message}</InlineNotice></div> : null}
@@ -212,7 +244,7 @@ export function CommercialRulesPanel() {
 
       <Dialog open={auditOpen} onOpenChange={setAuditOpen}>
         <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-2xl">
-          <DialogHeader><DialogTitle className="text-stone-950">商业规则审计</DialogTitle><DialogDescription className="text-stone-600">最近 20 条已保存的前后规则快照</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="text-stone-950">商业规则审计</DialogTitle><DialogDescription className="text-stone-600">已保存的前后规则快照</DialogDescription></DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">
             {auditsLoading ? <div className="space-y-3 py-5"><Skeleton className="h-14 rounded-none bg-stone-100" /><Skeleton className="h-14 rounded-none bg-stone-100" /></div> : null}
             {!auditsLoading && auditsError ? <div className="py-5"><InlineNotice tone="error">{auditsError}</InlineNotice></div> : null}
@@ -222,6 +254,7 @@ export function CommercialRulesPanel() {
               return <article key={audit.id} className="py-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium text-stone-900">操作人 #{audit.operatorUserId}</p><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{displayTime(audit.createdAt)}</time></div><p className="mt-2 text-sm leading-6 text-stone-700">{audit.reason}</p>{changes.length ? <ul className="mt-3 space-y-1 text-xs text-stone-600">{changes.map(([label, before, after]) => <li key={String(label)}>{label}：{String(before)} → {String(after)}</li>)}</ul> : <p className="mt-3 text-xs text-stone-500">未产生额度变化。</p>}</article>;
             })}
           </div>
+          {!auditsLoading && !auditsError && auditMeta ? <AuditPagination meta={auditMeta} loading={auditsLoading} onPageChange={(page) => void loadAudits(page)} /> : null}
         </DialogContent>
       </Dialog>
     </section>

@@ -4,11 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.ContentModerationAudit;
 import cn.edu.training.novel.domain.ModerationDecision;
+import cn.edu.training.novel.domain.ModerationReviewScope;
 import cn.edu.training.novel.service.ContentModelModerationClient;
 import cn.edu.training.novel.service.ContentModerationRequest;
+import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.ModelModerationResult;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Instant;
@@ -33,6 +37,7 @@ import org.springframework.test.annotation.DirtiesContext;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ContentModerationFailureIntegrationTest {
     @Autowired NovelStore store;
+    @Autowired CatalogRepository catalogRepository;
     @Autowired StubModerationClient stub;
 
     @Test
@@ -40,12 +45,14 @@ class ContentModerationFailureIntegrationTest {
         stub.mode = StubMode.ERROR;
 
         Chapter held = store.addChapter(2L, 1L, "模型错误", "安全正文也必须在错误时转人工。", true);
-        ContentModerationAudit audit = onlyAuditFor(held.id());
+        ChapterCandidate candidate = onlyCandidateFor(held.id());
+        ContentModerationAudit audit = onlyAuditFor(candidate.id());
 
-        assertThat(held.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
+        assertThat(held.status()).isEqualTo(ChapterStatus.DRAFT);
         assertThat(held.published()).isFalse();
         assertThat(held.reviewReason()).contains("模型审核不可用或结果无效");
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(audit.decision()).isEqualTo(ModerationDecision.MODEL_ERROR);
         assertThat(audit.errorSummary()).startsWith("provider-error=IllegalStateException; message-sha256:")
                 .doesNotContain("opaque-test-token", "安全正文也必须在错误时转人工。");
@@ -57,18 +64,25 @@ class ContentModerationFailureIntegrationTest {
         stub.mode = StubMode.INVALID;
 
         Chapter held = store.addChapter(2L, 1L, "无效输出", "正文不能被不合法的模型输出放行。", true);
-        ContentModerationAudit audit = onlyAuditFor(held.id());
+        ChapterCandidate candidate = onlyCandidateFor(held.id());
+        ContentModerationAudit audit = onlyAuditFor(candidate.id());
 
-        assertThat(held.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
+        assertThat(held.status()).isEqualTo(ChapterStatus.DRAFT);
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
         assertThat(audit.decision()).isEqualTo(ModerationDecision.INVALID_OUTPUT);
         assertThat(audit.rawResponse()).startsWith("sha256:").doesNotContain("正文不能");
         assertThat(audit.errorSummary()).contains("schema");
     }
 
-    private ContentModerationAudit onlyAuditFor(long chapterId) {
-        List<ContentModerationAudit> audits = store.moderationAudits("CHAPTER", 50).stream()
-                .filter(item -> item.contentId() == chapterId)
+    private ChapterCandidate onlyCandidateFor(long chapterId) {
+        return PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.NEW_CHAPTER, chapterId);
+    }
+
+    private ContentModerationAudit onlyAuditFor(long candidateId) {
+        List<ContentModerationAudit> audits = store.moderationAudits("CHAPTER_CANDIDATE", 50).stream()
+                .filter(item -> item.contentId() == candidateId)
                 .toList();
         assertThat(audits).hasSize(1);
         return audits.getFirst();

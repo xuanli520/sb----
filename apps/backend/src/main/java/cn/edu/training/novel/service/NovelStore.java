@@ -25,6 +25,7 @@ public class NovelStore {
     private final ContentModerationReviewService contentModerationReviewService;
     private final BookModerationSnapshotService bookModerationSnapshotService;
     private final AuthorApplicationPolicyProperties authorApplicationPolicy;
+    private final MediaAssetService mediaAssetService;
     private final HomeCarouselService homeCarouselService;
     private final BookPageService bookPageService;
 
@@ -56,6 +57,7 @@ public class NovelStore {
                 bookModerationSnapshotService,
                 new AuthorApplicationPolicyProperties(Duration.ofDays(7)),
                 null,
+                null,
                 bookPageService);
     }
 
@@ -73,6 +75,7 @@ public class NovelStore {
             ContentModerationReviewService contentModerationReviewService,
             BookModerationSnapshotService bookModerationSnapshotService,
             AuthorApplicationPolicyProperties authorApplicationPolicy,
+            MediaAssetService mediaAssetService,
             HomeCarouselService homeCarouselService,
             BookPageService bookPageService) {
         this.auditTrail = auditTrail;
@@ -87,6 +90,7 @@ public class NovelStore {
         this.contentModerationReviewService = contentModerationReviewService;
         this.bookModerationSnapshotService = bookModerationSnapshotService;
         this.authorApplicationPolicy = authorApplicationPolicy;
+        this.mediaAssetService = mediaAssetService;
         this.homeCarouselService = homeCarouselService;
         this.bookPageService = Objects.requireNonNull(bookPageService, "bookPageService");
     }
@@ -572,6 +576,11 @@ public class NovelStore {
     public Optional<AuthorApplication> currentAuthorApplication(long userId) {
         return operationsRepository.findLatestAuthorApplicationForUser(userId).map(this::withLegacyReapplyAvailability);
     }
+    /**
+     * Legacy persistence-fixture helper. Production callers use AuthorApplicationPageService so
+     * the administrator queue is always database-paginated.
+     */
+    @Deprecated(forRemoval = true)
     public List<AuthorApplication> authorApplications() { return operationsRepository.findPendingAuthorApplications(); }
     @Transactional
     public AuthorApplication decideAuthorApplication(long reviewerUserId,long id,boolean approve,String reason) {
@@ -626,13 +635,6 @@ public class NovelStore {
     }
     /** Internal active vocabulary projection retained for existing moderation callers. */
     public Set<String> sensitiveWords() { return operationsRepository.sensitiveWords(); }
-    public List<SensitiveWord> sensitiveWordEntries() { return operationsRepository.sensitiveWordEntries(); }
-    public List<SensitiveWordAudit> sensitiveWordAudits(int limit) {
-        if (limit < 1 || limit > 100) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sensitive word audit limit must be between 1 and 100");
-        }
-        return operationsRepository.sensitiveWordAudits(limit);
-    }
 
     /** Legacy helper retained for persistence fixtures which do not model an operator account. */
     @Transactional
@@ -789,13 +791,11 @@ public class NovelStore {
                 || chapters.stream().anyMatch(chapter -> catalogRepository.hasExternalChapterReferences(chapter.id()))) {
             throw new IllegalStateException("book has reader or transaction records and cannot be deleted");
         }
+        if (mediaAssetService != null) {
+            mediaAssetService.removeAuthorBookCoverForDeletedBook(userId, book.id());
+        }
         catalogRepository.deleteBookTree(book.id());
         audit("delete book=" + book.id() + " author=" + userId + " words=" + book.words());
-    }
-
-    public List<Volume> authorVolumes(long userId, long bookId) {
-        owned(userId, bookId);
-        return catalogRepository.findVolumesByBookId(bookId);
     }
 
     @Transactional
@@ -824,7 +824,7 @@ public class NovelStore {
      * values first avoids transient violations of the unique (book_id, order_no) constraint.
      */
     @Transactional
-    public List<Volume> reorderVolume(long userId, long bookId, long volumeId, int orderNo) {
+    public Volume reorderVolume(long userId, long bookId, long volumeId, int orderNo) {
         Book book = lockedOwned(userId, bookId);
         requireNotOfflineForAuthorMutation(book);
         List<Volume> lockedVolumes = catalogRepository.findVolumesByBookIdForUpdate(book.id());
@@ -837,9 +837,7 @@ public class NovelStore {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "volume order must be between 1 and " + lockedVolumes.size());
         }
-        if (sourceIndex == orderNo - 1) {
-            return lockedVolumes;
-        }
+        if (sourceIndex == orderNo - 1) return lockedVolumes.get(sourceIndex);
 
         List<Volume> reordered = new ArrayList<>(lockedVolumes);
         Volume moved = reordered.remove(sourceIndex);
@@ -847,8 +845,10 @@ public class NovelStore {
         List<Volume> normalized = normalizeVolumeOrders(reordered);
         catalogRepository.parkVolumeOrders(book.id());
         catalogRepository.writeVolumeOrders(normalized);
+        Volume movedAfterReorder = catalogRepository.findVolumeById(volumeId)
+                .orElseThrow(() -> new NoSuchElementException("volume not found after reorder"));
         audit("reorder volume=" + volumeId + " author=" + userId + " book=" + book.id() + " order=" + orderNo);
-        return catalogRepository.findVolumesByBookId(book.id());
+        return movedAfterReorder;
     }
 
     @Transactional
@@ -876,17 +876,6 @@ public class NovelStore {
         audit("delete volume=" + target.id() + " author=" + userId + " book=" + book.id()
                 + " detached-chapters=" + detachedChapterCount);
         return new VolumeDeleteResult(target.id(), true, detachedChapterCount);
-    }
-
-    public List<Chapter> authorChapters(long userId, long bookId) {
-        owned(userId, bookId);
-        return catalogRepository.findChaptersByBookId(bookId);
-    }
-
-    /** Shows an author the retained incremental proposals without exposing them to readers. */
-    public List<ChapterCandidate> authorChapterCandidates(long userId, long bookId) {
-        owned(userId, bookId);
-        return catalogRepository.findChapterCandidatesByBookId(bookId);
     }
 
     /**

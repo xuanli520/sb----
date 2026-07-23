@@ -23,9 +23,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:author_onboarding_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -57,7 +57,7 @@ class AuthorOnboardingAndBookshelfIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/author-applications/{id}", application.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Development-Principal", "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"材料完整，审核通过\"}"))
                 .andExpect(status().isOk())
@@ -148,7 +148,7 @@ class AuthorOnboardingAndBookshelfIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/author-applications/{id}", application.id())
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header("X-Novel-Development-Principal", "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"" + "x".repeat(1025) + "\"}"))
                 .andExpect(status().isBadRequest());

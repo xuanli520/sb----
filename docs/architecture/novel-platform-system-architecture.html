@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>阅界小说平台系统架构图</title>
+  <style>
+    @font-face { font-family: 'Noto Sans SC'; src: url('../../apps/web/public/fonts/NotoSansSC-Regular.ttf'); }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 56px 64px; background: #ffffff; font-family: 'Noto Sans SC', Arial, sans-serif; }
+    h1 { margin: 0 0 12px; color: #111827; font-size: 36px; font-weight: 700; }
+    p { margin: 0 0 32px; color: #475569; font-size: 18px; }
+    .mermaid { display: flex; justify-content: center; }
+    .mermaid svg { max-width: none; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        fontFamily: 'Noto Sans SC, Arial, sans-serif', fontSize: '16px', primaryTextColor: '#111827',
+        lineColor: '#475569', clusterBkg: '#FFFFFF', clusterBorder: '#94A3B8', edgeLabelBackground: '#FFFFFF'
+      },
+      flowchart: { curve: 'basis', nodeSpacing: 36, rankSpacing: 46, htmlLabels: true, useMaxWidth: false }
+    });
+  </script>
+</head>
+<body>
+  <h1>阅界小说平台系统架构图</h1>
+  <p>实线表示同步请求；虚线表示存储、对象读写或可选外部依赖。</p>
+  <pre class="mermaid">
+flowchart TB
+    classDef actor fill:#EAF3FF,stroke:#2563EB,stroke-width:1.5px,color:#111827
+    classDef edge fill:#EAFBF2,stroke:#15803D,stroke-width:1.5px,color:#111827
+    classDef frontend fill:#FFF7E6,stroke:#D97706,stroke-width:1.5px,color:#111827
+    classDef backend fill:#F3E8FF,stroke:#7E22CE,stroke-width:1.5px,color:#111827
+    classDef data fill:#FFF1F2,stroke:#BE123C,stroke-width:1.5px,color:#111827
+    classDef external fill:#F1F5F9,stroke:#475569,stroke-width:1.5px,color:#111827
+    classDef repo fill:#F8FAFC,stroke:#64748B,stroke-width:1.5px,color:#111827
+
+    U["读者 / 作者 / 运营人员&lt;br/&gt;Browser"]:::actor
+
+    subgraph PUBLIC["对外访问层"]
+      direction LR
+      C["Caddy&lt;br/&gt;TLS 终止"]:::edge
+      N["Nginx&lt;br/&gt;单一 HTTP 入口&lt;br/&gt;/media 只读代理"]:::edge
+    end
+
+    subgraph APP["应用私网 Docker Network"]
+      direction TB
+      W["Next.js Web&lt;br/&gt;App Router + TypeScript + Tailwind&lt;br/&gt;读者端 / 作者端 / 运营端"]:::frontend
+      BFF["Next.js BFF&lt;br/&gt;/api/novel/{public|account|author|admin}&lt;br/&gt;Origin + CSRF 校验、路径白名单&lt;br/&gt;注入内部密钥与后端会话"]:::frontend
+
+      subgraph API["Spring Boot 4 / Java 21 模块化单体"]
+        direction TB
+        REST["REST API 层&lt;br/&gt;Controller + UserResolver&lt;br/&gt;输入、角色、归属、状态机校验"]:::backend
+        AUTH["身份与会话&lt;br/&gt;AuthService / AccountProfileService&lt;br/&gt;账户、角色、后端登录会话、审计"]:::backend
+        CONTENT["目录与创作&lt;br/&gt;Catalog / Book / Chapter 服务&lt;br/&gt;作品、卷章、草稿、排期、发布"]:::backend
+        READER["阅读与互动&lt;br/&gt;Reader / Interaction 服务&lt;br/&gt;书架、进度、书签、评论、段评、投票"]:::backend
+        TRADE["权益与账本&lt;br/&gt;Wallet / Redemption 服务&lt;br/&gt;会员、代币、购买、打赏、幂等"]:::backend
+        OPS["内容运营与审核&lt;br/&gt;Moderation / Editorial / Media 服务&lt;br/&gt;敏感词、审核、推荐、热搜、封面"]:::backend
+        METRICS["指标与定时任务&lt;br/&gt;Analytics / Publication Jobs&lt;br/&gt;作者指标、留存、定时发布"]:::backend
+        PERSIST["JDBC + MyBatis-Plus Repository&lt;br/&gt;Flyway Schema Migration"]:::backend
+      end
+    end
+
+    subgraph DATA["私有数据与对象存储"]
+      direction LR
+      R["Redis 7.4&lt;br/&gt;BFF 不透明会话映射&lt;br/&gt;认证限流"]:::data
+      M["MySQL 8.4&lt;br/&gt;业务数据、账本、审计&lt;br/&gt;阅读活动与指标源"]:::data
+      O["MinIO / S3&lt;br/&gt;封面、轮播图对象&lt;br/&gt;仅 /media 匿名 GET"]:::data
+    end
+
+    subgraph EXTERNAL["后端专属可选依赖"]
+      direction LR
+      Q["Qwen 兼容模型接口&lt;br/&gt;全书内容审核&lt;br/&gt;异常转人工复核"]:::external
+      S["SMTP 服务商&lt;br/&gt;注册邮箱验证码"]:::external
+    end
+
+    subgraph REPO["项目文件结构参考（非运行时服务）"]
+      direction LR
+      WEB_CODE["apps/web/&lt;br/&gt;src/app：页面与 BFF 路由&lt;br/&gt;src/features/novel/api.ts：接口客户端&lt;br/&gt;src/lib/novel：BFF 会话与安全"]:::repo
+      BACKEND_CODE["apps/backend/&lt;br/&gt;api：REST Controller&lt;br/&gt;service：领域服务与定时任务&lt;br/&gt;mapper：持久化映射；domain：模型&lt;br/&gt;resources/db/migration：Flyway SQL"]:::repo
+      INFRA_CODE["infra/&lt;br/&gt;nginx/default.conf：单入口与 /media&lt;br/&gt;caddy/Caddyfile.example：TLS 外层代理"]:::repo
+      OPS_CODE["compose.yaml + Dockerfile&lt;br/&gt;容器编排与镜像构建&lt;br/&gt;scripts/：备份、恢复、部署校验"]:::repo
+      DOCS_CODE["docs/&lt;br/&gt;architecture/：本图与渲染配置&lt;br/&gt;openapi/：版本化 REST 契约&lt;br/&gt;06-deployment-and-recovery.md：部署说明"]:::repo
+    end
+
+    U -->|HTTPS| C
+    C -->|loopback HTTP| N
+    N -->|页面与 BFF 请求| W
+    W -->|同源请求| BFF
+    BFF -->|公开或受保护 REST API&lt;br/&gt;X-Novel-Internal-Key + 后端会话| REST
+    BFF -.->|会话映射 / 认证限流| R
+    N -.->|仅生成的 PNG/JPEG 的 GET| O
+
+    REST --> AUTH
+    REST --> CONTENT
+    REST --> READER
+    REST --> TRADE
+    REST --> OPS
+    REST --> METRICS
+    AUTH --> PERSIST
+    CONTENT --> PERSIST
+    READER --> PERSIST
+    TRADE --> PERSIST
+    OPS --> PERSIST
+    METRICS --> PERSIST
+    PERSIST -.->|事务读写| M
+    OPS -.->|封面与轮播图读写| O
+    OPS -.->|内容审核，后端调用| Q
+    AUTH -.->|发送验证码| S
+    BFF -.->|代码实现| WEB_CODE
+    PERSIST -.->|代码实现| BACKEND_CODE
+    N -.->|配置实现| INFRA_CODE
+    N -.->|部署编排| OPS_CODE
+    REST -.->|接口契约| DOCS_CODE
+
+    class PUBLIC,APP,API,DATA,EXTERNAL,REPO group
+    style PUBLIC fill:#F8FAFC,stroke:#94A3B8,stroke-width:1px
+    style APP fill:#FFFBEB,stroke:#F59E0B,stroke-width:1px
+    style API fill:#FAF5FF,stroke:#A855F7,stroke-width:1px
+    style DATA fill:#FFF7F7,stroke:#FB7185,stroke-width:1px
+    style EXTERNAL fill:#F8FAFC,stroke:#94A3B8,stroke-width:1px,stroke-dasharray: 5 5
+    style REPO fill:#F8FAFC,stroke:#64748B,stroke-width:1px,stroke-dasharray: 5 5
+  </pre>
+</body>
+</html>

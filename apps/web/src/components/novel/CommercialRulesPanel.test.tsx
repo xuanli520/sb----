@@ -25,11 +25,23 @@ function mockCommercialRulesApi() {
     reason: '恢复常规推荐票额度',
     operatorUserId: 1,
     createdAt: '2026-07-21T08:00:00Z',
-  }];
+  }, ...Array.from({ length: 20 }, (_, index) => ({
+    id: 100 + index,
+    previousRules: { ...initialRules },
+    updatedRules: { ...initialRules },
+    reason: `历史规则变更 ${index + 1}`,
+    operatorUserId: 1,
+    createdAt: '2026-07-20T08:00:00Z',
+  }))];
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
-    if (path.endsWith('/admin/commercial-rules/audits?limit=20')) return Promise.resolve(response(audits));
+    const auditMatch = path.match(/\/admin\/commercial-rules\/audits\?page=(\d+)&size=(\d+)$/);
+    if (auditMatch) {
+      const page = Number(auditMatch[1]);
+      const size = Number(auditMatch[2]);
+      return Promise.resolve(response({ items: audits.slice(page * size, (page + 1) * size), meta: { total: audits.length, page, size } }));
+    }
     if (path.endsWith('/admin/commercial-rules') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response(rules));
     if (path.endsWith('/admin/commercial-rules') && init?.method === 'PUT') {
       const previousRules = rules;
@@ -94,6 +106,19 @@ describe('CommercialRulesPanel', () => {
     expect(await screen.findByRole('heading', { name: '商业规则审计' })).toBeTruthy();
     expect(screen.getByText('恢复常规推荐票额度')).toBeTruthy();
     expect(screen.getByText('推荐票/日：8 → 10')).toBeTruthy();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/commercial-rules/audits?limit=20', expect.anything()));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/commercial-rules/audits?page=0&size=20', expect.anything()));
+  });
+
+  it('moves through the server-backed commercial-rule audit pages', async () => {
+    const fetchMock = mockCommercialRulesApi();
+    render(<CommercialRulesPanel />);
+
+    await screen.findByRole('heading', { name: '会员、票与打赏规则' });
+    fireEvent.click(screen.getByRole('button', { name: '查看商业规则审计' }));
+    await screen.findByRole('navigation', { name: '商业规则审计分页' });
+    fireEvent.click(screen.getByRole('link', { name: '下一页' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/commercial-rules/audits?page=1&size=20', expect.anything()));
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '商业规则审计分页' }).textContent).toContain('第 2 / 2 页'));
   });
 });

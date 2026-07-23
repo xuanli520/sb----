@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Check, ClipboardCheck, Clock3, MessageSquareText, Plus, Power, Save, ShieldAlert, ShieldCheck, TextQuote, Trash2, Users, X } from 'lucide-react';
+import { BookOpen, Check, ClipboardCheck, Clock3, History, MessageSquareText, Plus, Power, Save, ShieldAlert, ShieldCheck, TextQuote, Trash2, Users, X } from 'lucide-react';
 import { FormEvent, MouseEvent, useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/app/components/ui/badge';
 import { Button } from '@/app/components/ui/button';
@@ -19,10 +19,9 @@ import { CommercialRulesPanel } from '@/components/novel/CommercialRulesPanel';
 import { EmailDeliverySettingsPanel } from '@/components/novel/EmailDeliverySettingsPanel';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
 import { HomeCarouselOperationsPanel } from '@/components/novel/HomeCarouselOperationsPanel';
-import { Book, BookPresentation, BookPresentationPage, BookStatusAuditPage, ChapterCandidate, ModerationReviewQueueItem, ModerationReviewQueuePage, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, novelApi } from '@/features/novel/api';
+import { AuthorApplication, AuthorApplicationPage, Book, BookPresentation, BookPresentationPage, BookStatusAuditPage, ChapterCandidate, ModerationReviewQueueItem, ModerationReviewQueuePage, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, SensitiveWord, SensitiveWordAudit, SensitiveWordAuditPage, SensitiveWordPage, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
-type Application = { id: number; penName: string; statement: string; status: string };
 type Comment = { id: number; bookId: number; chapterId: number | null; userId: number; authorName: string; content: string; status: string; createdAt: string };
 type CommentPage = { items: Comment[]; meta: { total: number; page: number; size: number } };
 type RedemptionCode = {
@@ -41,16 +40,14 @@ type RedemptionCodePage = { items: RedemptionCode[]; page: number; size: number;
 type GeneratedRedemptionCodeBatch = { batchNo: string; codes: RedemptionCode[] };
 type RedemptionBenefitsDraft = { tokenAmount: string; membershipDays: string; bookId: string; expiresAt: string };
 type Notice = { message: string; tone: 'success' | 'error' };
-type SensitiveWord = {
-  normalizedWord: string;
-  word: string;
-  enabled: boolean;
-  disabledAt: string | null;
-};
 type PageMeta = { total: number; page: number; size: number };
 
 const BOOK_PAGE_SIZE = 12;
 const REVIEW_PAGE_SIZE = 20;
+
+function authorApplicationPath(page: number) {
+  return `admin/author-applications?page=${page}&size=${REVIEW_PAGE_SIZE}`;
+}
 
 export type AdminWorkspaceView =
   | 'all'
@@ -224,7 +221,9 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
   const [bookStatusAuditPageIndex, setBookStatusAuditPageIndex] = useState(0);
   const [bookStatusAuditsLoading, setBookStatusAuditsLoading] = useState(false);
   const [bookStatusAuditsError, setBookStatusAuditsError] = useState('');
-  const [applications, setApplications] = useState<Application[]>([]);
+  const [applications, setApplications] = useState<AuthorApplication[]>([]);
+  const [applicationMeta, setApplicationMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
+  const [applicationPage, setApplicationPage] = useState(0);
   const [commentReviews, setCommentReviews] = useState<Comment[]>([]);
   const [commentReviewMeta, setCommentReviewMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
   const [commentReviewPage, setCommentReviewPage] = useState(0);
@@ -234,9 +233,16 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
   const [annotationReviewPage, setAnnotationReviewPage] = useState(0);
   const [annotationReasons, setAnnotationReasons] = useState<Record<number, string>>({});
   const [words, setWords] = useState<SensitiveWord[]>([]);
+  const [wordMeta, setWordMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
+  const [wordPage, setWordPage] = useState(0);
   const [word, setWord] = useState('');
   const [wordEdits, setWordEdits] = useState<Record<string, string>>({});
   const [wordReasons, setWordReasons] = useState<Record<string, string>>({});
+  const [wordAudits, setWordAudits] = useState<SensitiveWordAudit[]>([]);
+  const [wordAuditMeta, setWordAuditMeta] = useState<PageMeta>();
+  const [wordAuditOpen, setWordAuditOpen] = useState(false);
+  const [wordAuditsLoading, setWordAuditsLoading] = useState(false);
+  const [wordAuditsError, setWordAuditsError] = useState('');
   const [redemptionCodes, setRedemptionCodes] = useState<RedemptionCode[]>([]);
   const [redemptionCodeMeta, setRedemptionCodeMeta] = useState<PageMeta>({ total: 0, page: 0, size: REVIEW_PAGE_SIZE });
   const [redemptionCodePage, setRedemptionCodePage] = useState(0);
@@ -266,8 +272,8 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
           novelApi<BookPresentationPage>(`admin/reviews?page=${reviewPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
           novelApi<ModerationReviewQueuePage>(`admin/reviews/queue?scope=${candidateScope}&page=${candidatePage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
           novelApi<BookPresentationPage>(`admin/books?page=${availabilityPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
-          novelApi<Application[]>('admin/author-applications', 'admin'),
-          novelApi<SensitiveWord[]>('admin/sensitive-words', 'admin'),
+          novelApi<AuthorApplicationPage>(authorApplicationPath(applicationPage), 'admin'),
+          novelApi<SensitiveWordPage>(`admin/sensitive-words?page=${wordPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
           novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
           novelApi<ParagraphAnnotationPage>(`admin/annotations?status=PENDING_REVIEW&page=${annotationReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
           novelApi<RedemptionCodePage>(`admin/redemption-codes?page=${redemptionCodePage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
@@ -279,8 +285,10 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
         setCandidateMeta(nextCandidateQueue.meta);
         setAvailabilityBooks(nextAvailabilityBooks.items);
         setAvailabilityMeta(nextAvailabilityBooks.meta);
-        setApplications(nextApplications);
-        setWords(nextWords);
+        setApplications(nextApplications.items);
+        setApplicationMeta(nextApplications.meta);
+        setWords(nextWords.items);
+        setWordMeta(nextWords.meta);
         setCommentReviews(nextCommentReviews.items);
         setCommentReviewMeta(nextCommentReviews.meta);
         setAnnotationReviews(nextAnnotationReviews.items);
@@ -291,14 +299,15 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
         const [nextDashboard, nextReviews, nextApplications, nextCommentReviews, nextAnnotationReviews] = await Promise.all([
           novelApi<Dashboard>('admin/dashboard', 'admin'),
           novelApi<BookPresentationPage>(`admin/reviews?page=${reviewPage}&size=${BOOK_PAGE_SIZE}`, 'admin'),
-          novelApi<Application[]>('admin/author-applications', 'admin'),
+          novelApi<AuthorApplicationPage>(authorApplicationPath(applicationPage), 'admin'),
           novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
           novelApi<ParagraphAnnotationPage>(`admin/annotations?status=PENDING_REVIEW&page=${annotationReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin'),
         ]);
         setDashboard(nextDashboard);
         setReviews(nextReviews.items);
         setReviewMeta(nextReviews.meta);
-        setApplications(nextApplications);
+        setApplications(nextApplications.items);
+        setApplicationMeta(nextApplications.meta);
         setCommentReviews(nextCommentReviews.items);
         setCommentReviewMeta(nextCommentReviews.meta);
         setAnnotationReviews(nextAnnotationReviews.items);
@@ -317,9 +326,13 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
         setAvailabilityBooks(next.items);
         setAvailabilityMeta(next.meta);
       } else if (view === 'accounts-applications') {
-        setApplications(await novelApi<Application[]>('admin/author-applications', 'admin'));
+        const next = await novelApi<AuthorApplicationPage>(authorApplicationPath(applicationPage), 'admin');
+        setApplications(next.items);
+        setApplicationMeta(next.meta);
       } else if (view === 'content-words') {
-        setWords(await novelApi<SensitiveWord[]>('admin/sensitive-words', 'admin'));
+        const next = await novelApi<SensitiveWordPage>(`admin/sensitive-words?page=${wordPage}&size=${REVIEW_PAGE_SIZE}`, 'admin');
+        setWords(next.items);
+        setWordMeta(next.meta);
       } else if (view === 'review-comments') {
         const next = await novelApi<CommentPage>(`admin/comments?status=PENDING_REVIEW&page=${commentReviewPage}&size=${REVIEW_PAGE_SIZE}`, 'admin');
         setCommentReviews(next.items);
@@ -339,7 +352,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     } finally {
       setLoading(false);
     }
-  }, [annotationReviewPage, availabilityPage, candidatePage, candidateScope, commentReviewPage, redemptionCodePage, reviewPage, view]);
+  }, [annotationReviewPage, applicationPage, availabilityPage, candidatePage, candidateScope, commentReviewPage, redemptionCodePage, reviewPage, view, wordPage]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -446,7 +459,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     }
   };
 
-  const decideApplication = async (application: Application, approve: boolean) => {
+  const decideApplication = async (application: AuthorApplication, approve: boolean) => {
     setPendingAction(`application-${application.id}`);
     try {
       await novelApi(`admin/author-applications/${application.id}`, 'admin', {
@@ -454,7 +467,11 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
         body: JSON.stringify({ approve, reason: approve ? '通过作者申请' : '申请材料需补充' }),
       });
       announce(approve ? '作者申请已通过' : '作者申请已驳回');
-      await load();
+      if (applications.length === 1 && applicationPage > 0) {
+        setApplicationPage((current) => current - 1);
+      } else {
+        await load();
+      }
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '作者申请处理失败，请稍后重试。', 'error');
     } finally {
@@ -610,6 +627,25 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
     }
   };
 
+  const loadSensitiveWordAudits = async (page: number) => {
+    setWordAuditsLoading(true);
+    setWordAuditsError('');
+    try {
+      const next = await novelApi<SensitiveWordAuditPage>(`admin/sensitive-words/audits?page=${page}&size=${REVIEW_PAGE_SIZE}`, 'admin');
+      setWordAudits(next.items);
+      setWordAuditMeta(next.meta);
+    } catch (reason) {
+      setWordAuditsError(reason instanceof Error ? reason.message : '敏感词审计记录暂时无法加载。');
+    } finally {
+      setWordAuditsLoading(false);
+    }
+  };
+
+  const openSensitiveWordAudits = () => {
+    setWordAuditOpen(true);
+    void loadSensitiveWordAudits(0);
+  };
+
   const changeGenerateBenefit = (field: keyof RedemptionBenefitsDraft, value: string) => {
     setGenerateBenefits((current) => ({ ...current, [field]: value }));
   };
@@ -724,7 +760,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
   ] : [];
   const taskQueues = [
     { label: '作品审核', count: dashboard?.pendingReviews ?? reviewMeta.total, href: '/novel-admin/review/books', note: '整书与增量内容等待决定' },
-    { label: '作者准入', count: applications.length, href: '/novel-admin/accounts/applications', note: '等待处理的作者申请' },
+    { label: '作者准入', count: applicationMeta.total, href: '/novel-admin/accounts/applications', note: '等待处理的作者申请' },
     { label: '评论审核', count: commentReviewMeta.total, href: '/novel-admin/review/comments', note: '命中规则的评论' },
     { label: '段评与划线', count: annotationReviewMeta.total, href: '/novel-admin/review/annotations', note: '申请公开的读者内容' },
   ];
@@ -1121,10 +1157,12 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
           {loading ? <div className="p-5"><Skeleton className="h-20 rounded-none bg-stone-100" /></div> : null}
           {!loading && hasLoaded && applications.length === 0 ? <p className="px-5 py-10 text-sm text-stone-500">当前没有待处理申请。</p> : null}
           {!loading && applications.length > 0 ? <div className="divide-y divide-stone-100">{applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><h3 className="font-semibold text-stone-950">{application.penName}</h3><NovelStatusBadge status={application.status} /></div><p className="mt-2 text-sm leading-6 text-stone-600">{application.statement}</p></div><div className="flex shrink-0 gap-2"><Button type="button" variant="outline" size="sm" onClick={() => void decideApplication(application, false)} disabled={pendingAction === `application-${application.id}`} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-rose-700 hover:border-rose-500 hover:text-rose-800">驳回</Button><Button type="button" size="sm" onClick={() => void decideApplication(application, true)} disabled={pendingAction === `application-${application.id}`} className="h-auto rounded-none bg-emerald-700 px-3 py-2 hover:bg-emerald-800">通过</Button></div></article>)}</div> : null}
+          <PageNavigation meta={applicationMeta} onPageChange={setApplicationPage} label="作者申请分页" />
         </div> : null}
 
-        {visible('content-words') ? <form onSubmit={addWord} className="border border-stone-200 bg-white p-5" aria-busy={loading || undefined}>
-          <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-emerald-700">内容规则</p><h2 className="mt-1 text-xl font-semibold text-stone-950">敏感词库</h2></div><ShieldAlert className="text-emerald-700" size={20} aria-hidden="true" /></div>
+        {visible('content-words') ? <>
+        <form onSubmit={addWord} className="border border-stone-200 bg-white p-5" aria-busy={loading || undefined}>
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-emerald-700">内容规则</p><h2 className="mt-1 text-xl font-semibold text-stone-950">敏感词库</h2></div><div className="flex shrink-0 items-center gap-2"><span className="text-xs text-stone-500">{wordMeta.total.toLocaleString('zh-CN')} 条</span><Button type="button" variant="outline" size="icon" title="查看敏感词审计" aria-label="查看敏感词审计" onClick={openSensitiveWordAudits} disabled={wordAuditsLoading} className="h-9 w-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><History size={16} aria-hidden="true" /></Button><ShieldAlert className="text-emerald-700" size={20} aria-hidden="true" /></div></div>
           <p className="mt-3 text-sm leading-6 text-stone-600">词条命中时，章节会进入人工复核，而不会自动上线。</p>
           <div className="mt-5">
             <Label htmlFor="sensitive-word" className="text-stone-700">敏感词</Label>
@@ -1167,7 +1205,28 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
             }) : null}
             {!loading && hasLoaded && words.length === 0 ? <p className="py-4 text-sm text-stone-500">暂未配置词条</p> : null}
           </div>
-        </form> : null}
+          <PageNavigation meta={wordMeta} onPageChange={setWordPage} label="敏感词分页" />
+        </form>
+        <Dialog open={wordAuditOpen} onOpenChange={(open) => {
+          setWordAuditOpen(open);
+          if (!open) {
+            setWordAudits([]);
+            setWordAuditMeta(undefined);
+            setWordAuditsError('');
+          }
+        }}>
+          <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-xl">
+            <DialogHeader><DialogTitle className="text-stone-950">敏感词审计</DialogTitle><DialogDescription className="text-stone-600">词条增删、修改与启停均保留操作人和原因。</DialogDescription></DialogHeader>
+            <div className="max-h-80 overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">
+              {wordAuditsLoading ? <div className="space-y-3 py-5"><Skeleton className="h-14 rounded-none bg-stone-100" /><Skeleton className="h-14 rounded-none bg-stone-100" /></div> : null}
+              {!wordAuditsLoading && wordAuditsError ? <div className="py-5"><InlineNotice tone="error">{wordAuditsError}</InlineNotice></div> : null}
+              {!wordAuditsLoading && !wordAuditsError && wordAudits.length === 0 ? <p className="py-6 text-center text-sm text-stone-500">暂无敏感词操作记录。</p> : null}
+              {!wordAuditsLoading && !wordAuditsError && wordAudits.map((audit) => <article key={audit.id} className="py-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium text-stone-900">{audit.action} · {audit.word ?? audit.normalizedWord}</p><time className="text-xs text-stone-500" dateTime={audit.createdAt}>{formatRedemptionTime(audit.createdAt)}</time></div><p className="mt-2 text-sm leading-6 text-stone-700">{audit.reason}</p><p className="mt-2 text-xs text-stone-500">操作人 #{audit.operatorUserId}</p></article>)}
+            </div>
+            {!wordAuditsLoading && !wordAuditsError && wordAuditMeta ? <PageNavigation meta={wordAuditMeta} onPageChange={(page) => void loadSensitiveWordAudits(page)} label="敏感词审计分页" /> : null}
+          </DialogContent>
+        </Dialog>
+        </> : null}
       </section> : null}
       {visible('settings-commercial') ? <CommercialRulesPanel /> : null}
       {visible('settings-email') ? <EmailDeliverySettingsPanel /> : null}

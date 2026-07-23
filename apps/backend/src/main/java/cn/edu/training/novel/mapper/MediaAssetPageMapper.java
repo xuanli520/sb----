@@ -45,6 +45,28 @@ public interface MediaAssetPageMapper {
             @Param("labelPattern") String labelPattern,
             @Param("idPrefix") String idPrefix);
 
+    /** The stationmaster's cover-candidate queue is also a growth surface, so pagination stays database-owned. */
+    @Select("""
+            <script>
+            SELECT id,
+                   book_id AS bookId,
+                   asset_id AS assetId,
+                   approved_asset_id AS approvedAssetId,
+                   status,
+                   review_reason AS reviewReason,
+                   created_by_user_id AS createdByUserId,
+                   created_at AS createdAt,
+                   reviewed_by_user_id AS reviewedByUserId,
+                   reviewed_at AS reviewedAt
+            FROM novel_book_cover_candidate
+            <if test='status != null'> WHERE status = #{status} </if>
+            ORDER BY created_at DESC, id DESC
+            </script>
+            """)
+    IPage<CoverCandidateRow> selectCoverCandidatePage(
+            Page<CoverCandidateRow> page,
+            @Param("status") String status);
+
     /** JDBC-shaped mapper row keeps enum/UUID conversion at the media repository boundary. */
     final class MediaAssetRow {
         private String id;
@@ -99,5 +121,39 @@ public interface MediaAssetPageMapper {
         public void setArchivedAt(Timestamp archivedAt) { this.archivedAt = archivedAt; }
         public Timestamp getDeletedAt() { return deletedAt; }
         public void setDeletedAt(Timestamp deletedAt) { this.deletedAt = deletedAt; }
+    }
+
+    final class CoverCandidateRow {
+        private long id;
+        private long bookId;
+        private String assetId;
+        private String approvedAssetId;
+        private String status;
+        private String reviewReason;
+        private long createdByUserId;
+        private Timestamp createdAt;
+        private Long reviewedByUserId;
+        private Timestamp reviewedAt;
+
+        public long getId() { return id; }
+        public void setId(long id) { this.id = id; }
+        public long getBookId() { return bookId; }
+        public void setBookId(long bookId) { this.bookId = bookId; }
+        public String getAssetId() { return assetId; }
+        public void setAssetId(String assetId) { this.assetId = assetId; }
+        public String getApprovedAssetId() { return approvedAssetId; }
+        public void setApprovedAssetId(String approvedAssetId) { this.approvedAssetId = approvedAssetId; }
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+        public String getReviewReason() { return reviewReason; }
+        public void setReviewReason(String reviewReason) { this.reviewReason = reviewReason; }
+        public long getCreatedByUserId() { return createdByUserId; }
+        public void setCreatedByUserId(long createdByUserId) { this.createdByUserId = createdByUserId; }
+        public Timestamp getCreatedAt() { return createdAt; }
+        public void setCreatedAt(Timestamp createdAt) { this.createdAt = createdAt; }
+        public Long getReviewedByUserId() { return reviewedByUserId; }
+        public void setReviewedByUserId(Long reviewedByUserId) { this.reviewedByUserId = reviewedByUserId; }
+        public Timestamp getReviewedAt() { return reviewedAt; }
+        public void setReviewedAt(Timestamp reviewedAt) { this.reviewedAt = reviewedAt; }
     }
 }

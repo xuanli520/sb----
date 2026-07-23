@@ -125,6 +125,23 @@ class HomeCarouselIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_media_asset WHERE purpose = 'BOOK_COVER' AND state = 'PENDING_DELETE'",
                 Integer.class)).isEqualTo(1);
+
+        UUID currentCoverAssetId = UUID.fromString(jdbc.queryForObject(
+                "SELECT asset_id FROM novel_media_asset_binding WHERE binding_type = 'BOOK_COVER' AND target_id = ?",
+                String.class,
+                bookId));
+        assertThatThrownBy(() -> mediaAssets.platformBannerAsset(currentCoverAssetId))
+                .isInstanceOf(SecurityException.class);
+
+        store.deleteBook(2L, bookId);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM novel_media_asset_binding WHERE binding_type = 'BOOK_COVER' AND target_id = ?",
+                Integer.class,
+                bookId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT state FROM novel_media_asset WHERE id = ?",
+                String.class,
+                currentCoverAssetId.toString())).isEqualTo(MediaAssetState.PENDING_DELETE.name());
     }
 
     @Test

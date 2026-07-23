@@ -158,8 +158,8 @@ class BookListPaginationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items.length()").value(1))
                 .andExpect(jsonPath("$.data.items[0].scope").value("WHOLE_BOOK"))
-                .andExpect(jsonPath("$.data.items[0].book.id").value(3_002))
-                .andExpect(jsonPath("$.data.meta.total").value(3))
+                .andExpect(jsonPath("$.data.items[0].book.id").value(3_003))
+                .andExpect(jsonPath("$.data.meta.total").value(2))
                 .andExpect(jsonPath("$.data.meta.page").value(1))
                 .andExpect(jsonPath("$.data.meta.size").value(1));
 

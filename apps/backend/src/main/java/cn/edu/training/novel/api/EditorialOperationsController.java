@@ -1,9 +1,11 @@
 package cn.edu.training.novel.api;
 
 import cn.edu.training.novel.domain.EditorialRecommendation;
-import cn.edu.training.novel.domain.EditorialRecommendationAudit;
+import cn.edu.training.novel.domain.EditorialRecommendationAuditPage;
+import cn.edu.training.novel.domain.EditorialRecommendationPage;
 import cn.edu.training.novel.domain.HotSearchTerm;
-import cn.edu.training.novel.domain.HotSearchTermAudit;
+import cn.edu.training.novel.domain.HotSearchTermAuditPage;
+import cn.edu.training.novel.domain.HotSearchTermPage;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.service.CurrentUser;
 import cn.edu.training.novel.service.EditorialOperationsService;
@@ -15,7 +17,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
-import java.util.List;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,9 +40,12 @@ public class EditorialOperationsController implements UserResolver {
     }
 
     @GetMapping("/editorial/recommendations")
-    ApiResponse<List<EditorialRecommendation>> recommendations(HttpServletRequest request) {
+    ApiResponse<EditorialRecommendationPage> recommendations(
+            HttpServletRequest request,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(EditorialOperationsService.MAX_PAGE_SIZE) int size) {
         administrator(request);
-        return ApiResponse.ok(service.recommendations());
+        return ApiResponse.ok(service.recommendations(page, size));
     }
 
     @PostMapping("/editorial/recommendations")
@@ -71,17 +75,21 @@ public class EditorialOperationsController implements UserResolver {
     }
 
     @GetMapping("/editorial/recommendations/audits")
-    ApiResponse<List<EditorialRecommendationAudit>> recommendationAudits(
+    ApiResponse<EditorialRecommendationAuditPage> recommendationAudits(
             HttpServletRequest request,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(EditorialOperationsService.MAX_PAGE_SIZE) int size) {
         administrator(request);
-        return ApiResponse.ok(service.recommendationAudits(limit));
+        return ApiResponse.ok(service.recommendationAudits(page, size));
     }
 
     @GetMapping("/hot-searches")
-    ApiResponse<List<HotSearchTerm>> hotSearchTerms(HttpServletRequest request) {
+    ApiResponse<HotSearchTermPage> hotSearchTerms(
+            HttpServletRequest request,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(EditorialOperationsService.MAX_PAGE_SIZE) int size) {
         administrator(request);
-        return ApiResponse.ok(service.hotSearchTerms());
+        return ApiResponse.ok(service.hotSearchTerms(page, size));
     }
 
     @PostMapping("/hot-searches")
@@ -113,11 +121,12 @@ public class EditorialOperationsController implements UserResolver {
     }
 
     @GetMapping("/hot-searches/audits")
-    ApiResponse<List<HotSearchTermAudit>> hotSearchTermAudits(
+    ApiResponse<HotSearchTermAuditPage> hotSearchTermAudits(
             HttpServletRequest request,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(EditorialOperationsService.MAX_PAGE_SIZE) int size) {
         administrator(request);
-        return ApiResponse.ok(service.hotSearchTermAudits(limit));
+        return ApiResponse.ok(service.hotSearchTermAudits(page, size));
     }
 
     private CurrentUser administrator(HttpServletRequest request) {

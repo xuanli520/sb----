@@ -19,9 +19,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.runtime-mode=TEST",
         "novel.audit.moderation.development-simulation-enabled=true",
         "novel.scheduled-publication.enabled=false",
@@ -31,7 +31,6 @@ import org.springframework.test.web.servlet.MockMvc;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class BookTakedownIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired NovelStore store;
@@ -45,21 +44,21 @@ class BookTakedownIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/books/1/takedown")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"涉嫌侵权，待核验\"}"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/books/1/takedown")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"  \"}"))
                 .andExpect(status().isBadRequest());
 
         mvc.perform(post("/api/v1/admin/books/1/takedown")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"涉嫌侵权，待核验\"}"))
                 .andExpect(status().isOk())
@@ -72,29 +71,29 @@ class BookTakedownIntegrationTest {
         mvc.perform(get("/api/v1/public/books/1")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/author/books")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header(DEVELOPMENT_PRINCIPAL, "author"))
+                .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].id").value(1))
                 .andExpect(jsonPath("$.data.items[0].status").value("OFFLINE"))
                 .andExpect(jsonPath("$.data.meta.total").value(1));
         mvc.perform(get("/api/v1/author/books/1/status-audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header(DEVELOPMENT_PRINCIPAL, "author"))
+                .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].action").value("TAKEDOWN"))
                 .andExpect(jsonPath("$.data.items[0].reason").value("涉嫌侵权，待核验"))
                 .andExpect(jsonPath("$.data.meta.total").value(1));
         mvc.perform(get("/api/v1/author/books/2/status-audits")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/author/books/1/submit")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR))
                 .andExpect(status().isConflict());
         mvc.perform(post("/api/v1/author/books/1/chapters")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "author")
+                        .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"不得绕过下线\",\"content\":\"下线状态不允许作者提交内容\",\"submit\":true}"))
                 .andExpect(status().isConflict());
@@ -102,20 +101,20 @@ class BookTakedownIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/books/1/takedown")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"重复下线不应成立\"}"))
                 .andExpect(status().isConflict());
         mvc.perform(post("/api/v1/admin/books/1/restore")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"读者无权恢复\"}"))
                 .andExpect(status().isForbidden());
 
         mvc.perform(post("/api/v1/admin/books/1/restore")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"申诉材料已补齐，重新进行整书审核\"}"))
                 .andExpect(status().isOk())
@@ -127,7 +126,7 @@ class BookTakedownIntegrationTest {
         mvc.perform(get("/api/v1/public/books/1")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/admin/reviews")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[?(@.id == 1)].status").value("PENDING_REVIEW"))
                 .andExpect(jsonPath("$.data.meta.total").value(1));
@@ -141,7 +140,7 @@ class BookTakedownIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/books/1/restore")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"重复恢复不应成立\"}"))
                 .andExpect(status().isConflict());
@@ -149,7 +148,7 @@ class BookTakedownIntegrationTest {
         assertThat(snapshots.processAvailableChunks()).isPositive();
         mvc.perform(post("/api/v1/admin/reviews/1")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":true,\"reason\":\"整书复核通过\"}"))
                 .andExpect(status().isOk())

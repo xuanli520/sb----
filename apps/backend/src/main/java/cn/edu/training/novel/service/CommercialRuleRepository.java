@@ -1,7 +1,12 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.CommercialRuleAudit;
+import cn.edu.training.novel.domain.CommercialRuleAuditPage;
 import cn.edu.training.novel.domain.CommercialRules;
+import cn.edu.training.novel.domain.PageMeta;
+import cn.edu.training.novel.mapper.CommercialRulePageMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
@@ -33,9 +38,11 @@ public class CommercialRuleRepository {
             instant(resultSet.getTimestamp("updated_at")));
 
     private final JdbcTemplate jdbc;
+    private final CommercialRulePageMapper pageMapper;
 
-    public CommercialRuleRepository(JdbcTemplate jdbc) {
+    public CommercialRuleRepository(JdbcTemplate jdbc, CommercialRulePageMapper pageMapper) {
         this.jdbc = jdbc;
+        this.pageMapper = pageMapper;
     }
 
     public CommercialRules current() {
@@ -105,17 +112,12 @@ public class CommercialRuleRepository {
                 .orElseThrow(() -> new IllegalStateException("commercial rule audit was not saved"));
     }
 
-    public List<CommercialRuleAudit> audits(int limit) {
-        return jdbc.query(
-                "SELECT id, previous_membership_days_maximum_per_code, previous_recommendation_votes_per_day, "
-                        + "previous_monthly_votes_per_month, previous_reward_minimum_tokens, "
-                        + "previous_reward_maximum_tokens_per_reward, previous_reward_maximum_tokens_per_day, previous_updated_at, "
-                        + "membership_days_maximum_per_code, recommendation_votes_per_day, monthly_votes_per_month, "
-                        + "reward_minimum_tokens, reward_maximum_tokens_per_reward, reward_maximum_tokens_per_day, "
-                        + "reason, operator_user_id, created_at FROM novel_commercial_rule_audit "
-                        + "ORDER BY created_at DESC, id DESC LIMIT ?",
-                AUDIT_MAPPER,
-                limit);
+    public CommercialRuleAuditPage audits(int page, int size) {
+        IPage<CommercialRulePageMapper.CommercialRuleAuditRow> result =
+                pageMapper.selectAuditPage(pageRequest(page, size));
+        return new CommercialRuleAuditPage(
+                result.getRecords().stream().map(CommercialRuleRepository::toAudit).toList(),
+                new PageMeta(result.getTotal(), page, size));
     }
 
     private CommercialRules queryCurrent(boolean forUpdate) {
@@ -161,6 +163,40 @@ public class CommercialRuleRepository {
             resultSet.getString("reason"),
             resultSet.getLong("operator_user_id"),
             instant(resultSet.getTimestamp("created_at")));
+
+    private static CommercialRuleAudit toAudit(CommercialRulePageMapper.CommercialRuleAuditRow row) {
+        return new CommercialRuleAudit(
+                row.getId(),
+                new CommercialRules(
+                        row.getPreviousMembershipDaysMaximumPerCode(),
+                        row.getPreviousRecommendationVotesPerDay(),
+                        row.getPreviousMonthlyVotesPerMonth(),
+                        row.getPreviousRewardMinimumTokens(),
+                        row.getPreviousRewardMaximumTokensPerReward(),
+                        row.getPreviousRewardMaximumTokensPerDay(),
+                        instant(row.getPreviousUpdatedAt())),
+                new CommercialRules(
+                        row.getMembershipDaysMaximumPerCode(),
+                        row.getRecommendationVotesPerDay(),
+                        row.getMonthlyVotesPerMonth(),
+                        row.getRewardMinimumTokens(),
+                        row.getRewardMaximumTokensPerReward(),
+                        row.getRewardMaximumTokensPerDay(),
+                        instant(row.getCreatedAt())),
+                row.getReason(),
+                row.getOperatorUserId(),
+                instant(row.getCreatedAt()));
+    }
+
+    private static <T> Page<T> pageRequest(int page, int size) {
+        if (page < 0) {
+            throw new IllegalArgumentException("page must be non-negative");
+        }
+        if (size < 1 || size > 100) {
+            throw new IllegalArgumentException("size must be between 1 and 100");
+        }
+        return new Page<>(Math.addExact((long) page, 1L), size, true);
+    }
 
     private static Instant instant(Timestamp value) {
         return value.toInstant();

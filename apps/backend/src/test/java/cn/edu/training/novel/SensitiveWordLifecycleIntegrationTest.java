@@ -98,15 +98,15 @@ class SensitiveWordLifecycleIntegrationTest {
 
         mvc.perform(get("/api/v1/admin/sensitive-words")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.word == '改名屏蔽词')]").isEmpty());
-        mvc.perform(get("/api/v1/admin/sensitive-words/audits").param("limit", "20")
+                .andExpect(jsonPath("$.data.items[?(@.word == '改名屏蔽词')]").isEmpty());
+        mvc.perform(get("/api/v1/admin/sensitive-words/audits").param("page", "0").param("size", "20")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].action").value("DELETED"))
-                .andExpect(jsonPath("$.data[0].reason").value("规则已废弃"));
+                .andExpect(jsonPath("$.data.items[0].action").value("DELETED"))
+                .andExpect(jsonPath("$.data.items[0].reason").value("规则已废弃"));
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_sensitive_word_audit WHERE action IN ('CREATED', 'UPDATED', 'DISABLED', 'DELETED')",
                 Integer.class)).isEqualTo(4);

@@ -61,15 +61,15 @@ class EditorialOperationsIntegrationTest {
                 .andExpect(jsonPath("$.data.book.id").value(40))
                 .andExpect(jsonPath("$.data.rank").value(2));
 
-        mvc.perform(get("/api/v1/admin/editorial/recommendations")
+        mvc.perform(get("/api/v1/admin/editorial/recommendations?page=0&size=2")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(4))
-                .andExpect(jsonPath("$.data[0].book.id").value(1))
-                .andExpect(jsonPath("$.data[1].book.id").value(40))
-                .andExpect(jsonPath("$.data[2].book.id").value(3))
-                .andExpect(jsonPath("$.data[3].book.id").value(2));
+                .andExpect(jsonPath("$.data.meta.total").value(4))
+                .andExpect(jsonPath("$.data.meta.page").value(0))
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].book.id").value(1))
+                .andExpect(jsonPath("$.data.items[1].book.id").value(40));
 
         mvc.perform(post("/api/v1/admin/editorial/recommendations")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
@@ -98,14 +98,19 @@ class EditorialOperationsIntegrationTest {
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk());
 
-        mvc.perform(get("/api/v1/admin/editorial/recommendations/audits")
+        mvc.perform(get("/api/v1/admin/editorial/recommendations/audits?page=0&size=2")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].action").value("REMOVED"))
-                .andExpect(jsonPath("$.data[1].action").value("REORDERED"))
-                .andExpect(jsonPath("$.data[2].action").value("ASSIGNED"))
-                .andExpect(jsonPath("$.data[2].operatorUserId").value(1));
+                .andExpect(jsonPath("$.data.meta.total").value(3))
+                .andExpect(jsonPath("$.data.items[0].action").value("REMOVED"))
+                .andExpect(jsonPath("$.data.items[1].action").value("REORDERED"));
+        mvc.perform(get("/api/v1/admin/editorial/recommendations/audits?page=1&size=2")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].action").value("ASSIGNED"))
+                .andExpect(jsonPath("$.data.items[0].operatorUserId").value(1));
 
         jdbc.update("UPDATE novel_book SET status = 'DRAFT' WHERE id = 40");
         mvc.perform(get("/api/v1/public/recommendations"))
@@ -172,13 +177,18 @@ class EditorialOperationsIntegrationTest {
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/admin/hot-searches/audits")
+        mvc.perform(get("/api/v1/admin/hot-searches/audits?page=0&size=2")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].action").value("REMOVED"))
-                .andExpect(jsonPath("$.data[1].action").value("UPDATED"))
-                .andExpect(jsonPath("$.data[2].action").value("CREATED"));
+                .andExpect(jsonPath("$.data.meta.total").value(3))
+                .andExpect(jsonPath("$.data.items[0].action").value("REMOVED"))
+                .andExpect(jsonPath("$.data.items[1].action").value("UPDATED"));
+        mvc.perform(get("/api/v1/admin/hot-searches/audits?page=1&size=2")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].action").value("CREATED"));
     }
 
     @Test

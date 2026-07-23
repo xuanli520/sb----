@@ -10,8 +10,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import cn.edu.training.novel.domain.AuthorApplication;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
 import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.Comment;
+import cn.edu.training.novel.domain.ModerationReviewScope;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.mapper.InteractionPageMapper;
 import cn.edu.training.novel.mapper.WalletPageMapper;
@@ -47,9 +50,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:operations_persistence_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -57,7 +60,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class OperationsPersistenceIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired NovelStore store;
     @Autowired AuthService authService;
@@ -73,6 +75,7 @@ class OperationsPersistenceIntegrationTest {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired InteractionPageMapper interactionPageMapper;
     @Autowired WalletPageMapper walletPageMapper;
+    @Autowired CatalogRepository catalogRepository;
 
     @Test
     void authorApplicationsSurviveRecreationBlockSecondPendingAndPersistDecisions() throws Exception {
@@ -219,8 +222,13 @@ class OperationsPersistenceIntegrationTest {
         Comment pendingComment = store.comment(71L, "持久化读者", 1L, null, "评论含跨实例屏蔽词，等待审核。");
         assertThat(pendingComment.status()).isEqualTo("PENDING_REVIEW");
         Chapter heldChapter = store.addChapter(2L, 1L, "运营词库章节", "章节含跨实例屏蔽词，不能发布。", true);
-        assertThat(heldChapter.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
+        // Published work submissions now retain the reader-visible source as a draft while the
+        // sensitive proposed content is held in an independent candidate for review.
+        assertThat(heldChapter.status()).isEqualTo(ChapterStatus.DRAFT);
         assertThat(heldChapter.published()).isFalse();
+        ChapterCandidate candidate = PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.NEW_CHAPTER, heldChapter.id());
+        assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM novel_sensitive_word WHERE normalized_word = ?",
                 Integer.class,
@@ -231,11 +239,13 @@ class OperationsPersistenceIntegrationTest {
     void accountEnabledColumnControlsDisablementAndAdminMetricsWithoutDemoConstants() throws Exception {
         mvc.perform(post("/api/v1/admin/sensitive-words")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader")
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"word\":\"无权限词\"}"))
                 .andExpect(status().isForbidden());
 
+        long existingEnabledReaderCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM novel_account WHERE enabled = TRUE AND roles LIKE '%READER%'", Long.class);
         AuthService.AuthenticatedSession session = authService.register(
                 "disabled.account@example.test",
                 "待禁用账户",
@@ -244,14 +254,14 @@ class OperationsPersistenceIntegrationTest {
         store.saveProgress(accountId, 1L, 1001L, 20);
         mvc.perform(get("/api/v1/admin/dashboard")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.activeReaders").value(1))
+                .andExpect(jsonPath("$.data.activeReaders").value(existingEnabledReaderCount + 1))
                 .andExpect(jsonPath("$.data.todayReads").value(1));
 
         mvc.perform(post("/api/v1/admin/users/{userId}/status", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":false,\"reason\":\"运营测试暂停账号\"}"))
                 .andExpect(status().isOk())
@@ -264,7 +274,7 @@ class OperationsPersistenceIntegrationTest {
 
         mvc.perform(post("/api/v1/admin/users/{userId}/status", accountId)
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":true,\"reason\":\"运营测试恢复账号\"}"))
                 .andExpect(status().isOk())
@@ -272,9 +282,9 @@ class OperationsPersistenceIntegrationTest {
         assertThat(store.checkin(accountId)).isEqualTo(10);
         mvc.perform(get("/api/v1/admin/dashboard")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "admin"))
+                .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.activeReaders").value(1))
+                .andExpect(jsonPath("$.data.activeReaders").value(existingEnabledReaderCount + 1))
                 .andExpect(jsonPath("$.data.todayReads").value(1));
     }
 

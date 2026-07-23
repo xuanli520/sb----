@@ -1,6 +1,6 @@
 package cn.edu.training.novel.api;
 
-import cn.edu.training.novel.domain.CommercialRuleAudit;
+import cn.edu.training.novel.domain.CommercialRuleAuditPage;
 import cn.edu.training.novel.domain.CommercialRules;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.service.CommercialRuleService;
@@ -11,7 +11,6 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -51,10 +50,11 @@ public class AdminCommercialRuleController implements UserResolver {
     }
 
     @GetMapping("/audits")
-    ApiResponse<List<CommercialRuleAudit>> audits(
+    ApiResponse<CommercialRuleAuditPage> audits(
             HttpServletRequest request,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
-        return ApiResponse.ok(service.audits(administrator(request), limit));
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(CommercialRuleService.MAX_PAGE_SIZE) int size) {
+        return ApiResponse.ok(service.audits(administrator(request), page, size));
     }
 
     private CurrentUser administrator(HttpServletRequest request) {

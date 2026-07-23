@@ -43,6 +43,16 @@ class CoverUploadServiceTest {
         org.assertj.core.api.Assertions.assertThat(storage.deleted).containsExactly(storage.generatedUrl);
     }
 
+    @Test
+    void rejectsAConfiguredLimitAboveTheHardFiveMiBImageCeiling() throws Exception {
+        CoverImageValidator validator = new CoverImageValidator(new CoverStorageProperties(
+                false, "", "", "", "novel-covers", "/media", 5_242_881, 4096, 4096));
+
+        assertThatThrownBy(() -> validator.validate(png()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("5 MiB");
+    }
+
     private static MockMultipartFile png() throws Exception {
         BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream output = new ByteArrayOutputStream();

@@ -1,6 +1,6 @@
 package cn.edu.training.novel.api;
 
-import cn.edu.training.novel.domain.AccountStatusAudit;
+import cn.edu.training.novel.domain.AccountStatusAuditPage;
 import cn.edu.training.novel.domain.AccountStatusChange;
 import cn.edu.training.novel.domain.AdminAccountPage;
 import cn.edu.training.novel.domain.AdminUserBehaviorEventPage;
@@ -70,12 +70,13 @@ public class AdminOperationsController implements UserResolver {
     }
 
     @GetMapping("/accounts/{accountId}/status-audits")
-    ApiResponse<List<AccountStatusAudit>> accountStatusAudits(
+    ApiResponse<AccountStatusAuditPage> accountStatusAudits(
             HttpServletRequest request,
             @PathVariable @Min(1) long accountId,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         administrator(request);
-        return ApiResponse.ok(service.accountStatusAudits(accountId, limit));
+        return ApiResponse.ok(service.accountStatusAudits(accountId, page, size));
     }
 
     @GetMapping("/accounts/{accountId}/behavior-summary")

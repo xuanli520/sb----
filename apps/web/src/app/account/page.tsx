@@ -37,6 +37,7 @@ import {
   type AccountEntitlements,
   type AccountProfile,
   type AccountProfileUpdate,
+  type AuthorApplication,
   type Book,
   novelApi,
 } from '@/features/novel/api';
@@ -67,16 +68,6 @@ type RedeemResult = {
   code: string;
   tokens: number;
   balance: number;
-};
-
-type AuthorApplication = {
-  id: number;
-  penName: string;
-  statement: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
-  reason: string;
-  createdAt: string;
-  decidedAt?: string | null;
 };
 
 type Notice = {

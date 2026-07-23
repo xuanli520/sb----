@@ -17,6 +17,7 @@ import { Button } from '@/app/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Switch } from '@/app/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
@@ -24,8 +25,12 @@ import { InlineNotice, formatWordCount } from '@/components/novel/NovelShell';
 import {
   type EditorialRecommendation,
   type EditorialRecommendationAudit,
+  type EditorialRecommendationAuditPage,
+  type EditorialRecommendationPage,
   type HotSearchTerm,
   type HotSearchTermAudit,
+  type HotSearchTermAuditPage,
+  type HotSearchTermPage,
   novelApi,
 } from '@/features/novel/api';
 
@@ -34,6 +39,10 @@ type HotSearchDraft = { term: string; rank: string; enabled: boolean };
 type DeleteTarget = { type: 'recommendation' | 'hot-search'; id: number; label: string };
 type AuditKind = 'recommendation' | 'hot-search';
 type AuditItem = Pick<EditorialRecommendationAudit, 'id' | 'action' | 'details' | 'operatorUserId' | 'createdAt'>;
+type PageMeta = { total: number; page: number; size: number };
+
+const operationPageSize = 20;
+const auditPageSize = 20;
 
 function optionalRank(value: string) {
   if (!value.trim()) return undefined;
@@ -56,9 +65,32 @@ function statusBadge(status: string) {
     : 'border-rose-200 bg-rose-50 text-rose-800';
 }
 
+function OperationPagination({ meta, loading, onPageChange, label, anchor }: { meta: PageMeta; loading: boolean; onPageChange: (page: number) => void; label: string; anchor: string }) {
+  const totalPages = Math.max(1, Math.ceil(meta.total / meta.size));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || meta.page <= 0;
+  const nextDisabled = loading || meta.page >= totalPages - 1;
+  return (
+    <div className="flex flex-col gap-3 border-t border-stone-100 px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-stone-500">共 {meta.total.toLocaleString('zh-CN')} 项</p>
+      <Pagination aria-label={`${label}分页`} className="mx-0 w-auto justify-start sm:justify-end">
+        <PaginationContent>
+          <PaginationItem><PaginationPrevious href={anchor} onClick={(event) => { event.preventDefault(); if (!previousDisabled) onPageChange(meta.page - 1); }} aria-disabled={previousDisabled} tabIndex={previousDisabled ? -1 : undefined} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" /></PaginationItem>
+          <PaginationItem><span className="inline-flex h-9 min-w-20 items-center justify-center px-2 text-stone-600" aria-live="polite">第 {meta.page + 1} / {totalPages} 页</span></PaginationItem>
+          <PaginationItem><PaginationNext href={anchor} onClick={(event) => { event.preventDefault(); if (!nextDisabled) onPageChange(meta.page + 1); }} aria-disabled={nextDisabled} tabIndex={nextDisabled ? -1 : undefined} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" /></PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
+}
+
 export function EditorialOperationsPanel() {
   const [recommendations, setRecommendations] = useState<EditorialRecommendation[]>([]);
   const [hotSearchTerms, setHotSearchTerms] = useState<HotSearchTerm[]>([]);
+  const [recommendationPage, setRecommendationPage] = useState(0);
+  const [recommendationMeta, setRecommendationMeta] = useState<PageMeta>();
+  const [hotSearchPage, setHotSearchPage] = useState(0);
+  const [hotSearchMeta, setHotSearchMeta] = useState<PageMeta>();
   const [recommendationRanks, setRecommendationRanks] = useState<Record<number, string>>({});
   const [termDrafts, setTermDrafts] = useState<Record<number, HotSearchDraft>>({});
   const [bookId, setBookId] = useState('');
@@ -71,22 +103,25 @@ export function EditorialOperationsPanel() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
   const [auditKind, setAuditKind] = useState<AuditKind>();
   const [audits, setAudits] = useState<AuditItem[]>([]);
+  const [auditMeta, setAuditMeta] = useState<PageMeta>();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [nextRecommendations, nextHotSearchTerms] = await Promise.all([
-        novelApi<EditorialRecommendation[]>('admin/editorial/recommendations', 'admin'),
-        novelApi<HotSearchTerm[]>('admin/hot-searches', 'admin'),
+        novelApi<EditorialRecommendationPage>(`admin/editorial/recommendations?page=${recommendationPage}&size=${operationPageSize}`, 'admin'),
+        novelApi<HotSearchTermPage>(`admin/hot-searches?page=${hotSearchPage}&size=${operationPageSize}`, 'admin'),
       ]);
-      setRecommendations(nextRecommendations);
-      setHotSearchTerms(nextHotSearchTerms);
+      setRecommendations(nextRecommendations.items);
+      setRecommendationMeta(nextRecommendations.meta);
+      setHotSearchTerms(nextHotSearchTerms.items);
+      setHotSearchMeta(nextHotSearchTerms.meta);
     } catch (reason) {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '推荐位与热搜配置暂时无法加载。' });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [hotSearchPage, recommendationPage]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -208,23 +243,33 @@ export function EditorialOperationsPanel() {
     }
   };
 
-  const openAudits = async (kind: AuditKind) => {
+  const loadAudits = async (kind: AuditKind, page: number) => {
     const action = `audits-${kind}`;
     setPendingAction(action);
     try {
       const path = kind === 'recommendation'
-        ? 'admin/editorial/recommendations/audits?limit=20'
-        : 'admin/hot-searches/audits?limit=20';
-      const items = kind === 'recommendation'
-        ? await novelApi<EditorialRecommendationAudit[]>(path, 'admin')
-        : await novelApi<HotSearchTermAudit[]>(path, 'admin');
-      setAudits(items);
+        ? `admin/editorial/recommendations/audits?page=${page}&size=${auditPageSize}`
+        : `admin/hot-searches/audits?page=${page}&size=${auditPageSize}`;
+      if (kind === 'recommendation') {
+        const response = await novelApi<EditorialRecommendationAuditPage>(path, 'admin');
+        setAudits(response.items);
+        setAuditMeta(response.meta);
+      } else {
+        const response = await novelApi<HotSearchTermAuditPage>(path, 'admin');
+        setAudits(response.items);
+        setAuditMeta(response.meta);
+      }
       setAuditKind(kind);
     } catch (reason) {
       setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : '运营审计记录暂时无法加载。' });
     } finally {
       setPendingAction(undefined);
     }
+  };
+
+  const openAudits = (kind: AuditKind) => {
+    setAuditKind(kind);
+    void loadAudits(kind, 0);
   };
 
   const executeDelete = async () => {
@@ -283,6 +328,7 @@ export function EditorialOperationsPanel() {
               </Table>
             </div>
           ) : null}
+          {!loading && recommendationMeta ? <OperationPagination meta={recommendationMeta} loading={loading} onPageChange={setRecommendationPage} label="编辑推荐位" anchor="#recommendation-configuration-heading" /> : null}
           <form onSubmit={(event) => void assignRecommendation(event)} className="grid gap-3 border-t border-stone-100 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_110px_auto] sm:items-end">
             <div><Label htmlFor="recommendation-book-id" className="text-xs text-stone-600">已发布作品 ID</Label><Input id="recommendation-book-id" aria-label="已发布作品 ID" type="number" min="1" required value={bookId} onChange={(event) => setBookId(event.target.value)} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" placeholder="例如 101" /></div>
             <div><Label htmlFor="recommendation-rank" className="text-xs text-stone-600">目标排序</Label><Input id="recommendation-rank" aria-label="推荐目标排序" type="number" min="1" value={recommendationRank} onChange={(event) => setRecommendationRank(event.target.value)} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" placeholder="末位" /></div>
@@ -303,6 +349,7 @@ export function EditorialOperationsPanel() {
             const action = `hot-search-save-${term.id}`;
             return <div key={term.id} className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_72px_auto_auto] sm:items-end"><div><Label htmlFor={`hot-search-term-${term.id}`} className="text-xs text-stone-600">词条</Label><Input id={`hot-search-term-${term.id}`} aria-label={`热搜词 ${term.id}`} value={draft.term} maxLength={100} onChange={(event) => setTermDrafts((current) => ({ ...current, [term.id]: { ...draft, term: event.target.value } }))} disabled={pendingAction === action} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" /></div><div><Label htmlFor={`hot-search-rank-${term.id}`} className="text-xs text-stone-600">排序</Label><Input id={`hot-search-rank-${term.id}`} aria-label={`热搜排序 ${term.id}`} type="number" min="1" value={draft.rank} onChange={(event) => setTermDrafts((current) => ({ ...current, [term.id]: { ...draft, rank: event.target.value } }))} disabled={pendingAction === action} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" /></div><div className="flex h-9 items-center gap-2"><Switch checked={draft.enabled} onCheckedChange={(enabled) => void saveHotSearchTerm(term, { ...draft, enabled })} disabled={pendingAction === action} aria-label={`${term.term} 热搜已启用`} className="data-[state=checked]:bg-emerald-700" /><span className="text-xs text-stone-600">{draft.enabled ? '启用' : '停用'}</span></div><div className="flex gap-2"><Button type="button" variant="outline" size="icon" title="保存热搜词" aria-label={`保存 ${term.term} 热搜词`} onClick={() => void saveHotSearchTerm(term, draft)} disabled={pendingAction === action} className="h-9 w-9 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><Save size={15} aria-hidden="true" /></Button><Button type="button" variant="outline" size="icon" title="删除热搜词" aria-label={`删除 ${term.term} 热搜词`} onClick={() => setDeleteTarget({ type: 'hot-search', id: term.id, label: term.term })} disabled={pendingAction === `delete-hot-search-${term.id}`} className="h-9 w-9 rounded-none border-rose-200 bg-white text-rose-700 hover:border-rose-500 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" /></Button></div></div>;
           })}</div> : null}
+          {!loading && hotSearchMeta ? <OperationPagination meta={hotSearchMeta} loading={loading} onPageChange={setHotSearchPage} label="热搜词" anchor="#hot-search-configuration-heading" /> : null}
           <form onSubmit={(event) => void createHotSearchTerm(event)} className="grid gap-3 border-t border-stone-100 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_72px_auto] sm:items-end"><div><Label htmlFor="new-hot-search-term" className="text-xs text-stone-600">新热搜词</Label><Input id="new-hot-search-term" aria-label="新热搜词" required maxLength={100} value={newTerm} onChange={(event) => setNewTerm(event.target.value)} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" placeholder="输入搜索词" /></div><div><Label htmlFor="new-hot-search-rank" className="text-xs text-stone-600">排序</Label><Input id="new-hot-search-rank" aria-label="新热搜排序" type="number" min="1" value={newTermRank} onChange={(event) => setNewTermRank(event.target.value)} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" placeholder="末位" /></div><Button type="submit" disabled={pendingAction === 'hot-search-create'} className="h-9 rounded-none bg-emerald-700 px-3 hover:bg-emerald-800"><Plus size={15} aria-hidden="true" />添加</Button></form>
         </section>
       </div>
@@ -315,7 +362,7 @@ export function EditorialOperationsPanel() {
       </AlertDialog>
 
       <Dialog open={Boolean(auditKind)} onOpenChange={(open) => { if (!open) setAuditKind(undefined); }}>
-        <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-xl"><DialogHeader><DialogTitle className="text-stone-950">{auditKind === 'recommendation' ? '推荐位审计' : '热搜词审计'}</DialogTitle><DialogDescription className="text-stone-600">最近 20 条运营配置变更</DialogDescription></DialogHeader><div className="max-h-80 overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">{audits.length === 0 ? <p className="py-6 text-center text-sm text-stone-500">暂无操作记录。</p> : audits.map((audit) => <article key={audit.id} className="py-4"><div className="flex items-center justify-between gap-3"><span className="font-medium text-stone-900">{audit.action}</span><span className="whitespace-nowrap text-xs text-stone-500">操作人 #{audit.operatorUserId} · {displayTime(audit.createdAt)}</span></div><p className="mt-2 break-words text-xs leading-5 text-stone-600">{audit.details}</p></article>)}</div></DialogContent>
+        <DialogContent className="rounded-none border-stone-200 bg-white p-5 sm:max-w-xl"><DialogHeader><DialogTitle className="text-stone-950">{auditKind === 'recommendation' ? '推荐位审计' : '热搜词审计'}</DialogTitle><DialogDescription className="text-stone-600">运营配置变更记录</DialogDescription></DialogHeader><div className="max-h-80 overflow-y-auto divide-y divide-stone-100 border-y border-stone-100">{pendingAction?.startsWith('audits-') ? <div className="space-y-3 py-5"><Skeleton className="h-14 rounded-none bg-stone-100" /><Skeleton className="h-14 rounded-none bg-stone-100" /></div> : null}{!pendingAction?.startsWith('audits-') && audits.length === 0 ? <p className="py-6 text-center text-sm text-stone-500">暂无操作记录。</p> : null}{!pendingAction?.startsWith('audits-') && audits.map((audit) => <article key={audit.id} className="py-4"><div className="flex items-center justify-between gap-3"><span className="font-medium text-stone-900">{audit.action}</span><span className="whitespace-nowrap text-xs text-stone-500">操作人 #{audit.operatorUserId} · {displayTime(audit.createdAt)}</span></div><p className="mt-2 break-words text-xs leading-5 text-stone-600">{audit.details}</p></article>)}</div>{auditKind && auditMeta ? <OperationPagination meta={auditMeta} loading={Boolean(pendingAction?.startsWith('audits-'))} onPageChange={(page) => void loadAudits(auditKind, page)} label={auditKind === 'recommendation' ? '推荐位审计' : '热搜词审计'} anchor="#editorial-operations-heading" /> : null}</DialogContent>
       </Dialog>
     </section>
   );

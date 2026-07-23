@@ -1,9 +1,8 @@
 package cn.edu.training.novel.service;
 
-import cn.edu.training.novel.domain.CommercialRuleAudit;
+import cn.edu.training.novel.domain.CommercialRuleAuditPage;
 import cn.edu.training.novel.domain.CommercialRules;
 import cn.edu.training.novel.domain.Role;
-import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +16,7 @@ public class CommercialRuleService {
     static final int MAX_MONTHLY_VOTES_PER_MONTH = 100;
     static final int MAX_REWARD_TOKENS_PER_REWARD = 1_000_000;
     static final int MAX_REWARD_TOKENS_PER_DAY = 5_000_000;
+    public static final int MAX_PAGE_SIZE = 100;
 
     private final CommercialRuleRepository repository;
     private final AuditTrail auditTrail;
@@ -30,12 +30,15 @@ public class CommercialRuleService {
         return repository.current();
     }
 
-    public List<CommercialRuleAudit> audits(CurrentUser actor, int limit) {
+    public CommercialRuleAuditPage audits(CurrentUser actor, int page, int size) {
         actor.require(Role.ADMIN);
-        if (limit < 1 || limit > 100) {
-            throw badRequest("audit limit must be between 1 and 100");
+        if (page < 0) {
+            throw badRequest("page must be non-negative");
         }
-        return repository.audits(limit);
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw badRequest("size must be between 1 and " + MAX_PAGE_SIZE);
+        }
+        return repository.audits(page, size);
     }
 
     @Transactional

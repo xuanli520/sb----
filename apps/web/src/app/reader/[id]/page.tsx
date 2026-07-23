@@ -20,7 +20,7 @@ import {
   Ticket,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -34,6 +34,7 @@ import { Button } from '@/app/components/ui/button';
 import { Checkbox } from '@/app/components/ui/checkbox';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from '@/app/components/ui/pagination';
 import { ScrollArea } from '@/app/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/app/components/ui/sheet';
@@ -114,6 +115,7 @@ type HighlightAnnotation = {
 
 const chapterTransitionDuration = 460;
 const maxRewardAmount = 2_147_483_647;
+const chapterCommentPageSize = 20;
 
 const defaultPreference: Preference = {
   theme: 'paper',
@@ -568,6 +570,41 @@ function ReaderCommentsLoadingSkeleton() {
   );
 }
 
+function ReaderCommentPagination({
+  meta,
+  loading,
+  onPageChange,
+}: {
+  meta: NovelCommentPage['meta'];
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(meta.total / Math.max(1, meta.size)));
+  if (totalPages <= 1) return null;
+  const previousDisabled = loading || meta.page <= 0;
+  const nextDisabled = loading || meta.page >= totalPages - 1;
+  const navigate = (page: number) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (page >= 0 && page < totalPages && page !== meta.page) onPageChange(page);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4 text-xs text-stone-500">
+      <span>第 {meta.page + 1} / {totalPages} 页，共 {meta.total.toLocaleString('zh-CN')} 条</span>
+      <Pagination aria-label="本章评论分页" className="mx-0 w-auto justify-start">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious href="#chapter-comments" aria-disabled={previousDisabled} tabIndex={previousDisabled ? -1 : undefined} onClick={navigate(meta.page - 1)} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" />
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext href="#chapter-comments" aria-disabled={nextDisabled} tabIndex={nextDisabled ? -1 : undefined} onClick={navigate(meta.page + 1)} className="rounded-none border border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800 aria-disabled:pointer-events-none aria-disabled:opacity-50" />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
+  );
+}
+
 export default function Reader({ params }: { params: Promise<{ id: string }> }) {
   const [detail, setDetail] = useState<Detail>();
   const [preference, setPreference] = useState<Preference>(defaultPreference);
@@ -585,6 +622,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [paragraphAnnotationShareIntent, setParagraphAnnotationShareIntent] = useState(false);
   const [comment, setComment] = useState('');
   const [chapterComments, setChapterComments] = useState<NovelComment[]>([]);
+  const [chapterCommentsPage, setChapterCommentsPage] = useState<NovelCommentPage>();
+  const [commentsPageIndex, setCommentsPageIndex] = useState(0);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState('');
   const [commentsReloadVersion, setCommentsReloadVersion] = useState(0);
@@ -769,6 +808,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
           : undefined;
         const initialChapter = restoredChapter ?? firstChapter;
         setChapterComments([]);
+        setChapterCommentsPage(undefined);
+        setCommentsPageIndex(0);
         setCommentsLoading(true);
         setCommentsError('');
         setPublicParagraphAnnotations([]);
@@ -831,7 +872,9 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     const activeChapter = detail?.chapters.find((item) => item.id === chapterId);
     if (!bookId || !chapterId || !isReadableChapter(activeChapter)) {
       commentRequestSequence.current += 1;
-      setChapterComments([]);
+    setChapterComments([]);
+    setChapterCommentsPage(undefined);
+      setCommentsPageIndex(0);
       setCommentsLoading(false);
       setCommentsError('');
       return;
@@ -839,18 +882,25 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
     const requestId = ++commentRequestSequence.current;
     let cancelled = false;
-    setChapterComments([]);
+      setChapterComments([]);
+      setChapterCommentsPage(undefined);
     setCommentsLoading(true);
     setCommentsError('');
 
+    const commentParameters = new URLSearchParams({
+      chapterId: chapterId.toString(),
+      page: commentsPageIndex.toString(),
+      size: chapterCommentPageSize.toString(),
+    });
     const commentPath = detail?.access?.fullBookAccess
-      ? `account/books/${bookId}/comments?chapterId=${chapterId}`
-      : `public/books/${bookId}/comments?chapterId=${chapterId}`;
+      ? `account/books/${bookId}/comments?${commentParameters.toString()}`
+      : `public/books/${bookId}/comments?${commentParameters.toString()}`;
     void novelApi<NovelCommentPage>(commentPath, 'reader')
       .then((page) => {
         if (cancelled || requestId !== commentRequestSequence.current) return;
         if (!isCommentPage(page)) throw new Error('本章评论返回格式无效。');
         setChapterComments(page.items);
+        setChapterCommentsPage(page);
       })
       .catch((reason) => {
         if (cancelled || requestId !== commentRequestSequence.current) return;
@@ -862,7 +912,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       });
 
     return () => { cancelled = true; };
-  }, [activeChapterId, commentsReloadVersion, detail?.access?.fullBookAccess, detail?.book.id, detail?.chapters]);
+  }, [activeChapterId, commentsPageIndex, commentsReloadVersion, detail?.access?.fullBookAccess, detail?.book.id, detail?.chapters]);
 
   useEffect(() => {
     const bookId = detail?.book.id;
@@ -965,6 +1015,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
 
     commentRequestSequence.current += 1;
     setChapterComments([]);
+    setChapterCommentsPage(undefined);
+    setCommentsPageIndex(0);
     setCommentsLoading(true);
     setCommentsError('');
     publicAnnotationRequestSequence.current += 1;
@@ -1118,6 +1170,9 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
         setCommentsLoading(false);
         setCommentsError('');
         setChapterComments((items) => items.some((item) => item.id === result.id) ? items : [...items, result]);
+        setChapterCommentsPage((current) => current
+          ? { ...current, items: current.items.some((item) => item.id === result.id) ? current.items : [...current.items, result], meta: { ...current.meta, total: current.meta.total + 1 } }
+          : current);
       }
       setInteractionStatsReloadVersion((version) => version + 1);
     } catch (reason) {
@@ -1653,7 +1708,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               <Button type="button" onClick={() => void postComment()} disabled={pendingAction === 'comment' || !comment.trim()} className="h-11 rounded-none bg-emerald-700 px-4 hover:bg-emerald-800">发布</Button>
             </div>
 
-            <div className="mt-6 space-y-4" aria-live="polite">
+            <div id="chapter-comments" className="mt-6 space-y-4" aria-live="polite">
               {commentsLoading ? <ReaderCommentsLoadingSkeleton /> : null}
               {!commentsLoading && commentsError ? (
                 <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-3 text-sm text-rose-800">
@@ -1668,6 +1723,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
                   <p className="mt-1">{item.content}</p>
                 </article>
               ))}
+              {!commentsLoading && !commentsError && chapterCommentsPage ? <ReaderCommentPagination meta={chapterCommentsPage.meta} loading={commentsLoading} onPageChange={setCommentsPageIndex} /> : null}
             </div>
           </section>
         </section>

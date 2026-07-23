@@ -8,6 +8,9 @@ import cn.edu.training.novel.domain.BookStatusAuditPage;
 import cn.edu.training.novel.domain.ChapterCandidate;
 import cn.edu.training.novel.domain.ChapterCandidateStatus;
 import cn.edu.training.novel.domain.ChapterCandidateType;
+import cn.edu.training.novel.domain.LegacyReviewTriageAction;
+import cn.edu.training.novel.domain.LegacyReviewTriageAudit;
+import cn.edu.training.novel.domain.LegacyReviewTriageAuditPage;
 import cn.edu.training.novel.domain.ModerationReviewQueueItem;
 import cn.edu.training.novel.domain.ModerationReviewQueuePage;
 import cn.edu.training.novel.domain.ModerationReviewScope;
@@ -54,6 +57,11 @@ public class BookPageService {
         return present(mapper.selectWholeBookReviewsPage(request(page, size)), page, size);
     }
 
+    /** Isolated recovery list for records written by the retired whole-book NEEDS_REVIEW flow. */
+    public BookPresentationPage legacyReviewTriage(int page, int size) {
+        return present(mapper.selectLegacyNeedsReviewPage(request(page, size)), page, size);
+    }
+
     public BookPresentationPage availabilityManagedBooks(int page, int size) {
         return present(mapper.selectAvailabilityManagedPage(request(page, size)), page, size);
     }
@@ -65,6 +73,17 @@ public class BookPageService {
         IPage<BookPageMapper.BookStatusAuditRow> result = mapper.selectBookStatusAuditPage(requestAudit(page, size), bookId);
         return new BookStatusAuditPage(
                 result.getRecords().stream().map(BookPageService::toStatusAudit).toList(),
+                new PageMeta(result.getTotal(), page, size));
+    }
+
+    public LegacyReviewTriageAuditPage legacyReviewTriageAudits(long bookId, int page, int size) {
+        if (bookId <= 0) {
+            throw new IllegalArgumentException("book id is required");
+        }
+        IPage<BookPageMapper.BookStatusAuditRow> result = mapper.selectLegacyReviewTriageAuditPage(
+                requestAudit(page, size), bookId);
+        return new LegacyReviewTriageAuditPage(
+                result.getRecords().stream().map(BookPageService::toLegacyReviewTriageAudit).toList(),
                 new PageMeta(result.getTotal(), page, size));
     }
 
@@ -95,6 +114,18 @@ public class BookPageService {
                 row.getCreatedAt().toInstant());
     }
 
+    private static LegacyReviewTriageAudit toLegacyReviewTriageAudit(BookPageMapper.BookStatusAuditRow row) {
+        return new LegacyReviewTriageAudit(
+                row.getId(),
+                row.getBookId(),
+                LegacyReviewTriageAction.valueOf(row.getAction()),
+                BookStatus.valueOf(row.getPreviousStatus()),
+                BookStatus.valueOf(row.getStatus()),
+                row.getReason(),
+                row.getOperatorUserId(),
+                row.getCreatedAt().toInstant());
+    }
+
     private static ModerationReviewQueueItem toModerationQueueItem(BookPageMapper.ModerationQueueRow row) {
         Book book = new Book(
                 row.getBookId(),
@@ -104,7 +135,9 @@ public class BookPageService {
                 row.getBookWords(),
                 row.getBookSerialStatus(),
                 row.getBookSynopsis(),
-                row.getBookCover(),
+                // Operational queue rows must not revive a legacy raw cover value. Public-facing
+                // callers resolve the active media binding through BookPresentationService.
+                null,
                 BookStatus.valueOf(row.getBookStatus()),
                 row.getBookAuthorId(),
                 row.getBookHeat(),

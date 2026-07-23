@@ -99,10 +99,10 @@ class BookModerationSnapshotIntegrationTest {
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
-                .andExpect(jsonPath("$.data[0].aggregateDecision").value("PASS"))
-                .andExpect(jsonPath("$.data[0].chunkContent").doesNotExist())
-                .andExpect(jsonPath("$.data[0].bookSynopsis").doesNotExist());
+                .andExpect(jsonPath("$.data.items[0].status").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.items[0].aggregateDecision").value("PASS"))
+                .andExpect(jsonPath("$.data.items[0].chunkContent").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].bookSynopsis").doesNotExist());
 
         assertThat(store.review(1L, book.id(), true, "terminal full-work review").status().name())
                 .isEqualTo("PUBLISHED");

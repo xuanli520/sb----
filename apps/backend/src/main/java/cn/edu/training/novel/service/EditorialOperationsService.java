@@ -3,9 +3,11 @@ package cn.edu.training.novel.service;
 import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.EditorialRecommendation;
-import cn.edu.training.novel.domain.EditorialRecommendationAudit;
+import cn.edu.training.novel.domain.EditorialRecommendationAuditPage;
+import cn.edu.training.novel.domain.EditorialRecommendationPage;
 import cn.edu.training.novel.domain.HotSearchTerm;
-import cn.edu.training.novel.domain.HotSearchTermAudit;
+import cn.edu.training.novel.domain.HotSearchTermAuditPage;
+import cn.edu.training.novel.domain.HotSearchTermPage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -28,6 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class EditorialOperationsService {
     private static final int MAX_PUBLIC_HOT_SEARCH_TERMS = 12;
     private static final int MAX_TERM_LENGTH = 100;
+    public static final int MAX_PAGE_SIZE = 100;
 
     private final EditorialOperationsRepository repository;
     private final AuditTrail auditTrail;
@@ -37,12 +40,14 @@ public class EditorialOperationsService {
         this.auditTrail = auditTrail;
     }
 
-    public List<EditorialRecommendation> recommendations() {
-        return repository.findRecommendations();
+    public EditorialRecommendationPage recommendations(int page, int size) {
+        validatePage(page, size);
+        return repository.findRecommendationPage(page, size);
     }
 
-    public List<EditorialRecommendationAudit> recommendationAudits(int limit) {
-        return repository.findRecommendationAudits(normalizeAuditLimit(limit));
+    public EditorialRecommendationAuditPage recommendationAudits(int page, int size) {
+        validatePage(page, size);
+        return repository.findRecommendationAuditPage(page, size);
     }
 
     @Transactional
@@ -127,8 +132,9 @@ public class EditorialOperationsService {
                 + " operator=" + operatorUserId);
     }
 
-    public List<HotSearchTerm> hotSearchTerms() {
-        return repository.findHotSearchTerms();
+    public HotSearchTermPage hotSearchTerms(int page, int size) {
+        validatePage(page, size);
+        return repository.findHotSearchTermPage(page, size);
     }
 
     /** Public callers get the enabled, ranked subset only. */
@@ -136,8 +142,9 @@ public class EditorialOperationsService {
         return repository.findEnabledHotSearchTerms(MAX_PUBLIC_HOT_SEARCH_TERMS);
     }
 
-    public List<HotSearchTermAudit> hotSearchTermAudits(int limit) {
-        return repository.findHotSearchTermAudits(normalizeAuditLimit(limit));
+    public HotSearchTermAuditPage hotSearchTermAudits(int page, int size) {
+        validatePage(page, size);
+        return repository.findHotSearchTermAuditPage(page, size);
     }
 
     @Transactional
@@ -336,8 +343,13 @@ public class EditorialOperationsService {
         return rank;
     }
 
-    private static int normalizeAuditLimit(int limit) {
-        return Math.max(1, Math.min(limit, 100));
+    private static void validatePage(int page, int size) {
+        if (page < 0) {
+            throw badRequest("page must be non-negative");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw badRequest("size must be between 1 and " + MAX_PAGE_SIZE);
+        }
     }
 
     private static NormalizedTerm normalizeTerm(String rawTerm) {

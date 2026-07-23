@@ -11,7 +11,9 @@ import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.ContentModerationAudit;
 import cn.edu.training.novel.domain.DuePublicationResult;
 import cn.edu.training.novel.domain.ModerationDecision;
+import cn.edu.training.novel.domain.ModerationReviewScope;
 import cn.edu.training.novel.domain.Volume;
+import cn.edu.training.novel.service.CatalogRepository;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,7 @@ import org.springframework.test.annotation.DirtiesContext;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ContentModerationUnavailableIntegrationTest {
     @Autowired NovelStore store;
+    @Autowired CatalogRepository catalogRepository;
 
     @Test
     void disabledQwenHoldsOnlyTheIncrementalDirectSubmission() {
@@ -36,7 +39,7 @@ class ContentModerationUnavailableIntegrationTest {
 
         ChapterCandidate candidate = candidateFor(held.id());
         ContentModerationAudit audit = auditFor(candidate.id());
-        assertThat(held.status()).isEqualTo(ChapterStatus.NEEDS_REVIEW);
+        assertThat(held.status()).isEqualTo(ChapterStatus.DRAFT);
         assertThat(held.published()).isFalse();
         assertThat(candidate.type()).isEqualTo(ChapterCandidateType.NEW_CHAPTER);
         assertThat(candidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
@@ -65,10 +68,8 @@ class ContentModerationUnavailableIntegrationTest {
     }
 
     private ChapterCandidate candidateFor(long chapterId) {
-        return store.authorChapterCandidates(2L, 1L).stream()
-                .filter(item -> item.targetChapterId() == chapterId)
-                .findFirst()
-                .orElseThrow();
+        return PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.NEW_CHAPTER, chapterId);
     }
 
     private ContentModerationAudit auditFor(long candidateId) {

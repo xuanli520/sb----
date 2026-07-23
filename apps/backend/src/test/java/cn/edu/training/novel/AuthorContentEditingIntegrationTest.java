@@ -7,14 +7,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.nullValue;
 
 import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterCandidate;
+import cn.edu.training.novel.domain.ChapterCandidateStatus;
 import cn.edu.training.novel.domain.ChapterStatus;
+import cn.edu.training.novel.domain.ModerationReviewScope;
 import cn.edu.training.novel.domain.Volume;
 import cn.edu.training.novel.service.CatalogRepository;
-import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.NovelStore;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -36,9 +39,9 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "novel.scheduled-publication.enabled=false",
         "spring.datasource.url=jdbc:h2:mem:author_content_editing_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 })
@@ -46,13 +49,11 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class AuthorContentEditingIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired MockMvc mvc;
     @Autowired NovelStore store;
     @Autowired CatalogRepository catalogRepository;
     @Autowired JdbcTemplate jdbc;
-    @Autowired BookModerationSnapshotService bookModerationSnapshotService;
 
     @Test
     void authorCanEditDraftAndScheduledChapterWithoutLosingScheduleOrWordCount() throws Exception {
@@ -88,67 +89,83 @@ class AuthorContentEditingIntegrationTest {
     }
 
     @Test
-    void publishedChapterEditQueuesWholeBookReviewAndOnlyReviewerCanReleaseIt() throws Exception {
+    void publishedChapterEditUsesAnIndependentCandidateAndKeepsTheBookPublic() throws Exception {
         Chapter original = catalogRepository.findChapterById(1001L).orElseThrow();
-        Book originalBook = store.book(1L);
         String safeRevision = "safe revised public chapter";
 
         mvc.perform(author(put("/api/v1/author/books/1/chapters/1001"), "author")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Revised port\",\"content\":\"" + safeRevision + "\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("NEEDS_REVIEW"))
-                .andExpect(jsonPath("$.data.published").value(false))
-                .andExpect(jsonPath("$.data.reviewReason").value("已修改已发布章节，等待整书复核"));
+                .andExpect(jsonPath("$.data.status").value("PUBLISHED"))
+                .andExpect(jsonPath("$.data.published").value(true))
+                .andExpect(jsonPath("$.data.content").value(original.content()));
 
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.NEEDS_REVIEW);
-        assertThat(store.book(1L).words())
-                .isEqualTo(originalBook.words() - original.content().length() + safeRevision.length());
-        mvc.perform(get("/api/v1/public/books/1")).andExpect(status().isNotFound());
-        mvc.perform(author(put("/api/v1/author/books/1/chapters/1001"), "author")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"second change\",\"content\":\"second copy\"}"))
-                .andExpect(status().isConflict());
-
-        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
-        mvc.perform(author(post("/api/v1/admin/reviews/1"), "admin")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approve\":true,\"reason\":\"full work approved\"}"))
+        ChapterCandidate firstCandidate = PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.CHAPTER_REVISION, original.id());
+        assertThat(firstCandidate)
+                .extracting(ChapterCandidate::targetChapterId, ChapterCandidate::status, ChapterCandidate::content)
+                .containsExactly(original.id(), ChapterCandidateStatus.PENDING_REVIEW, safeRevision);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
+        mvc.perform(get("/api/v1/public/books/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("PUBLISHED"));
+                .andExpect(jsonPath("$.data.chapters[0].content").value(original.content()));
+
+        mvc.perform(author(post("/api/v1/admin/reviews/candidates/{candidateId}", firstCandidate.id()), "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approve\":true,\"reason\":\"incremental revision approved\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("APPROVED"));
         assertThat(catalogRepository.findChapterById(1001L).orElseThrow())
                 .extracting(Chapter::content, Chapter::status, Chapter::published)
                 .containsExactly(safeRevision, ChapterStatus.PUBLISHED, true);
-        mvc.perform(get("/api/v1/public/books/1"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.chapters[0].content").value(safeRevision));
 
         mvc.perform(author(put("/api/v1/author/books/1/chapters/1001"), "author")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Sensitive revision\",\"content\":\"contains 敏感词\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("NEEDS_REVIEW"))
-                .andExpect(jsonPath("$.data.reviewReason").value("命中本地敏感词，已暂停已发布章节修改并标记整书复核"));
-        assertThat(auditCount("%update published chapter=1001 author=2 screened=blocked book=1%")).isEqualTo(1);
+                .andExpect(jsonPath("$.data.status").value("PUBLISHED"))
+                .andExpect(jsonPath("$.data.content").value(safeRevision));
+        ChapterCandidate blockedCandidate = PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.CHAPTER_REVISION, original.id());
+        assertThat(blockedCandidate.status()).isEqualTo(ChapterCandidateStatus.PENDING_REVIEW);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
 
-        assertThat(bookModerationSnapshotService.processAvailableChunks()).isPositive();
-        mvc.perform(author(post("/api/v1/admin/reviews/1"), "admin")
+        mvc.perform(author(post("/api/v1/admin/reviews/candidates/{candidateId}", blockedCandidate.id()), "admin")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approve\":false,\"reason\":\"needs a rewrite\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("REJECTED"));
         assertThat(catalogRepository.findChapterById(1001L).orElseThrow())
-                .extracting(Chapter::status, Chapter::published)
-                .containsExactly(ChapterStatus.DRAFT, false);
+                .extracting(Chapter::content, Chapter::status, Chapter::published)
+                .containsExactly(safeRevision, ChapterStatus.PUBLISHED, true);
+        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
+
+        mvc.perform(author(get("/api/v1/author/books/1/chapters"), "author")
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(1001))
+                .andExpect(jsonPath("$.data.items[0].latestCandidate.status").value("REJECTED"))
+                .andExpect(jsonPath("$.data.items[0].latestCandidate.reviewReason").value("needs a rewrite"));
+
         mvc.perform(author(put("/api/v1/author/books/1/chapters/1001"), "author")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"Resubmitted revision\",\"content\":\"safe resubmitted copy\"}"))
+                        .content("{\"title\":\"Approved revision\",\"content\":\"approved replacement copy\"}"))
+                .andExpect(status().isOk());
+        ChapterCandidate approvedCandidate = PendingCandidateQueueTestSupport.pendingCandidate(
+                store, ModerationReviewScope.CHAPTER_REVISION, 1001L);
+        mvc.perform(author(post("/api/v1/admin/reviews/candidates/{candidateId}", approvedCandidate.id()), "admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approve\":true,\"reason\":\"approved replacement\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("DRAFT"));
-        mvc.perform(author(post("/api/v1/author/books/1/chapters/1001/submit"), "author"))
+                .andExpect(jsonPath("$.data.status").value("APPROVED"));
+
+        mvc.perform(author(get("/api/v1/author/books/1/chapters"), "author")
+                        .param("page", "0")
+                        .param("size", "20"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("PUBLISHED"));
-        assertThat(store.book(1L).status()).isEqualTo(BookStatus.PENDING_REVIEW);
+                .andExpect(jsonPath("$.data.items[0].latestCandidate").value(nullValue()));
     }
 
     @Test
@@ -157,14 +174,19 @@ class AuthorContentEditingIntegrationTest {
 
         mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"Metadata after\",\"category\":\"悬疑\",\"synopsis\":\"after synopsis\",\"serialStatus\":\"已完结\",\"cover\":\"#123456\"}"))
+                        .content("{\"title\":\"Metadata after\",\"category\":\"悬疑\",\"synopsis\":\"after synopsis\",\"serialStatus\":\"已完结\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Metadata after"))
                 .andExpect(jsonPath("$.data.serialStatus").value("已完结"));
         assertThat(store.book(draft.id()))
                 .extracting(Book::category, Book::synopsis, Book::cover, Book::status)
-                .containsExactly("悬疑", "after synopsis", "#123456", BookStatus.DRAFT);
+                .containsExactly("悬疑", "after synopsis", null, BookStatus.DRAFT);
         assertThat(auditCount("%update book=" + draft.id() + " author=2 state=DRAFT%")).isEqualTo(1);
+
+        mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Metadata after\",\"category\":\"悬疑\",\"synopsis\":\"after synopsis\",\"cover\":\"https://untrusted.example/cover.png\"}"))
+                .andExpect(status().isBadRequest());
 
         mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -247,7 +269,16 @@ class AuthorContentEditingIntegrationTest {
 
     private MockHttpServletRequestBuilder author(MockHttpServletRequestBuilder request, String principal) {
         return request.header("X-Novel-Internal-Key", INTERNAL_KEY)
-                .header(DEVELOPMENT_PRINCIPAL, principal);
+                .header(TestBffSessions.HEADER, testSession(principal));
+    }
+
+    private static String testSession(String principal) {
+        return switch (principal) {
+            case "admin" -> TestBffSessions.ADMIN;
+            case "author" -> TestBffSessions.AUTHOR;
+            case "reader" -> TestBffSessions.READER;
+            default -> throw new IllegalArgumentException("unknown test principal: " + principal);
+        };
     }
 
     private int auditCount(String pattern) {

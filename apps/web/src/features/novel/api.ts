@@ -25,6 +25,14 @@ export type EditorialRecommendationAudit = {
   operatorUserId:number;
   createdAt:string;
 };
+export type EditorialRecommendationPage = {
+  items:EditorialRecommendation[];
+  meta:{ total:number; page:number; size:number };
+};
+export type EditorialRecommendationAuditPage = {
+  items:EditorialRecommendationAudit[];
+  meta:{ total:number; page:number; size:number };
+};
 export type HotSearchTerm = {
   id:number;
   term:string;
@@ -46,8 +54,34 @@ export type HotSearchTermAudit = {
   operatorUserId:number;
   createdAt:string;
 };
+export type HotSearchTermPage = {
+  items:HotSearchTerm[];
+  meta:{ total:number; page:number; size:number };
+};
+export type HotSearchTermAuditPage = {
+  items:HotSearchTermAudit[];
+  meta:{ total:number; page:number; size:number };
+};
 export type AccountProfile = { id:number; name:string; roles:string[]; passwordChangeRequired:boolean };
 export type AccountProfileUpdate = { displayName:string };
+/** A reader's author-application record, shared by account and stationmaster views. */
+export type AuthorApplication = {
+  id:number;
+  userId:number;
+  penName:string;
+  statement:string;
+  status:'PENDING' | 'APPROVED' | 'REJECTED';
+  reason:string;
+  createdAt:string;
+  decidedAt:string | null;
+  decidedByUserId:number | null;
+  reapplyAvailableAt:string | null;
+};
+/** Zero-based pending review queue returned to stationmasters. */
+export type AuthorApplicationPage = {
+  items:AuthorApplication[];
+  meta:{ total:number; page:number; size:number };
+};
 /** Credential-free SMTP configuration returned only to the station super administrator. */
 export type EmailDeliverySettings = {
   source:'DEPLOYMENT' | 'ADMIN';
@@ -99,6 +133,43 @@ export type CommercialRuleAudit = {
   reason:string;
   operatorUserId:number;
   createdAt:string;
+};
+export type CommercialRuleAuditPage = {
+  items:CommercialRuleAudit[];
+  meta:{ total:number; page:number; size:number };
+};
+/** One stationmaster-managed moderation term and its current enforcement state. */
+export type SensitiveWord = {
+  normalizedWord:string;
+  word:string;
+  enabled:boolean;
+  createdByUserId:number | null;
+  updatedByUserId:number | null;
+  disabledByUserId:number | null;
+  disabledAt:string | null;
+  createdAt:string;
+  updatedAt:string;
+};
+export type SensitiveWordPage = {
+  items:SensitiveWord[];
+  meta:{ total:number; page:number; size:number };
+};
+/** Immutable stationmaster decision record for a sensitive-word lifecycle change. */
+export type SensitiveWordAudit = {
+  id:number;
+  normalizedWord:string;
+  previousWord:string | null;
+  word:string | null;
+  previousEnabled:boolean | null;
+  enabled:boolean | null;
+  action:'CREATED' | 'UPDATED' | 'ENABLED' | 'DISABLED' | 'DELETED';
+  reason:string;
+  operatorUserId:number;
+  createdAt:string;
+};
+export type SensitiveWordAuditPage = {
+  items:SensitiveWordAudit[];
+  meta:{ total:number; page:number; size:number };
 };
 export type NovelCommentStatus = 'PENDING_REVIEW' | 'VISIBLE' | 'REJECTED';
 export type AuthorModerationAdvice = {
@@ -194,6 +265,40 @@ export type ChapterCandidate = {
   createdAt:string;
   reviewedByUserId:number | null;
   reviewedAt:string | null;
+};
+/** One author-workspace volume page, including a server-side count of its linked chapters. */
+export type AuthorWorkspaceVolume = {
+  id:number;
+  bookId:number;
+  title:string;
+  orderNo:number;
+  createdAt:string;
+  chapterCount:number;
+};
+export type AuthorWorkspaceVolumePage = {
+  items:AuthorWorkspaceVolume[];
+  meta:{ total:number; page:number; size:number };
+};
+/** A chapter row carries the joined volume label and its latest review candidate. */
+export type AuthorWorkspaceChapter = {
+  id:number;
+  bookId:number;
+  volumeId:number | null;
+  title:string;
+  content:string;
+  published:boolean;
+  status:string;
+  scheduledPublishAt:string | null;
+  publishedAt:string | null;
+  reviewReason:string;
+  orderNo:number;
+  volumeTitle:string | null;
+  volumeOrderNo:number | null;
+  latestCandidate:ChapterCandidate | null;
+};
+export type AuthorWorkspaceChapterPage = {
+  items:AuthorWorkspaceChapter[];
+  meta:{ total:number; page:number; size:number };
 };
 /** A staged replacement for a public cover; its private object is never exposed to public catalog readers. */
 export type BookCoverCandidate = {

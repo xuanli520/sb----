@@ -101,13 +101,30 @@ public class MediaAssetService {
         return repository.findAsset(assetId).orElseThrow(() -> new NoSuchElementException("media asset not found"));
     }
 
+    /** The stationmaster asset library is deliberately isolated from author-owned cover media. */
+    public MediaAsset platformBannerAsset(UUID assetId) {
+        MediaAsset asset = asset(assetId);
+        requirePlatformBanner(asset);
+        return asset;
+    }
+
     public List<MediaAssetBinding> bindings(UUID assetId) {
         asset(assetId);
         return repository.findBindings(assetId);
     }
 
+    public List<MediaAssetBinding> platformBannerBindings(UUID assetId) {
+        platformBannerAsset(assetId);
+        return repository.findBindings(assetId);
+    }
+
     public List<MediaAssetAudit> audits(UUID assetId, int limit) {
         asset(assetId);
+        return repository.findAssetAudits(assetId, normalizeLimit(limit));
+    }
+
+    public List<MediaAssetAudit> platformBannerAudits(UUID assetId, int limit) {
+        platformBannerAsset(assetId);
         return repository.findAssetAudits(assetId, normalizeLimit(limit));
     }
 
@@ -219,6 +236,23 @@ public class MediaAssetService {
         return saved;
     }
 
+    /** Called while a draft/rejected work is deleted so its no-longer-referenced cover can be reclaimed. */
+    void removeAuthorBookCoverForDeletedBook(long authorUserId, long bookId) {
+        MediaAssetBinding binding = repository.findBinding(MediaAssetPurpose.BOOK_COVER, bookId).orElse(null);
+        if (binding == null) return;
+        MediaAsset asset = repository.findAssetForUpdate(binding.assetId())
+                .orElseThrow(() -> new IllegalStateException("book cover asset is missing"));
+        if (asset.ownerScope() != MediaAssetOwnerScope.AUTHOR
+                || asset.ownerUserId() == null
+                || asset.ownerUserId() != authorUserId
+                || asset.purpose() != MediaAssetPurpose.BOOK_COVER) {
+            throw new IllegalStateException("book cover binding is inconsistent");
+        }
+        repository.removeBinding(MediaAssetPurpose.BOOK_COVER, bookId);
+        repository.recordAssetAudit(asset.id(), "UNBOUND", "book deleted book=" + bookId, authorUserId);
+        retireIfUnbound(asset.id(), authorUserId, "book deleted book=" + bookId);
+    }
+
     /** Stages a published-work replacement without creating a public URL or changing its cover binding. */
     BookCoverCandidate stagePublishedBookCoverCandidate(long authorUserId, Book book, CoverImage image) {
         if (book.authorId() != authorUserId) {
@@ -308,10 +342,13 @@ public class MediaAssetService {
     public CoverCandidatePage coverCandidatePage(BookCoverCandidateStatus status, int page, int size) {
         requirePage(page, size);
         MediaCarouselRepository.CandidatePage source = repository.findCoverCandidatePage(status, page, size);
+        java.util.Map<Long, Book> booksById = repository.findBooksByIds(
+                source.items().stream().map(BookCoverCandidate::bookId).toList());
         List<BookCoverCandidateQueueItem> items = source.items().stream()
-                .map(candidate -> repository.findBook(candidate.bookId())
-                        .map(book -> new BookCoverCandidateQueueItem(BookCoverCandidateQueueItem.SCOPE, book, candidate))
-                        .orElse(null))
+                .map(candidate -> {
+                    Book book = booksById.get(candidate.bookId());
+                    return book == null ? null : new BookCoverCandidateQueueItem(BookCoverCandidateQueueItem.SCOPE, book, candidate);
+                })
                 .filter(java.util.Objects::nonNull)
                 .toList();
         return new CoverCandidatePage(items, new MediaAssetPage.Meta(source.total(), source.page(), source.size()));
@@ -439,11 +476,15 @@ public class MediaAssetService {
     private MediaAsset lockPlatformBanner(UUID assetId) {
         MediaAsset asset = repository.findAssetForUpdate(assetId)
                 .orElseThrow(() -> new NoSuchElementException("media asset not found"));
+        requirePlatformBanner(asset);
+        return asset;
+    }
+
+    private static void requirePlatformBanner(MediaAsset asset) {
         if (asset.ownerScope() != MediaAssetOwnerScope.PLATFORM
                 || asset.purpose() != MediaAssetPurpose.HOME_CAROUSEL_BANNER) {
             throw new SecurityException("media asset is not a platform home-carousel banner");
         }
-        return asset;
     }
 
     private void requireUnbound(UUID assetId, String message) {

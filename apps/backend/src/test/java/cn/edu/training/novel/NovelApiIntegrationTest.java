@@ -18,15 +18,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+@UseTestBffSessions
 @SpringBootTest(properties = {
         "novel.internal-api-key=local-novel-internal-key",
-        "novel.development-auth-enabled=true",
         "spring.datasource.url=jdbc:h2:mem:novel_api_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
 }) @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class NovelApiIntegrationTest {
     private static final String INTERNAL_KEY = "local-novel-internal-key";
-    private static final String DEVELOPMENT_PRINCIPAL = "X-Novel-Development-Principal";
 
     @Autowired WebApplicationContext context;
     @Autowired JdbcTemplate jdbc;
@@ -35,11 +34,11 @@ class NovelApiIntegrationTest {
     MockMvc internalMvc;
     @BeforeEach void configureMvc() {
         mvc = MockMvcBuilders.webAppContextSetup(context)
-                // Every development fixture carries an explicit development identity. This keeps
-                // tests from accidentally accepting an internal-key-only request as a reader.
+                // Every fixture carries an opaque persisted reader session. This keeps tests from
+                // accidentally accepting an internal-key-only request as a reader.
                 .defaultRequest(get("/")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .build();
         internalMvc = MockMvcBuilders.webAppContextSetup(context)
                 .defaultRequest(get("/").header("X-Novel-Internal-Key", INTERNAL_KEY))
@@ -56,13 +55,13 @@ class NovelApiIntegrationTest {
         direct.perform(get("/api/v1/admin/dashboard").header("X-Novel-Principal", "admin"))
                 .andExpect(status().isUnauthorized());
     }
-    @Test void developmentIdentityMustBeExplicitEvenWhenDevelopmentAuthIsEnabled() throws Exception {
+    @Test void opaqueBffSessionMustBeExplicitForProtectedApiRequests() throws Exception {
         MockMvc direct = MockMvcBuilders.webAppContextSetup(context).build();
         direct.perform(get("/api/v1/account/profile").header("X-Novel-Internal-Key", INTERNAL_KEY))
                 .andExpect(status().isUnauthorized());
         direct.perform(get("/api/v1/account/profile")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
-                        .header(DEVELOPMENT_PRINCIPAL, "reader"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.READER))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.roles[0]").value("READER"));
     }
@@ -100,21 +99,21 @@ class NovelApiIntegrationTest {
             .andExpect(status().isConflict());
     }
     @Test void roleAndOwnershipProtectAuthorWorkflow() throws Exception {
-        mvc.perform(get("/api/v1/author/books").header(DEVELOPMENT_PRINCIPAL, "reader")).andExpect(status().isForbidden());
-        mvc.perform(post("/api/v1/author/books").header(DEVELOPMENT_PRINCIPAL,"author").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(get("/api/v1/author/books").header(TestBffSessions.HEADER, TestBffSessions.READER)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/author/books").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"title\":\"测试书\",\"category\":\"科幻\",\"synopsis\":\"测试简介\"}"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("DRAFT"));
-        mvc.perform(post("/api/v1/author/books/2/chapters").header(DEVELOPMENT_PRINCIPAL,"author").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/author/books/2/chapters").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"title\":\"越权\",\"content\":\"内容\",\"submit\":true}"))
             .andExpect(status().isForbidden());
     }
     @Test void adminReviewControlsVisibility() throws Exception {
         String payload="{\"title\":\"待审书\",\"category\":\"悬疑\",\"synopsis\":\"待审核\"}";
-        String body=mvc.perform(post("/api/v1/author/books").header(DEVELOPMENT_PRINCIPAL,"author").contentType(MediaType.APPLICATION_JSON).content(payload))
+        String body=mvc.perform(post("/api/v1/author/books").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON).content(payload))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         assertThat(body).contains("待审书");
-        mvc.perform(get("/api/v1/admin/reviews").header(DEVELOPMENT_PRINCIPAL,"admin")).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/admin/reviews").header(TestBffSessions.HEADER, TestBffSessions.ADMIN)).andExpect(status().isOk());
     }
 
     @Test void readerPreferencesProgressBookmarksAndInteractionsRespectContracts() throws Exception {
@@ -131,36 +130,38 @@ class NovelApiIntegrationTest {
     }
 
     @Test void redemptionFundsPurchaseAndRewardAtomically() throws Exception {
-        mvc.perform(post("/api/v1/account/redeem").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"WELCOME100\"}"))
+        mvc.perform(post("/api/v1/account/redeem").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"WELCOME100\"}"))
                 .andExpect(status().isOk());
-        mvc.perform(post("/api/v1/account/books/1/purchase").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30}"))
+        mvc.perform(post("/api/v1/account/books/1/purchase").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.balance").value(70));
-        mvc.perform(post("/api/v1/account/books/1/reward").header("X-Novel-Development-Principal","author").header("Idempotency-Key", "novel-api-reward").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":20}"))
+        mvc.perform(post("/api/v1/account/books/1/reward").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).header("Idempotency-Key", "novel-api-reward").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":20}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.balance").value(50));
-        mvc.perform(get("/api/v1/account/wallet").header("X-Novel-Development-Principal","author")).andExpect(jsonPath("$.data.tokens").value(50));
+        mvc.perform(get("/api/v1/account/wallet").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)).andExpect(jsonPath("$.data.tokens").value(50));
     }
 
     @Test void sensitiveContentQueuesCommentAndChapterForManualReview() throws Exception {
         mvc.perform(post("/api/v1/account/books/1/comments").contentType(MediaType.APPLICATION_JSON).content("{\"content\":\"含敏感词的评论\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING_REVIEW"));
-        mvc.perform(post("/api/v1/author/books/1/chapters").header("X-Novel-Development-Principal","author").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"风险章节\",\"content\":\"包含敏感词\",\"submit\":true}"))
+        mvc.perform(post("/api/v1/author/books/1/chapters").header(TestBffSessions.HEADER, TestBffSessions.AUTHOR).contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"风险章节\",\"content\":\"包含敏感词\",\"submit\":true}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.published").value(false));
         mvc.perform(get("/api/v1/admin/reviews/queue")
                         .param("scope", "NEW_CHAPTER")
-                        .header("X-Novel-Development-Principal","admin"))
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
                 .andExpect(jsonPath("$.data.items[0].book.id").value(1));
     }
 
     @Test void adminCanInspectAuthorApplicationAndDisableUser() throws Exception {
         mvc.perform(post("/api/v1/account/author-applications").contentType(MediaType.APPLICATION_JSON).content("{\"penName\":\"新作者\",\"statement\":\"提交创作申请\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING"));
-        mvc.perform(get("/api/v1/admin/author-applications").header("X-Novel-Development-Principal","admin")).andExpect(jsonPath("$.data[0].penName").value("新作者"));
+        mvc.perform(get("/api/v1/admin/author-applications").header(TestBffSessions.HEADER, TestBffSessions.ADMIN))
+                .andExpect(jsonPath("$.data.meta.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].penName").value("新作者"));
         AuthService.AuthenticatedSession registered = authService.register(
                 "disable.target@example.test", "待禁用读者", "correct-horse-battery-staple");
         long accountId = registered.user().id();
         String sessionId = registered.bffSessionId();
         mvc.perform(post("/api/v1/admin/users/{userId}/status", accountId)
-                        .header("X-Novel-Development-Principal","admin")
+                        .header(TestBffSessions.HEADER, TestBffSessions.ADMIN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":false,\"reason\":\"违规处理暂停账号\"}"))
                 .andExpect(status().isOk())

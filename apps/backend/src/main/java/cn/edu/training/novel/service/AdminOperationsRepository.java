@@ -1,6 +1,7 @@
 package cn.edu.training.novel.service;
 
 import cn.edu.training.novel.domain.AccountStatusAudit;
+import cn.edu.training.novel.domain.AccountStatusAuditPage;
 import cn.edu.training.novel.domain.AdminAccount;
 import cn.edu.training.novel.domain.AdminAccountPage;
 import cn.edu.training.novel.domain.AdminUserBehaviorEvent;
@@ -163,12 +164,14 @@ public class AdminOperationsRepository {
                 .orElseThrow(() -> new IllegalStateException("account status audit was not saved"));
     }
 
-    public List<AccountStatusAudit> findAccountStatusAudits(long accountId, int limit) {
-        return pageMapper.selectAccountStatusAuditPage(limitRequest(limit), accountId)
-                .getRecords()
-                .stream()
-                .map(AdminOperationsRepository::toAccountStatusAudit)
-                .toList();
+    public AccountStatusAuditPage findAccountStatusAudits(long accountId, int page, int size) {
+        IPage<AdminOperationsPageMapper.AccountStatusAuditRow> result = pageMapper.selectAccountStatusAuditPage(
+                pageRequest(page, size, true), accountId);
+        return new AccountStatusAuditPage(
+                result.getRecords().stream().map(AdminOperationsRepository::toAccountStatusAudit).toList(),
+                result.getTotal(),
+                page,
+                size);
     }
 
     public AdminUserBehaviorSummary accountBehaviorSummary(AdminAccount account) {
