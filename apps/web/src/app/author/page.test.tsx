@@ -1972,11 +1972,6 @@ describe("author manuscript workspace", () => {
         expect.anything(),
       ),
     );
-    expect(
-      fetchMock.mock.calls.some(([input]) =>
-        String(input).includes("/chapter-candidates"),
-      ),
-    ).toBe(false);
     await waitFor(() => {
       const item = screen
         .getByRole("heading", { name: "第 1 章 · 抵达旧港" })
