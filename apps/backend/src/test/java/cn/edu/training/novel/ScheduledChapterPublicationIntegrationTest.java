@@ -39,7 +39,7 @@ class ScheduledChapterPublicationIntegrationTest {
     @Test
     void schedulerPublishesSafeDueChapterWithoutAuthorPublishRequest() throws Exception {
         Volume volume = store.createVolume(2, 1, "后台安全发布卷");
-        Chapter draft = store.createDraftChapter(2, 1, volume.id(), "自动公开", "这段正文由后台任务公开。 ");
+        Chapter draft = store.addChapter(2, 1, volume.id(), "自动公开", "这段正文由后台任务公开。 ", false);
         store.scheduleChapter(2, 1, draft.id(), Instant.now().plusMillis(200));
 
         await("safe chapter publication", () -> catalogRepository.findChapterById(draft.id())
@@ -57,7 +57,7 @@ class ScheduledChapterPublicationIntegrationTest {
     @Test
     void schedulerRechecksSensitiveWordsAndBlocksRiskyDueChapterWithoutAuthorPublishRequest() throws Exception {
         Volume volume = store.createVolume(2, 1, "后台风险发布卷");
-        Chapter draft = store.createDraftChapter(2, 1, volume.id(), "自动拦截", "该章节含有敏感词，必须由后台复检拦截。 ");
+        Chapter draft = store.addChapter(2, 1, volume.id(), "自动拦截", "该章节含有敏感词，必须由后台复检拦截。 ", false);
         store.scheduleChapter(2, 1, draft.id(), Instant.now().plusMillis(200));
 
         await("risky chapter review transition", () -> catalogRepository.findChapterById(draft.id())

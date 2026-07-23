@@ -97,6 +97,10 @@ function workspacePath(bookId: number, resource: 'volumes' | 'chapters', page: n
   return `author/books/${bookId}/${resource}?${parameters.toString()}`;
 }
 
+function volumeOptionLabel(volume: Pick<Volume, 'orderNo' | 'title'>) {
+  return `第 ${volume.orderNo} 卷 · ${volume.title}`;
+}
+
 function InteractionStatusBadge({ status }: { status: string }) {
   const meta = {
     PENDING_REVIEW: { label: '待审核', className: 'border-amber-300 bg-amber-50 text-amber-900' },
@@ -297,6 +301,7 @@ export default function AuthorPage() {
   const [chapterPage, setChapterPage] = useState<AuthorWorkspaceChapterPage>();
   const [chapterPageIndex, setChapterPageIndex] = useState(0);
   const [selectedVolumeId, setSelectedVolumeId] = useState<number>();
+  const [selectedVolumeDetails, setSelectedVolumeDetails] = useState<Volume>();
   const [selectedDraftId, setSelectedDraftId] = useState<number>();
   const [feedbackTab, setFeedbackTab] = useState<FeedbackTab>('comments');
   const [commentPage, setCommentPage] = useState<AuthorCommentPage>();
@@ -337,6 +342,7 @@ export default function AuthorPage() {
   const [chapterEditTitle, setChapterEditTitle] = useState('');
   const [chapterEditContent, setChapterEditContent] = useState('');
   const [chapterEditVolumeId, setChapterEditVolumeId] = useState<number>();
+  const [chapterEditVolumeDetails, setChapterEditVolumeDetails] = useState<Volume>();
   const [editingVolume, setEditingVolume] = useState<Volume>();
   const [volumeEditTitle, setVolumeEditTitle] = useState('');
   const [editError, setEditError] = useState('');
@@ -362,6 +368,28 @@ export default function AuthorPage() {
   const rewardRequestId = useRef(0);
   const analyticsRequestId = useRef(0);
   const bookCoverInputRef = useRef<HTMLInputElement>(null);
+
+  const selectDraftVolume = useCallback((volume?: Volume) => {
+    setSelectedVolumeId(volume?.id);
+    setSelectedVolumeDetails(volume);
+  }, []);
+
+  const selectChapterEditVolume = useCallback((volume?: Volume) => {
+    setChapterEditVolumeId(volume?.id);
+    setChapterEditVolumeDetails(volume);
+  }, []);
+
+  const selectedVolume = useMemo(() => {
+    if (selectedVolumeId === undefined) return undefined;
+    return volumes.find((volume) => volume.id === selectedVolumeId)
+      ?? (selectedVolumeDetails?.id === selectedVolumeId && selectedVolumeDetails.bookId === selectedBookId ? selectedVolumeDetails : undefined);
+  }, [selectedBookId, selectedVolumeDetails, selectedVolumeId, volumes]);
+
+  const selectedChapterEditVolume = useMemo(() => {
+    if (chapterEditVolumeId === undefined) return undefined;
+    return volumes.find((volume) => volume.id === chapterEditVolumeId)
+      ?? (chapterEditVolumeDetails?.id === chapterEditVolumeId && chapterEditVolumeDetails.bookId === selectedBookId ? chapterEditVolumeDetails : undefined);
+  }, [chapterEditVolumeDetails, chapterEditVolumeId, selectedBookId, volumes]);
 
   const loadBooks = useCallback(async (page: number) => {
     const requestId = ++booksRequestId.current;
@@ -485,21 +513,23 @@ export default function AuthorPage() {
       setVolumePage(undefined);
       setChapters([]);
       setChapterPage(undefined);
-      setSelectedVolumeId(undefined);
+      selectDraftVolume(undefined);
+      selectChapterEditVolume(undefined);
       setSelectedDraftId(undefined);
       setWorkspaceLoading(false);
       setWorkspaceError('');
       return;
     }
     void loadBookWorkspace(selectedBookId);
-  }, [chapterPageIndex, loadBookWorkspace, selectedBookId, volumePageIndex]);
+  }, [chapterPageIndex, loadBookWorkspace, selectChapterEditVolume, selectDraftVolume, selectedBookId, volumePageIndex]);
 
   useEffect(() => {
-    setSelectedVolumeId(undefined);
+    selectDraftVolume(undefined);
+    selectChapterEditVolume(undefined);
     setSelectedDraftId(undefined);
     setVolumePageIndex(0);
     setChapterPageIndex(0);
-  }, [selectedBookId]);
+  }, [selectChapterEditVolume, selectDraftVolume, selectedBookId]);
 
   useEffect(() => {
     if (!selectedBookId) {
@@ -518,8 +548,23 @@ export default function AuthorPage() {
   }, [selectedBookId]);
 
   useEffect(() => {
-    setSelectedVolumeId((current) => current ?? volumes[0]?.id);
-  }, [volumes]);
+    if (!selectedBookId) return;
+    const visibleSelectedVolume = volumes.find((volume) => volume.id === selectedVolumeId && volume.bookId === selectedBookId);
+    if (visibleSelectedVolume) {
+      setSelectedVolumeDetails(visibleSelectedVolume);
+      return;
+    }
+    if (selectedVolumeId === undefined) {
+      const firstVolume = volumes.find((volume) => volume.bookId === selectedBookId);
+      if (firstVolume) selectDraftVolume(firstVolume);
+    }
+  }, [selectDraftVolume, selectedBookId, selectedVolumeId, volumes]);
+
+  useEffect(() => {
+    if (chapterEditVolumeId === undefined || !selectedBookId) return;
+    const visibleSelectedVolume = volumes.find((volume) => volume.id === chapterEditVolumeId && volume.bookId === selectedBookId);
+    if (visibleSelectedVolume) setChapterEditVolumeDetails(visibleSelectedVolume);
+  }, [chapterEditVolumeId, selectedBookId, volumes]);
 
   const draftChapters = useMemo(() => chapters.filter((chapter) => chapter.status === 'DRAFT'), [chapters]);
   const latestCandidateByTargetChapterId = useMemo(() => new Map(
@@ -807,13 +852,14 @@ export default function AuthorPage() {
     setEditingChapter(chapter);
     setChapterEditTitle(chapter.title);
     setChapterEditContent(chapter.content);
-    setChapterEditVolumeId(undefined);
+    selectChapterEditVolume(undefined);
     setEditError('');
   };
 
   const closeChapterEditor = () => {
     if (pendingAction === 'update-chapter') return;
     setEditingChapter(undefined);
+    selectChapterEditVolume(undefined);
     setEditError('');
   };
 
@@ -843,6 +889,7 @@ export default function AuthorPage() {
         setChapters((current) => current.map((chapter) => chapter.id === updated.id ? updated : chapter));
       }
       setEditingChapter(undefined);
+      selectChapterEditVolume(undefined);
       announce(
         isPublishedRevision
           ? `《${nextTitle}》的修订候选已提交审核；当前已发布正文保持可读。`
@@ -887,6 +934,8 @@ export default function AuthorPage() {
         body: JSON.stringify({ title: nextTitle }),
       });
       setVolumes((current) => current.map((volume) => volume.id === updated.id ? updated : volume));
+      setSelectedVolumeDetails((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+      setChapterEditVolumeDetails((current) => current?.id === updated.id ? { ...current, ...updated } : current);
       setEditingVolume(undefined);
       announce(`《${updated.title}》卷册信息已保存`);
     } catch (reason) {
@@ -911,6 +960,8 @@ export default function AuthorPage() {
         body: JSON.stringify({ orderNo }),
       });
       setVolumes((current) => current.map((item) => item.id === reordered.id ? { ...item, ...reordered } : item));
+      setSelectedVolumeDetails((current) => current?.id === reordered.id ? { ...current, ...reordered } : current);
+      setChapterEditVolumeDetails((current) => current?.id === reordered.id ? { ...current, ...reordered } : current);
       announce(`《${volume.title}》已移动到第 ${orderNo} 卷`);
       await loadBookWorkspace(selectedBookId);
     } catch (reason) {
@@ -952,7 +1003,8 @@ export default function AuthorPage() {
         const result = await novelApi<VolumeDeleteResult>(`author/books/${bookId}/volumes/${target.item.id}`, 'author', { method: 'DELETE' });
         setVolumes((current) => current.filter((volume) => volume.id !== target.item.id));
         setChapters((current) => current.map((chapter) => chapter.volumeId === target.item.id ? { ...chapter, volumeId: null } : chapter));
-        setSelectedVolumeId((current) => current === target.item.id ? undefined : current);
+        if (selectedVolumeId === target.item.id) selectDraftVolume(undefined);
+        if (chapterEditVolumeId === target.item.id) selectChapterEditVolume(undefined);
         announce(`《${target.item.title}》已删除，${result.detachedChapterCount} 个章节已保留为未归入卷册内容`);
         await loadBookWorkspace(bookId);
       } else {
@@ -1012,7 +1064,7 @@ export default function AuthorPage() {
       setVolumeTitle('');
       announce(`《${selectedBook?.title ?? '当前作品'}》已新建${volume.title}`);
       await loadBookWorkspace(selectedBookId);
-      setSelectedVolumeId(volume.id);
+      selectDraftVolume(volume);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '新建卷册失败，请稍后重试。', 'error');
     } finally {
@@ -1348,7 +1400,7 @@ export default function AuthorPage() {
                     const chapterCount = volume.chapterCount;
                     return (
                       <div key={volume.id} className={`flex items-center gap-2 px-5 py-3 ${active ? 'bg-emerald-50' : 'hover:bg-stone-50'}`}>
-                        <Button type="button" variant="ghost" onClick={() => setSelectedVolumeId(volume.id)} aria-pressed={active} className="h-auto min-w-0 flex-1 justify-between gap-4 rounded-none px-0 py-1 text-left text-inherit hover:bg-transparent">
+                        <Button type="button" variant="ghost" onClick={() => selectDraftVolume(volume)} aria-pressed={active} className="h-auto min-w-0 flex-1 justify-between gap-4 rounded-none px-0 py-1 text-left text-inherit hover:bg-transparent">
                           <span className="min-w-0"><span className="block truncate font-semibold text-stone-950">第 {volume.orderNo} 卷 · {volume.title}</span><span className="mt-1 block text-xs text-stone-500">{chapterCount} 个章节</span></span>
                           <span className="shrink-0 text-sm font-medium text-emerald-800">{active ? '正在使用' : '选用'}</span>
                         </Button>
@@ -1513,11 +1565,19 @@ export default function AuthorPage() {
           </div>
           <div className="mt-4">
             <Label id="chapter-volume-label" className="text-stone-700">归属卷册</Label>
-            <Select value={selectedVolumeId?.toString() ?? 'unassigned'} onValueChange={(value) => setSelectedVolumeId(value === 'unassigned' ? undefined : Number(value))}>
-              <SelectTrigger aria-labelledby="chapter-volume-label" aria-label="归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+            <Select value={selectedVolumeId?.toString() ?? 'unassigned'} onValueChange={(value) => {
+              if (value === 'unassigned') {
+                selectDraftVolume(undefined);
+                return;
+              }
+              const volumeId = Number(value);
+              selectDraftVolume(volumes.find((volume) => volume.id === volumeId) ?? (selectedVolume?.id === volumeId ? selectedVolume : undefined));
+            }}>
+              <SelectTrigger aria-labelledby="chapter-volume-label" aria-label="归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue>{selectedVolume ? volumeOptionLabel(selectedVolume) : selectedVolumeId === undefined ? '暂不归入卷册' : '已选择卷册'}</SelectValue></SelectTrigger>
               <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
                 <SelectItem value="unassigned">暂不归入卷册</SelectItem>
-                {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>第 {volume.orderNo} 卷 · {volume.title}</SelectItem>)}
+                {selectedVolume && !volumes.some((volume) => volume.id === selectedVolume.id) ? <SelectItem value={selectedVolume.id.toString()}>{volumeOptionLabel(selectedVolume)}</SelectItem> : null}
+                {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>{volumeOptionLabel(volume)}</SelectItem>)}
               </SelectContent>
             </Select>
             <p className="mt-2 text-xs leading-5 text-stone-500">保存草稿需要先选定卷册；直接提交章节可暂不归入卷册。</p>
@@ -1931,11 +1991,19 @@ export default function AuthorPage() {
             </div>
             <div className="mt-4">
               <Label id="edit-chapter-volume-label" className="text-stone-700">归属卷册</Label>
-              <Select value={chapterEditVolumeId?.toString() ?? 'current'} onValueChange={(value) => setChapterEditVolumeId(value === 'current' ? undefined : Number(value))}>
-                <SelectTrigger aria-labelledby="edit-chapter-volume-label" aria-label="编辑章节归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue /></SelectTrigger>
+              <Select value={chapterEditVolumeId?.toString() ?? 'current'} onValueChange={(value) => {
+                if (value === 'current') {
+                  selectChapterEditVolume(undefined);
+                  return;
+                }
+                const volumeId = Number(value);
+                selectChapterEditVolume(volumes.find((volume) => volume.id === volumeId) ?? (selectedChapterEditVolume?.id === volumeId ? selectedChapterEditVolume : undefined));
+              }}>
+                <SelectTrigger aria-labelledby="edit-chapter-volume-label" aria-label="编辑章节归属卷册" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue>{selectedChapterEditVolume ? volumeOptionLabel(selectedChapterEditVolume) : chapterEditVolumeId === undefined ? '保持当前归属' : '已选择卷册'}</SelectValue></SelectTrigger>
                 <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
                   <SelectItem value="current">保持当前归属</SelectItem>
-                  {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>第 {volume.orderNo} 卷 · {volume.title}</SelectItem>)}
+                  {selectedChapterEditVolume && !volumes.some((volume) => volume.id === selectedChapterEditVolume.id) ? <SelectItem value={selectedChapterEditVolume.id.toString()}>{volumeOptionLabel(selectedChapterEditVolume)}</SelectItem> : null}
+                  {volumes.map((volume) => <SelectItem key={volume.id} value={volume.id.toString()}>{volumeOptionLabel(volume)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

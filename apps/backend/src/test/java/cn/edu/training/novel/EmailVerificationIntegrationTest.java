@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import cn.edu.training.novel.domain.EmailDeliverySettings;
+import cn.edu.training.novel.service.EmailDeliverySenderFactory;
 import cn.edu.training.novel.service.EmailVerificationService;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
@@ -57,11 +59,11 @@ class EmailVerificationIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired EmailVerificationService emailVerificationService;
-    @Autowired RecordingMailSender mailSender;
+    @Autowired RecordingSenderFactory senderFactory;
 
     @BeforeEach
     void resetMailSender() {
-        mailSender.reset();
+        senderFactory.reset();
     }
 
     @Test
@@ -75,8 +77,8 @@ class EmailVerificationIntegrationTest {
                 .andExpect(jsonPath("$.data.resendAvailableAt").isString())
                 .andReturn().getResponse().getContentAsString();
 
-        assertThat(mailSender.sent()).hasSize(1);
-        SimpleMailMessage message = mailSender.sent().getFirst();
+        assertThat(senderFactory.sent()).hasSize(1);
+        SimpleMailMessage message = senderFactory.sent().getFirst();
         assertThat(message.getFrom()).isEqualTo("noreply@example.test");
         assertThat(message.getTo()).containsExactly("reader.verify@example.test");
         String code = codeFrom(message);
@@ -125,14 +127,14 @@ class EmailVerificationIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"retry.verify@example.test\"}"))
                 .andExpect(status().isOk());
-        String issuedCode = codeFrom(mailSender.sent().getFirst());
+        String issuedCode = codeFrom(senderFactory.sent().getFirst());
         String wrongCode = issuedCode.equals("000000") ? "000001" : "000000";
         mvc.perform(post("/api/v1/auth/email-verification")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"retry.verify@example.test\"}"))
                 .andExpect(status().isTooManyRequests());
-        assertThat(mailSender.sent()).hasSize(1);
+        assertThat(senderFactory.sent()).hasSize(1);
 
         mvc.perform(post("/api/v1/auth/register")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
@@ -147,7 +149,7 @@ class EmailVerificationIntegrationTest {
 
     @Test
     void smtpFailureReturns503AndRollsBackTheVerificationState() throws Exception {
-        mailSender.failSends = true;
+        senderFactory.failSends = true;
 
         mvc.perform(post("/api/v1/auth/email-verification")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
@@ -155,7 +157,7 @@ class EmailVerificationIntegrationTest {
                         .content("{\"email\":\"smtp.failure@example.test\"}"))
                 .andExpect(status().isServiceUnavailable());
 
-        assertThat(mailSender.sent()).isEmpty();
+        assertThat(senderFactory.sent()).isEmpty();
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM novel_email_verification WHERE email = ?", Integer.class,
                 "smtp.failure@example.test"))
@@ -192,8 +194,28 @@ class EmailVerificationIntegrationTest {
     static class RecordingMailConfiguration {
         @Bean
         @Primary
-        RecordingMailSender recordingMailSender() {
-            return new RecordingMailSender();
+        RecordingSenderFactory recordingSenderFactory() {
+            return new RecordingSenderFactory();
+        }
+    }
+
+    static final class RecordingSenderFactory implements EmailDeliverySenderFactory {
+        private final RecordingMailSender sender = new RecordingMailSender();
+        volatile boolean failSends;
+
+        @Override
+        public JavaMailSender create(EmailDeliverySettings settings) {
+            sender.failSends = failSends;
+            return sender;
+        }
+
+        List<SimpleMailMessage> sent() {
+            return sender.sent();
+        }
+
+        void reset() {
+            failSends = false;
+            sender.reset();
         }
     }
 

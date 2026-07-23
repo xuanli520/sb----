@@ -740,8 +740,7 @@ public class NovelStore {
             String title,
             String category,
             String synopsis,
-            String serialStatus,
-            String cover) {
+            String serialStatus) {
         Book book = lockedOwned(userId, bookId);
         if (!isBookMetadataEditable(book.status())) {
             throw new IllegalStateException("book metadata can only be edited while the book is a draft or rejected");
@@ -749,11 +748,6 @@ public class NovelStore {
         String updatedSerialStatus = serialStatus == null
                 ? book.serialStatus()
                 : normalizeSerialStatus(serialStatus);
-        if (cover != null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "book cover is managed only through the media upload endpoint");
-        }
         Book updated = new Book(
                 book.id(),
                 requireTextAtMost(title, "book title is required", 255).trim(),
@@ -969,11 +963,6 @@ public class NovelStore {
             queueWholeWorkSnapshot(updatedBook);
         }
         audit("delete chapter=" + chapter.id() + " author=" + userId + " book=" + book.id());
-    }
-
-    @Transactional
-    public Chapter createDraftChapter(long userId, long bookId, long volumeId, String title, String content) {
-        return addChapter(userId, bookId, volumeId, title, content, false);
     }
 
     @Transactional

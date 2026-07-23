@@ -51,7 +51,7 @@ class ContentModerationUnavailableIntegrationTest {
     @Test
     void disabledQwenAlsoFailsClosedWhenAScheduledChapterBecomesDue() {
         Volume volume = store.createVolume(2L, 1L, "定时审核卷");
-        Chapter draft = store.createDraftChapter(2L, 1L, volume.id(), "到点审核", "定时发布也必须经过模型审核。");
+        Chapter draft = store.addChapter(2L, 1L, volume.id(), "到点审核", "定时发布也必须经过模型审核。", false);
         Instant scheduledAt = Instant.now().plusSeconds(30);
         store.scheduleChapter(2L, 1L, draft.id(), scheduledAt);
 

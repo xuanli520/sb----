@@ -1,6 +1,7 @@
 package cn.edu.training.novel;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -59,7 +60,7 @@ class AuthorContentEditingIntegrationTest {
     void authorCanEditDraftAndScheduledChapterWithoutLosingScheduleOrWordCount() throws Exception {
         Book book = store.createBook(2L, "Edit lifecycle", "科幻", "draft metadata");
         Volume volume = store.createVolume(2L, book.id(), "Volume one");
-        Chapter draft = store.createDraftChapter(2L, book.id(), volume.id(), "Before", "old copy");
+        Chapter draft = store.addChapter(2L, book.id(), volume.id(), "Before", "old copy", false);
 
         mvc.perform(author(put("/api/v1/author/books/{bookId}/chapters/{chapterId}", book.id(), draft.id()), "author")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -186,7 +187,14 @@ class AuthorContentEditingIntegrationTest {
         mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Metadata after\",\"category\":\"悬疑\",\"synopsis\":\"after synopsis\",\"cover\":\"https://untrusted.example/cover.png\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.msg").value(containsString("book cover is managed only through the media upload endpoint")));
+        mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Metadata after\",\"category\":\"悬疑\",\"synopsis\":\"after synopsis\",\"cover\":null}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.msg").value(containsString("book cover is managed only through the media upload endpoint")));
+        assertThat(auditCount("%update book=" + draft.id() + " author=2 state=DRAFT%")).isEqualTo(1);
 
         mvc.perform(author(put("/api/v1/author/books/{bookId}", draft.id()), "author")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -208,8 +216,8 @@ class AuthorContentEditingIntegrationTest {
     void safeDeletesMaintainCatalogAndWordCountAndRespectExternalReferences() throws Exception {
         Book book = store.createBook(2L, "Delete lifecycle", "科幻", "safe deletion test");
         Volume volume = store.createVolume(2L, book.id(), "Delete volume");
-        Chapter draft = store.createDraftChapter(2L, book.id(), volume.id(), "Delete draft", "remove me");
-        Chapter scheduled = store.createDraftChapter(2L, book.id(), volume.id(), "Keep draft", "keep until book delete");
+        Chapter draft = store.addChapter(2L, book.id(), volume.id(), "Delete draft", "remove me", false);
+        Chapter scheduled = store.addChapter(2L, book.id(), volume.id(), "Keep draft", "keep until book delete", false);
         store.scheduleChapter(2L, book.id(), scheduled.id(), Instant.now().plusSeconds(3600));
 
         mvc.perform(author(delete("/api/v1/author/books/{bookId}/chapters/{chapterId}", book.id(), draft.id()), "author"))

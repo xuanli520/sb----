@@ -65,7 +65,7 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" } }
       }
     },
-    "/api/v1/public/media/{kind}/{file}": {
+    "/api/v1/public/media/{kind}/{file:.+}": {
       "get": {
         "tags": ["Public discovery"],
         "operationId": "readManagedPublicMedia",
@@ -776,20 +776,6 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
-    "/api/v1/author/books/{bookId}/volumes/{volumeId}/chapters": {
-      "post": {
-        "tags": ["Author workspace"],
-        "operationId": "createVolumeDraftChapter",
-        "summary": "Create a draft chapter in an author-owned volume",
-        "security": [{ "BffSession": [], "CsrfToken": [] }],
-        "x-bff-csrf-required": true,
-        "x-required-role": "AUTHOR",
-        "x-response-data-schema": "#/components/schemas/Chapter",
-        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/PathVolumeId" }],
-        "requestBody": { "$ref": "#/components/requestBodies/DraftChapterRequest" },
-        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
-      }
-    },
     "/api/v1/author/books/{bookId}/chapters/{chapterId}": {
       "put": {
         "tags": ["Author workspace"],
@@ -1068,6 +1054,46 @@
         "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
         "requestBody": { "$ref": "#/components/requestBodies/BookReviewRequest" },
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/legacy-review-triage": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getLegacyReviewTriage",
+        "summary": "Page records stranded in the retired whole-book review state",
+        "description": "This isolated recovery queue contains only historical `NEEDS_REVIEW` books. It is not used by normal whole-book or incremental chapter moderation.",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/BookPresentationPage",
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/CatalogPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/admin/legacy-review-triage/{bookId}": {
+      "post": {
+        "tags": ["Operations"],
+        "operationId": "decideLegacyReviewTriage",
+        "summary": "Requeue or reject one historical review record",
+        "description": "Requeueing creates a fresh immutable whole-work moderation snapshot. This endpoint accepts only a book currently in the retired `NEEDS_REVIEW` state.",
+        "security": [{ "BffSession": [], "CsrfToken": [] }],
+        "x-bff-csrf-required": true,
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/BookPresentation",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/LegacyReviewTriageRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
+      }
+    },
+    "/api/v1/admin/legacy-review-triage/{bookId}/audits": {
+      "get": {
+        "tags": ["Operations"],
+        "operationId": "getLegacyReviewTriageAudits",
+        "summary": "Page administrator decisions for one historical review record",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/LegacyReviewTriageAuditPage",
+        "parameters": [{ "$ref": "#/components/parameters/PathBookId" }, { "$ref": "#/components/parameters/Page" }, { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 48 } }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
     "/api/v1/admin/dashboard": {
@@ -2026,11 +2052,11 @@
       "VolumeRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeRequest" } } } },
       "VolumeOrderRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VolumeOrderRequest" } } } },
       "ChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterRequest" } } } },
-      "DraftChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DraftChapterRequest" } } } },
       "ChapterUpdateRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChapterUpdateRequest" } } } },
       "ScheduleChapterRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScheduleChapterRequest" } } } },
       "BookReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookReviewRequest" } } } },
       "CandidateReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateReviewRequest" } } } },
+      "LegacyReviewTriageRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyReviewTriageRequest" } } } },
       "BookStatusRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BookStatusRequest" } } } },
       "ReviewRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviewRequest" } } } },
       "SensitiveWordRequest": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SensitiveWordRequest" } } } },
@@ -2082,6 +2108,7 @@
       "BookList": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } },
       "BookPresentation": { "allOf": [{ "$ref": "#/components/schemas/Book" }, { "type": "object", "required": ["metrics"], "properties": { "metrics": { "$ref": "#/components/schemas/InteractionStats" } } }] },
       "BookPresentationList": { "type": "array", "items": { "$ref": "#/components/schemas/BookPresentation" } },
+      "BookPresentationPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/BookPresentation" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
       "MediaBinary": { "type": "string", "format": "binary", "description": "PNG or JPEG binary response, not a JSON envelope." },
       "MediaAsset": { "type": "object", "required": ["id", "ownerScope", "purpose", "objectKey", "sha256", "contentType", "width", "height", "byteSize", "state", "createdAt", "updatedAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "ownerScope": { "type": "string", "enum": ["AUTHOR", "PLATFORM"] }, "ownerUserId": { "type": ["integer", "null"], "format": "int64" }, "purpose": { "type": "string", "enum": ["BOOK_COVER", "BOOK_COVER_CANDIDATE", "HOME_CAROUSEL_BANNER"] }, "objectKey": { "type": "string" }, "publicUrl": { "type": ["string", "null"], "description": "Only active public covers/banners have a relative `/media/` URL; staged candidate assets are private and null." }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "contentType": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 }, "byteSize": { "type": "integer", "format": "int64", "minimum": 1 }, "label": { "type": ["string", "null"] }, "state": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "PENDING_DELETE", "DELETED"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "archivedAt": { "type": ["string", "null"], "format": "date-time" }, "deletedAt": { "type": ["string", "null"], "format": "date-time" } } },
       "MediaAssetPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/MediaAsset" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
@@ -2186,6 +2213,8 @@
       "BookModerationSnapshotPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/BookModerationSnapshot" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
       "BookStatusAudit": { "type": "object", "required": ["id", "bookId", "action", "previousStatus", "status", "reason", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "action": { "type": "string", "enum": ["TAKEDOWN", "RESTORE_FOR_REVIEW"] }, "previousStatus": { "type": "string", "enum": ["PUBLISHED", "OFFLINE"] }, "status": { "type": "string", "enum": ["OFFLINE", "PENDING_REVIEW"] }, "reason": { "type": "string", "maxLength": 1024 }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
       "BookStatusAuditList": { "type": "array", "items": { "$ref": "#/components/schemas/BookStatusAudit" } },
+      "LegacyReviewTriageAudit": { "type": "object", "required": ["id", "bookId", "action", "previousStatus", "status", "reason", "operatorUserId", "createdAt"], "properties": { "id": { "type": "integer", "format": "int64" }, "bookId": { "type": "integer", "format": "int64" }, "action": { "type": "string", "enum": ["REQUEUE_FOR_REVIEW", "REJECT"] }, "previousStatus": { "type": "string", "const": "NEEDS_REVIEW" }, "status": { "type": "string", "enum": ["PENDING_REVIEW", "REJECTED"] }, "reason": { "type": "string", "maxLength": 900 }, "operatorUserId": { "type": "integer", "format": "int64" }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "LegacyReviewTriageAuditPage": { "type": "object", "required": ["items", "meta"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/LegacyReviewTriageAudit" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } },
       "AdminDashboard": { "type": "object", "required": ["activeReaders", "todayReads", "publishedBooks", "pendingReviews", "auditLog"], "properties": { "activeReaders": { "type": "integer" }, "todayReads": { "type": "integer" }, "publishedBooks": { "type": "integer" }, "pendingReviews": { "type": "integer" }, "auditLog": { "type": "array", "items": {} } } },
       "RetentionMetric": { "type": "object", "required": ["cohortReaderCount", "day1EligibleReaderCount", "day1RetainedReaderCount", "day1RetentionPercent", "day7EligibleReaderCount", "day7RetainedReaderCount", "day7RetentionPercent"], "properties": { "cohortReaderCount": { "type": "integer", "format": "int64" }, "day1EligibleReaderCount": { "type": "integer", "format": "int64" }, "day1RetainedReaderCount": { "type": "integer", "format": "int64" }, "day1RetentionPercent": { "type": ["number", "null"], "format": "double" }, "day7EligibleReaderCount": { "type": "integer", "format": "int64" }, "day7RetainedReaderCount": { "type": "integer", "format": "int64" }, "day7RetentionPercent": { "type": ["number", "null"], "format": "double" } } },
       "PlatformRetentionSummary": { "type": "object", "required": ["activeReaderCount", "metric"], "properties": { "activeReaderCount": { "type": "integer", "format": "int64" }, "metric": { "$ref": "#/components/schemas/RetentionMetric" } } },
@@ -2243,12 +2272,12 @@
       "VolumeRequest": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 } }, "additionalProperties": false },
       "VolumeOrderRequest": { "type": "object", "required": ["orderNo"], "properties": { "orderNo": { "type": "integer", "minimum": 1 } }, "additionalProperties": false },
       "ChapterRequest": { "type": "object", "required": ["title", "content", "submit"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "submit": { "type": "boolean" }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
-      "DraftChapterRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 } }, "additionalProperties": false },
       "ChapterUpdateRequest": { "type": "object", "required": ["title", "content"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 255 }, "content": { "type": "string", "minLength": 1, "maxLength": 20000 }, "volumeId": { "type": ["integer", "null"], "format": "int64" } }, "additionalProperties": false },
       "ScheduleChapterRequest": { "type": "object", "required": ["publishAt"], "properties": { "publishAt": { "type": "string", "format": "date-time", "description": "A future instant." } }, "additionalProperties": false },
       "ReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "BookReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
       "CandidateReviewRequest": { "type": "object", "required": ["approve", "reason"], "properties": { "approve": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
+      "LegacyReviewTriageRequest": { "type": "object", "required": ["action", "reason"], "properties": { "action": { "type": "string", "enum": ["REQUEUE_FOR_REVIEW", "REJECT"] }, "reason": { "type": "string", "minLength": 1, "maxLength": 900 } }, "additionalProperties": false },
       "BookStatusRequest": { "type": "object", "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1024 } }, "additionalProperties": false },
       "SensitiveWordRequest": { "type": "object", "required": ["word"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 } }, "additionalProperties": false },
       "SensitiveWordUpdateRequest": { "type": "object", "required": ["word", "reason"], "properties": { "word": { "type": "string", "minLength": 1, "maxLength": 128 }, "reason": { "type": "string", "minLength": 1, "maxLength": 512 } }, "additionalProperties": false },

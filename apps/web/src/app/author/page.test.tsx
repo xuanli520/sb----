@@ -1207,6 +1207,33 @@ describe("author manuscript workspace", () => {
     expect(
       await screen.findByRole("button", { name: /第 21 卷 · 分页卷 21/ }),
     ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "归属卷册" }).textContent,
+      ).toContain("第 1 卷 · 分页卷 1"),
+    );
+
+    fireEvent.change(screen.getByLabelText("章节标题"), {
+      target: { value: "跨页卷册草稿" },
+    });
+    fireEvent.change(screen.getByLabelText("章节正文"), {
+      target: { value: "分页后的卷册选择仍应保留。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存章节草稿" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/novel/author/books/1/chapters",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            title: "跨页卷册草稿",
+            content: "分页后的卷册选择仍应保留。",
+            submit: false,
+            volumeId: 101,
+          }),
+        }),
+      ),
+    );
 
     fireEvent.click(
       within(

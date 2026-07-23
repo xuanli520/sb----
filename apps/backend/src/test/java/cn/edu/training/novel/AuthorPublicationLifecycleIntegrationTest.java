@@ -83,9 +83,9 @@ class AuthorPublicationLifecycleIntegrationTest {
         Volume first = store.createVolume(2L, 1L, "分页卷一");
         Volume second = store.createVolume(2L, 1L, "分页卷二");
         Volume third = store.createVolume(2L, 1L, "分页卷三");
-        store.createDraftChapter(2L, 1L, first.id(), "分页章一", "第一段分页草稿。");
-        Chapter secondChapter = store.createDraftChapter(2L, 1L, second.id(), "分页章二", "第二段分页草稿。");
-        Chapter thirdChapter = store.createDraftChapter(2L, 1L, third.id(), "分页章三", "第三段分页草稿。");
+        store.addChapter(2L, 1L, first.id(), "分页章一", "第一段分页草稿。", false);
+        Chapter secondChapter = store.addChapter(2L, 1L, second.id(), "分页章二", "第二段分页草稿。", false);
+        Chapter thirdChapter = store.addChapter(2L, 1L, third.id(), "分页章三", "第三段分页草稿。", false);
 
         mvc.perform(get("/api/v1/author/books/1/volumes")
                         .param("page", "1")
@@ -143,14 +143,15 @@ class AuthorPublicationLifecycleIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         long volumeId = ((Number) JsonPath.read(volumeResponse, "$.data.id")).longValue();
-        String draftResponse = mvc.perform(post("/api/v1/author/books/1/volumes/{volumeId}/chapters", volumeId)
+        String draftResponse = mvc.perform(post("/api/v1/author/books/1/chapters")
                         .header("X-Novel-Internal-Key", INTERNAL_KEY)
                         .header(TestBffSessions.HEADER, TestBffSessions.AUTHOR)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"title\":\"尚未到点\",\"content\":\"这段正文在计划时间前不可读。\"}"))
+                        .content("{\"title\":\"尚未到点\",\"content\":\"这段正文在计划时间前不可读。\",\"submit\":false,\"volumeId\":" + volumeId + "}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("DRAFT"))
                 .andExpect(jsonPath("$.data.published").value(false))
+                .andExpect(jsonPath("$.data.volumeId").value(volumeId))
                 .andReturn().getResponse().getContentAsString();
         long chapterId = ((Number) JsonPath.read(draftResponse, "$.data.id")).longValue();
         Instant publishAt = Instant.now().plusSeconds(600);
@@ -183,7 +184,7 @@ class AuthorPublicationLifecycleIntegrationTest {
     void duePublishingRechecksSensitiveWordsWithoutWithdrawingThePublishedBook() throws Exception {
         Volume volume = store.createVolume(2, 1, "自动发布卷");
         Instant firstDue = Instant.now().plusSeconds(300);
-        Chapter safeDraft = store.createDraftChapter(2, 1, volume.id(), "准时发布", "这段安全正文会在到点后公开。");
+        Chapter safeDraft = store.addChapter(2, 1, volume.id(), "准时发布", "这段安全正文会在到点后公开。", false);
         store.scheduleChapter(2, 1, safeDraft.id(), firstDue);
 
         DuePublicationResult safeResult = store.publishDueChapters(2, firstDue.plusSeconds(1));
@@ -197,7 +198,7 @@ class AuthorPublicationLifecycleIntegrationTest {
                 .andExpect(jsonPath("$.data.chapters.length()").value(2));
 
         Instant riskDue = firstDue.plusSeconds(120);
-        Chapter riskDraft = store.createDraftChapter(2, 1, volume.id(), "风险定时章", "这段正文包含敏感词，必须在到点时重新审核。");
+        Chapter riskDraft = store.addChapter(2, 1, volume.id(), "风险定时章", "这段正文包含敏感词，必须在到点时重新审核。", false);
         store.scheduleChapter(2, 1, riskDraft.id(), riskDue);
         DuePublicationResult riskResult = store.publishDueChapters(2, riskDue.plusSeconds(1));
 

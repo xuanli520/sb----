@@ -34,7 +34,7 @@ class IncrementalChapterCandidateIntegrationTest {
         String revisedContent = "replacement approved only after incremental review";
 
         Chapter proposal = store.updateChapter(2L, 1L, original.id(), "第一章 修订", revisedContent, null);
-        ChapterCandidate candidate = onlyCandidate(original.id());
+        ChapterCandidate candidate = onlyCandidate(ModerationReviewScope.CHAPTER_REVISION, original.id());
 
         assertThat(proposal)
                 .extracting(Chapter::title, Chapter::content, Chapter::status, Chapter::published)
@@ -68,7 +68,7 @@ class IncrementalChapterCandidateIntegrationTest {
     void rejectedIncrementalNewChapterReturnsOnlyThatSourceToDraft() {
         store.addSensitiveWord(1L, "候选阻断词");
         Chapter proposal = store.addChapter(2L, 1L, "候选新章", "这一章包含候选阻断词", true);
-        ChapterCandidate candidate = onlyCandidate(proposal.id());
+        ChapterCandidate candidate = onlyCandidate(ModerationReviewScope.NEW_CHAPTER, proposal.id());
 
         assertThat(proposal.status()).isEqualTo(ChapterStatus.DRAFT);
         assertThat(store.book(1L).status()).isEqualTo(BookStatus.PUBLISHED);
@@ -84,8 +84,8 @@ class IncrementalChapterCandidateIntegrationTest {
         assertThat(store.publishedChapters(1L)).extracting(Chapter::id).doesNotContain(proposal.id());
     }
 
-    private ChapterCandidate onlyCandidate(long chapterId) {
+    private ChapterCandidate onlyCandidate(ModerationReviewScope scope, long chapterId) {
         return PendingCandidateQueueTestSupport.pendingCandidate(
-                store, ModerationReviewScope.CHAPTER_REVISION, chapterId);
+                store, scope, chapterId);
     }
 }

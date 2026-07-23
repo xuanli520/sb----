@@ -98,8 +98,8 @@ class AuthorVolumeLifecycleIntegrationTest {
         Book book = store.createBook(2L, "Volume deletion", "科幻", "volume deletion lifecycle");
         Volume removed = store.createVolume(2L, book.id(), "Removed volume");
         Volume retained = store.createVolume(2L, book.id(), "Retained volume");
-        Chapter draft = store.createDraftChapter(2L, book.id(), removed.id(), "Draft", "draft content");
-        Chapter scheduled = store.createDraftChapter(2L, book.id(), removed.id(), "Scheduled", "scheduled content");
+        Chapter draft = store.addChapter(2L, book.id(), removed.id(), "Draft", "draft content", false);
+        Chapter scheduled = store.addChapter(2L, book.id(), removed.id(), "Scheduled", "scheduled content", false);
         store.scheduleChapter(2L, book.id(), scheduled.id(), Instant.now().plusSeconds(3600));
         Chapter published = store.addChapter(2L, book.id(), removed.id(), "Published", "published content", true);
         int wordCountBefore = store.book(book.id()).words();
