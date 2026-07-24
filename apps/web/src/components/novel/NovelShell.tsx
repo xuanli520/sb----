@@ -31,7 +31,6 @@ import {
 } from '@/app/components/ui/dropdown-menu';
 import {
   Sheet,
-  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -267,14 +266,14 @@ function NovelNavigationLinks({
   workspace,
   permittedWorkspaces,
   authenticated,
-  closeOnNavigate = false,
+  onNavigate,
   mobile = false,
 }: {
   pathname: string | null;
   workspace: Workspace;
   permittedWorkspaces: Set<Workspace>;
   authenticated: boolean;
-  closeOnNavigate?: boolean;
+  onNavigate?: (href: string) => void;
   mobile?: boolean;
 }) {
   return navigation.filter((item) => permittedWorkspaces.has(item.workspace) && (!item.requiresAuthentication || authenticated)).map((item) => {
@@ -285,6 +284,11 @@ function NovelNavigationLinks({
         key={item.href}
         href={item.href}
         aria-current={active ? 'page' : undefined}
+        onClick={(event) => {
+          if (!onNavigate || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          onNavigate(item.href);
+        }}
         className={mobile
           ? `inline-flex min-h-10 items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium transition-colors ${
             active
@@ -301,10 +305,6 @@ function NovelNavigationLinks({
         {item.label}
       </Link>
     );
-
-    if (closeOnNavigate) {
-      return <SheetClose key={item.href} asChild>{link}</SheetClose>;
-    }
 
     return link;
   });
@@ -324,6 +324,12 @@ function MobileNavigation({
   accountName?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
+
+  const navigate = (href: string) => {
+    setOpen(false);
+    router.push(href);
+  };
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -349,7 +355,7 @@ function MobileNavigation({
           <SheetDescription className="text-stone-600">选择要进入的工作区</SheetDescription>
         </SheetHeader>
         <nav aria-label="移动端小说平台导航" className="flex flex-col gap-1 px-3 py-4">
-          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} closeOnNavigate mobile />
+          <NovelNavigationLinks pathname={pathname} workspace={workspace} permittedWorkspaces={permittedWorkspaces} authenticated={authenticated} onNavigate={navigate} mobile />
         </nav>
         <Separator className="mx-5 w-auto bg-stone-200" />
         <p className="px-5 py-4 text-xs leading-5 text-stone-500">
