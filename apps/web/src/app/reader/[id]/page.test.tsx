@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AnchorHTMLAttributes } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -298,6 +298,25 @@ describe('reader page modes', () => {
     const transition = screen.getByTestId('reader-transition-layer');
     expect(transition.getAttribute('data-transition-effect')).toBe(effect);
     expect(transition.getAttribute('data-transition-direction')).toBe('forward');
+  });
+
+  it('keeps the selected page visible after its transition finishes', async () => {
+    mockReaderPageTrack(3);
+    await renderReader();
+
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 1 / 3 页'));
+    const pageTrack = screen.getByTestId('reader-current-chapter').querySelector('.reader-chapter-pages');
+    if (!(pageTrack instanceof HTMLDivElement)) throw new Error('reader page track is missing');
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+    expect(pageTrack.scrollLeft).toBe(360);
+
+    act(() => { vi.advanceTimersByTime(460); });
+
+    expect(screen.queryByTestId('reader-transition-layer')).toBeNull();
+    expect(screen.getByTestId('reader-current-chapter').querySelector('.reader-chapter-pages')).toBe(pageTrack);
+    expect(pageTrack.scrollLeft).toBe(360);
   });
 
   it('moves backward across a chapter boundary to the previous chapter final page', async () => {

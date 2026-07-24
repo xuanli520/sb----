@@ -1612,7 +1612,9 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
             <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{chapterAnnouncement}</p>
 
             <article
-              key={`chapter-${chapter.id}-${pageTransition?.id ?? 'rest'}`}
+              // Keep the paged element mounted while its transition state changes. Recreating it
+              // after an animation resets its horizontal scroll position to the chapter's first page.
+              key={`chapter-${chapter.id}`}
               data-testid="reader-current-chapter"
               data-transition-effect={activeTransitionEffect}
               data-transition-direction={pageTransition?.direction}
