@@ -476,9 +476,10 @@ test('a real reader is approved as an author and drafts stay out of another read
 
   await page.goto(`/reader/${importedBook.id}`);
   await expect(page.getByRole('heading', { name: '第1章 浏览器导入' })).toBeVisible();
-  await expect(page.getByText(/第 1 \/ [2-9]\d*/)).toBeVisible();
+  const readerPageIndicator = page.getByTestId('reader-current-chapter').getByText(/第 1 \/ [2-9]\d*/);
+  await expect(readerPageIndicator).toBeVisible();
   await page.getByRole('button', { name: '下一页' }).click();
-  await expect(page.getByText(/第 2 \/ [2-9]\d*/)).toBeVisible();
+  await expect(page.getByTestId('reader-current-chapter').getByText(/第 2 \/ [2-9]\d*/)).toBeVisible();
 
   const otherReaderContext = await browser.newContext({ baseURL });
   try {
