@@ -56,6 +56,7 @@ function response(data: unknown) {
 }
 
 function mockApi(asset: PlatformBannerAsset = banner, total = 1, pickerAsset: PlatformBannerAsset = asset) {
+  const carouselBook = { ...book, id: 99, title: '新作品', author: '沈舟' };
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith('/admin/home-carousel') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response([slide]));
@@ -63,6 +64,8 @@ function mockApi(asset: PlatformBannerAsset = banner, total = 1, pickerAsset: Pl
     if (path.endsWith('/admin/media/banners?state=ACTIVE&page=0&size=12') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: [pickerAsset], meta: { total: 1, page: 0, size: 12 } }));
     if (path.endsWith('/admin/media/banners?state=ACTIVE&page=0&size=24&query=%E6%98%9F%E6%B5%B7') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: [asset], meta: { total: 1, page: 0, size: 24 } }));
     if (path.endsWith('/admin/media/banners?state=ACTIVE&page=1&size=24') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: [asset], meta: { total, page: 1, size: 24 } }));
+    if (path.endsWith('/admin/home-carousel/books?page=0&size=12') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: [carouselBook], meta: { total: 1, page: 0, size: 12 } }));
+    if (path.endsWith('/admin/home-carousel/books?page=0&size=12&q=%E6%96%B0%E4%BD%9C') && (init?.method ?? 'GET') === 'GET') return Promise.resolve(response({ items: [carouselBook], meta: { total: 1, page: 0, size: 12 } }));
     if (path.endsWith('/admin/home-carousel') && init?.method === 'POST') return Promise.resolve(response({ ...slide, slideId: 42, book: { ...book, id: 99, title: '新作品' } }));
     if (path.endsWith('/admin/home-carousel/41') && init?.method === 'PUT') return Promise.resolve(response({ ...slide, enabled: false, version: 4 }));
     if (path.endsWith('/admin/media/banners') && init?.method === 'POST') return Promise.resolve(response({ ...banner, id: '22222222-2222-2222-2222-222222222222', label: '新横幅' }));
@@ -99,7 +102,11 @@ describe('HomeCarouselOperationsPanel', () => {
     await screen.findByRole('heading', { name: '首页作品轮播' });
     expect(screen.getByText('星海横幅')).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('轮播作品 ID'), { target: { value: '99' } });
+    fireEvent.click(screen.getAllByRole('button', { name: '选择轮播作品' })[1]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/home-carousel/books?page=0&size=12', expect.anything()));
+    fireEvent.change(screen.getByLabelText('搜索已发布作品'), { target: { value: '新作' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/home-carousel/books?page=0&size=12&q=%E6%96%B0%E4%BD%9C', expect.anything()));
+    fireEvent.click(await screen.findByRole('button', { name: '选择作品 新作品' }));
     fireEvent.click(screen.getByRole('button', { name: '添加轮播' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/home-carousel', expect.objectContaining({
       method: 'POST',
@@ -194,6 +201,29 @@ describe('HomeCarouselOperationsPanel', () => {
       body: JSON.stringify({
         bookId: 7,
         bannerAssetId: replacement.id,
+        headline: '向星海出发',
+        copy: '运营短文案',
+        enabled: true,
+        rank: 1,
+        version: 3,
+      }),
+    })));
+  });
+
+  it('uses the selected published work when updating an existing slide', async () => {
+    const fetchMock = mockApi();
+    render(<HomeCarouselOperationsPanel />);
+
+    await screen.findByRole('heading', { name: '首页作品轮播' });
+    fireEvent.click(screen.getAllByRole('button', { name: '选择轮播作品' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: '选择作品 新作品' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存 星海拾光 轮播配置' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/novel/admin/home-carousel/41', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({
+        bookId: 99,
+        bannerAssetId: banner.id,
         headline: '向星海出发',
         copy: '运营短文案',
         enabled: true,

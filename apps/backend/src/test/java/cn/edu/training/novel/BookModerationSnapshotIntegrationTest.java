@@ -9,8 +9,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookModerationSnapshot;
 import cn.edu.training.novel.domain.BookModerationSnapshotStatus;
+import cn.edu.training.novel.domain.BookStatus;
 import cn.edu.training.novel.domain.Chapter;
+import cn.edu.training.novel.domain.ChapterStatus;
 import cn.edu.training.novel.domain.ContentModerationAudit;
+import cn.edu.training.novel.domain.DuePublicationResult;
 import cn.edu.training.novel.domain.ModerationDecision;
 import cn.edu.training.novel.service.BookModerationSnapshotService;
 import cn.edu.training.novel.service.ContentModelModerationClient;
@@ -203,6 +206,33 @@ class BookModerationSnapshotIntegrationTest {
         assertThat(current(book.id()).status()).isEqualTo(BookModerationSnapshotStatus.COMPLETED);
         assertThat(store.review(1L, book.id(), true, "review current snapshot only").status().name())
                 .isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void schedulingAnInitialWorkQueuesFullReviewAndWaitsForApprovalBeforePublication() {
+        Book book = store.createBook(2L, "Scheduled initial work", "科幻", "scheduled review flow");
+        Chapter draft = store.addChapter(2L, book.id(), "First scheduled chapter", "scheduled chapter body", false);
+        Instant publishAt = Instant.now().plusSeconds(30);
+
+        Chapter scheduled = store.scheduleChapter(2L, book.id(), draft.id(), publishAt);
+
+        assertThat(scheduled.status()).isEqualTo(ChapterStatus.SCHEDULED);
+        assertThat(store.book(book.id()).status()).isEqualTo(BookStatus.PENDING_REVIEW);
+        assertThat(current(book.id()).status()).isEqualTo(BookModerationSnapshotStatus.QUEUED);
+
+        DuePublicationResult beforeApproval = store.publishDueChapters(2L, publishAt.plusSeconds(1));
+        assertThat(beforeApproval.processed()).isZero();
+        assertThat(store.publishedChapters(book.id())).isEmpty();
+        assertThat(store.moderationSnapshots(book.id(), 10)).anySatisfy(snapshot ->
+                assertThat(snapshot.status()).isEqualTo(BookModerationSnapshotStatus.QUEUED));
+
+        assertThat(snapshotService.processAvailableChunks()).isPositive();
+        assertThat(store.review(1L, book.id(), true, "approve scheduled initial work").status())
+                .isEqualTo(BookStatus.PUBLISHED);
+
+        DuePublicationResult afterApproval = store.publishDueChapters(2L, publishAt.plusSeconds(1));
+        assertThat(afterApproval.published()).extracting(Chapter::id).containsExactly(draft.id());
+        assertThat(store.publishedChapters(book.id())).extracting(Chapter::id).containsExactly(draft.id());
     }
 
     private BookModerationSnapshot current(long bookId) {

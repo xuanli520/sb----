@@ -66,6 +66,11 @@ public class BookPageService {
         return present(mapper.selectAvailabilityManagedPage(request(page, size)), page, size);
     }
 
+    public BookPresentationPage carouselEligibleBooks(String query, int page, int size) {
+        String normalizedQuery = query == null || query.isBlank() ? null : query.trim();
+        return present(mapper.selectCarouselEligibleBooksPage(request(page, size), normalizedQuery), page, size);
+    }
+
     public BookStatusAuditPage statusAudits(long bookId, int page, int size) {
         if (bookId <= 0) {
             throw new IllegalArgumentException("book id is required");

@@ -44,6 +44,8 @@ import { BookCover } from '@/components/novel/BookCover';
 import { InlineNotice, formatWordCount } from '@/components/novel/NovelShell';
 import {
   type AdminHomeCarouselSlide,
+  type BookPresentation,
+  type BookPresentationPage,
   type HomeCarouselSlideAudit,
   type MediaAssetAudit,
   type MediaAssetBinding,
@@ -58,6 +60,7 @@ type AssetState = typeof assetStates[number];
 type Notice = { tone: 'success' | 'error'; message: string };
 type SlideDraft = {
   bookId: string;
+  book: BookPresentation | null;
   bannerAssetId: string;
   headline: string;
   copy: string;
@@ -75,12 +78,13 @@ const assetPageSize = 24;
 const assetPickerPageSize = 12;
 
 function emptySlideDraft(): SlideDraft {
-  return { bookId: '', bannerAssetId: '', headline: '', copy: '', enabled: true, rank: '' };
+  return { bookId: '', book: null, bannerAssetId: '', headline: '', copy: '', enabled: true, rank: '' };
 }
 
 function draftFor(slide: AdminHomeCarouselSlide, drafts: Record<number, SlideDraft>): SlideDraft {
   return drafts[slide.slideId] ?? {
     bookId: String(slide.book.id),
+    book: slide.book,
     bannerAssetId: slide.bannerAssetId ?? '',
     headline: slide.headline ?? '',
     copy: slide.copy ?? '',
@@ -100,7 +104,7 @@ function optionalRank(value: string) {
 
 function requiredBookId(value: string) {
   const bookId = Number(value);
-  if (!Number.isInteger(bookId) || bookId < 1) throw new Error('请输入有效的已发布作品 ID。');
+  if (!Number.isInteger(bookId) || bookId < 1) throw new Error('请选择有效的已发布作品。');
   return bookId;
 }
 
@@ -155,6 +159,12 @@ function assetListPath(state: AssetState, page: number, query: string, size = as
   const parameters = new URLSearchParams({ state, page: String(page), size: String(size) });
   if (query.trim()) parameters.set('query', query.trim());
   return `admin/media/banners?${parameters.toString()}`;
+}
+
+function carouselBookListPath(page: number, query: string) {
+  const parameters = new URLSearchParams({ page: String(page), size: String(assetPickerPageSize) });
+  if (query.trim()) parameters.set('q', query.trim());
+  return `admin/home-carousel/books?${parameters.toString()}`;
 }
 
 function readAssetPageMeta(response: PlatformBannerAssetPage): AssetPageMeta {
@@ -374,6 +384,95 @@ function BannerSelector({
             })}
           </div>
           {!loading && !error && meta ? <AssetPagination meta={meta} loading={loading} onPageChange={setPage} ariaLabel="选择横幅素材分页" anchor={`#${id}`} /> : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function CarouselBookSelector({
+  id,
+  value,
+  selectedBook,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  selectedBook: BookPresentation | null;
+  onChange: (book: BookPresentation) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const [results, setResults] = useState<BookPresentation[]>([]);
+  const [meta, setMeta] = useState<AssetPageMeta>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const request = useRef(0);
+
+  const loadBooks = useCallback(async (nextPage: number, nextQuery: string) => {
+    const sequence = ++request.current;
+    setLoading(true);
+    setError(undefined);
+    try {
+      const response = await novelApi<BookPresentationPage>(carouselBookListPath(nextPage, nextQuery), 'admin');
+      if (sequence !== request.current) return;
+      setResults(response.items);
+      setMeta(response.meta);
+    } catch (reason) {
+      if (sequence !== request.current) return;
+      setError(reason instanceof Error ? reason.message : '可选作品暂时无法加载。');
+    } finally {
+      if (sequence === request.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void loadBooks(page, query);
+  }, [loadBooks, open, page, query]);
+
+  const selectionLabel = selectedBook
+    ? `《${selectedBook.title}》 · ${selectedBook.author} · #${selectedBook.id}`
+    : value ? `当前作品 · #${value}` : '选择已发布作品';
+
+  return (
+    <>
+      <Button
+        id={id}
+        type="button"
+        variant="outline"
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        aria-label="选择轮播作品"
+        className="mt-1 h-9 w-full justify-between rounded-none border-stone-300 bg-white px-2 text-left text-sm font-normal text-stone-900 hover:border-emerald-700 hover:text-stone-900"
+      >
+        <span className="min-w-0 truncate">{selectionLabel}</span>
+        <ChevronDown size={15} className="shrink-0 text-stone-500" aria-hidden="true" />
+      </Button>
+      <Dialog open={open} onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          setPage(0);
+          setQuery('');
+          setError(undefined);
+        }
+      }}>
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-none border-stone-200 bg-white p-5 sm:max-w-2xl">
+          <DialogHeader><DialogTitle className="text-stone-950">选择轮播作品</DialogTitle><DialogDescription className="text-stone-600">仅展示已发布作品</DialogDescription></DialogHeader>
+          <div>
+            <Label htmlFor={`${id}-search`} className="sr-only">搜索已发布作品</Label>
+            <Input id={`${id}-search`} aria-label="搜索已发布作品" value={query} maxLength={128} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="按作品名、作者或作品 ID 筛选" className="h-9 rounded-none border-stone-300 bg-white px-2 text-sm" />
+          </div>
+          <div className="divide-y divide-stone-100 border-y border-stone-100">
+            {loading ? <div className="space-y-3 p-3"><Skeleton className="h-14 rounded-none bg-stone-100" /><Skeleton className="h-14 rounded-none bg-stone-100" /></div> : null}
+            {!loading && error ? <div className="p-3"><InlineNotice tone="error">{error}</InlineNotice></div> : null}
+            {!loading && !error && results.length === 0 ? <p className="px-3 py-8 text-center text-sm text-stone-500">没有匹配的已发布作品。</p> : null}
+            {!loading && !error && results.map((book) => <button key={book.id} type="button" onClick={() => { onChange(book); setOpen(false); }} aria-label={`选择作品 ${book.title}`} className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-emerald-50 focus-visible:bg-emerald-50 focus-visible:outline-none"><span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-950">《{book.title}》</span><span className="mt-1 block truncate text-xs text-stone-500">{book.author} · {book.category} · {formatWordCount(book.words)}</span></span><span className="shrink-0 font-mono text-xs text-stone-500">#{book.id}</span></button>)}
+          </div>
+          {!loading && !error && meta ? <AssetPagination meta={meta} loading={loading} onPageChange={setPage} ariaLabel="选择轮播作品分页" anchor={`#${id}`} /> : null}
         </DialogContent>
       </Dialog>
     </>
@@ -700,8 +799,8 @@ export function HomeCarouselOperationsPanel() {
                     <div className="min-w-0"><p className="truncate font-medium text-stone-950">《{slide.book.title}》</p><p className="mt-1 text-xs text-stone-500">#{slide.book.id} · {slide.book.author} · {formatWordCount(slide.book.words)}</p></div>
                     <div className="flex items-center gap-2"><Badge variant="outline" className={`rounded-none ${slideStatusClass(values.enabled, slide.book.status)}`}>{slide.book.status === 'PUBLISHED' ? values.enabled ? '展示中' : '已停用' : '作品未发布'}</Badge><Button type="button" variant="outline" size="icon" title="上移轮播项" aria-label={`上移《${slide.book.title}》`} onClick={() => void moveSlide(slide, -1)} disabled={index === 0 || pendingAction !== undefined} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowUp size={15} aria-hidden="true" /></Button><Button type="button" variant="outline" size="icon" title="下移轮播项" aria-label={`下移《${slide.book.title}》`} onClick={() => void moveSlide(slide, 1)} disabled={index === slides.length - 1 || pendingAction !== undefined} className="h-8 w-8 rounded-none border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><ArrowDown size={15} aria-hidden="true" /></Button></div>
                   </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_6rem]">
-                    <div><Label htmlFor={`carousel-book-${slide.slideId}`} className="text-xs text-stone-600">作品 ID</Label><Input id={`carousel-book-${slide.slideId}`} aria-label={`${slide.book.title} 作品 ID`} type="number" min="1" value={values.bookId} onChange={(event) => setSlideDrafts((current) => ({ ...current, [slide.slideId]: { ...values, bookId: event.target.value } }))} disabled={pendingAction !== undefined} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" /></div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem]">
+                    <div><Label htmlFor={`carousel-book-${slide.slideId}`} className="text-xs text-stone-600">轮播作品</Label><CarouselBookSelector id={`carousel-book-${slide.slideId}`} value={values.bookId} selectedBook={values.book ?? slide.book} onChange={(book) => setSlideDrafts((current) => ({ ...current, [slide.slideId]: { ...values, bookId: String(book.id), book } }))} disabled={pendingAction !== undefined} /></div>
                     <div><Label htmlFor={`carousel-banner-${slide.slideId}`} className="text-xs text-stone-600">横幅素材</Label><BannerSelector id={`carousel-banner-${slide.slideId}`} value={values.bannerAssetId} assets={activeAssets} onChange={(bannerAssetId) => setSlideDrafts((current) => ({ ...current, [slide.slideId]: { ...values, bannerAssetId } }))} onAssetSelected={cacheActiveAsset} disabled={pendingAction !== undefined} /></div>
                     <div><Label htmlFor={`carousel-rank-${slide.slideId}`} className="text-xs text-stone-600">排序</Label><Input id={`carousel-rank-${slide.slideId}`} aria-label={`${slide.book.title} 轮播排序`} type="number" min="1" value={values.rank} onChange={(event) => setSlideDrafts((current) => ({ ...current, [slide.slideId]: { ...values, rank: event.target.value } }))} disabled={pendingAction !== undefined} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" /></div>
                   </div>
@@ -714,8 +813,8 @@ export function HomeCarouselOperationsPanel() {
 
           <form onSubmit={(event) => void createSlide(event)} className="border-t border-stone-100 px-5 py-5">
             <div className="flex items-center gap-2"><Plus size={17} className="text-emerald-700" aria-hidden="true" /><h4 className="font-medium text-stone-950">添加轮播作品</h4></div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_6rem]">
-              <div><Label htmlFor="new-carousel-book" className="text-xs text-stone-600">作品 ID</Label><Input id="new-carousel-book" aria-label="轮播作品 ID" type="number" min="1" required value={newSlide.bookId} onChange={(event) => setNewSlide((current) => ({ ...current, bookId: event.target.value }))} disabled={pendingAction !== undefined} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" /></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem]">
+              <div><Label htmlFor="new-carousel-book" className="text-xs text-stone-600">轮播作品</Label><CarouselBookSelector id="new-carousel-book" value={newSlide.bookId} selectedBook={newSlide.book} onChange={(book) => setNewSlide((current) => ({ ...current, bookId: String(book.id), book }))} disabled={pendingAction !== undefined} /></div>
               <div><Label htmlFor="new-carousel-banner" className="text-xs text-stone-600">横幅素材</Label><BannerSelector id="new-carousel-banner" value={newSlide.bannerAssetId} assets={activeAssets} onChange={(bannerAssetId) => setNewSlide((current) => ({ ...current, bannerAssetId }))} onAssetSelected={cacheActiveAsset} disabled={pendingAction !== undefined} /></div>
               <div><Label htmlFor="new-carousel-rank" className="text-xs text-stone-600">排序</Label><Input id="new-carousel-rank" aria-label="轮播目标排序" type="number" min="1" value={newSlide.rank} onChange={(event) => setNewSlide((current) => ({ ...current, rank: event.target.value }))} disabled={pendingAction !== undefined} className="mt-1 h-9 rounded-none border-stone-300 bg-white px-2 text-sm" placeholder="末位" /></div>
             </div>

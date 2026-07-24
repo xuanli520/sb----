@@ -1109,9 +1109,15 @@ public class NovelStore {
                 null,
                 "",
                 chapter.orderNo());
-        catalogRepository.updateChapter(scheduled);
+        Chapter persisted = catalogRepository.updateChapter(scheduled);
+        BookStatus nextBookStatus = statusAfterInitialChapterSubmission(book.status());
+        if (nextBookStatus != book.status()) {
+            Book submittedBook = copyBook(book, book.words(), nextBookStatus);
+            catalogRepository.updateBook(submittedBook);
+            queueWholeWorkSnapshot(submittedBook);
+        }
         audit("chapter=" + scheduled.id() + " scheduled=" + scheduledPublishAt);
-        return scheduled;
+        return persisted;
     }
 
     /**
@@ -1154,7 +1160,10 @@ public class NovelStore {
             if (expectedAuthorId != null && book.authorId() != expectedAuthorId) {
                 continue;
             }
-            if (book.status() == BookStatus.OFFLINE || book.status() == BookStatus.NEEDS_REVIEW) {
+            // A scheduled chapter cannot become reader-visible until the parent work has cleared
+            // its initial full-work review. Keeping the schedule intact lets the next run publish
+            // it after approval, including when its requested time has already passed.
+            if (book.status() != BookStatus.PUBLISHED) {
                 continue;
             }
             Chapter chapter;
@@ -1169,62 +1178,13 @@ public class NovelStore {
                 continue;
             }
 
-            if (book.status() == BookStatus.PUBLISHED) {
-                Chapter outcome = submitPublishedNewChapter(
-                        book, chapter, book.authorId(), ModerationTrigger.SCHEDULED_PUBLICATION, dueAt);
-                if (outcome.status() == ChapterStatus.PUBLISHED) {
-                    published.add(outcome);
-                } else {
-                    needsReview.add(outcome);
-                }
-                continue;
+            Chapter outcome = submitPublishedNewChapter(
+                    book, chapter, book.authorId(), ModerationTrigger.SCHEDULED_PUBLICATION, dueAt);
+            if (outcome.status() == ChapterStatus.PUBLISHED) {
+                published.add(outcome);
+            } else {
+                needsReview.add(outcome);
             }
-
-            ContentModerationAudit moderation = contentModerationService.moderateChapter(
-                    chapter.id(), chapter.title(), chapter.content(), ModerationTrigger.SCHEDULED_PUBLICATION);
-            if (!moderation.decision().permitsAutomaticChapterPublication()) {
-                Chapter held = new Chapter(
-                        chapter.id(),
-                        chapter.bookId(),
-                        chapter.volumeId(),
-                        chapter.title(),
-                        chapter.content(),
-                        false,
-                        ChapterStatus.NEEDS_REVIEW,
-                        null,
-                        null,
-                        scheduledPublicationReviewReason(moderation),
-                        chapter.orderNo());
-                catalogRepository.updateChapter(held);
-                Book heldBook = copyBook(
-                        book,
-                        book.words(),
-                        statusAfterInitialChapterSubmission(book.status()));
-                catalogRepository.updateBook(heldBook);
-                queueWholeWorkSnapshot(heldBook);
-                audit("scheduled chapter=" + held.id() + " blocked="
-                        + (moderation.decision() == ModerationDecision.LOCAL_SENSITIVE_WORD
-                                ? "sensitive-word"
-                                : moderation.decision()));
-                needsReview.add(held);
-                continue;
-            }
-
-            Chapter released = new Chapter(
-                    chapter.id(),
-                    chapter.bookId(),
-                    chapter.volumeId(),
-                    chapter.title(),
-                    chapter.content(),
-                    true,
-                    ChapterStatus.PUBLISHED,
-                    null,
-                    dueAt,
-                    "",
-                    chapter.orderNo());
-            catalogRepository.updateChapter(released);
-            audit("scheduled chapter=" + released.id() + " published");
-            published.add(released);
         }
         return new DuePublicationResult(published.size() + needsReview.size(), List.copyOf(published), List.copyOf(needsReview));
     }
@@ -1844,17 +1804,6 @@ public class NovelStore {
             case LOCAL_SENSITIVE_WORD -> "命中本地敏感词，已暂停章节发布";
             case MANUAL_REVIEW, REJECT -> "模型审核建议人工复核，已暂停章节发布并标记整书复核";
             case MODEL_UNAVAILABLE, MODEL_ERROR, INVALID_OUTPUT -> "模型审核不可用或结果无效，已暂停章节发布并标记整书复核";
-        };
-    }
-    private static String scheduledPublicationReviewReason(ContentModerationAudit moderation) {
-        if (moderation.decision() == ModerationDecision.LOCAL_SENSITIVE_WORD) {
-            return "命中本地敏感词，已暂停定时发布";
-        }
-        return switch (moderation.decision()) {
-            case MANUAL_REVIEW, REJECT -> "模型审核建议人工复核，已暂停定时发布并标记整书复核";
-            case MODEL_UNAVAILABLE, MODEL_ERROR, INVALID_OUTPUT -> "模型审核不可用或结果无效，已暂停定时发布并标记整书复核";
-            case PASS, SIMULATED_PASS -> "";
-            case LOCAL_SENSITIVE_WORD -> throw new IllegalStateException("local moderation decision already handled");
         };
     }
     private static String chapterRevisionReviewReason(ContentModerationAudit moderation) {

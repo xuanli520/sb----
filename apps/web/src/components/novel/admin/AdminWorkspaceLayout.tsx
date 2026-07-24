@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   Gauge,
   Images,
+  BadgeCheck,
   KeyRound,
   LibraryBig,
   Mail,
@@ -36,6 +37,7 @@ export const adminNavigation: NavGroup[] = [
     label: '内容审核',
     items: [
       { href: '/novel-admin/review/books', label: '作品审核', icon: BookCheck },
+      { href: '/novel-admin/review/covers', label: '封面审核', icon: BadgeCheck },
       { href: '/novel-admin/review/comments', label: '评论审核', icon: ClipboardCheck },
       { href: '/novel-admin/review/annotations', label: '段评与划线', icon: SearchCheck },
     ],

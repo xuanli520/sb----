@@ -76,6 +76,26 @@ public interface BookPageMapper {
             """)
     IPage<Book> selectAvailabilityManagedPage(Page<Book> page);
 
+    /** Published titles available to stationmaster-managed homepage carousel slides. */
+    @Select("""
+            <script>
+            SELECT b.id, b.title, b.author_name AS author, b.category, b.word_count AS words,
+                   b.serial_status AS serialStatus, b.synopsis, NULL AS cover, b.status,
+                   b.author_id AS authorId, b.heat, b.purchase_price AS purchasePrice
+            FROM novel_book b
+            WHERE b.status = 'PUBLISHED'
+            <if test='query != null and !query.isBlank()'>
+              AND (
+                CAST(b.id AS CHAR) LIKE CONCAT('%', #{query}, '%')
+                OR b.title LIKE CONCAT('%', #{query}, '%')
+                OR b.author_name LIKE CONCAT('%', #{query}, '%')
+              )
+            </if>
+            ORDER BY b.heat DESC, b.id ASC
+            </script>
+            """)
+    IPage<Book> selectCarouselEligibleBooksPage(Page<Book> page, @Param("query") String query);
+
     @Select("""
             SELECT id,
                    book_id AS bookId,

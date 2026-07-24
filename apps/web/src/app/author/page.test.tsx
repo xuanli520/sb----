@@ -972,7 +972,38 @@ function mockAuthorApi(options: MockAuthorApiOptions = {}) {
       chaptersByBook[bookId] = chaptersByBook[bookId].map((existing) =>
         existing.id === chapterId ? scheduled : existing,
       );
+      bookItems = bookItems.map((book) =>
+        book.id === bookId && ["DRAFT", "REJECTED"].includes(book.status)
+          ? { ...book, status: "PENDING_REVIEW" }
+          : book,
+      );
       return Promise.resolve(response(scheduled));
+    }
+
+    const submitDraft = endpoint.match(
+      /^author\/books\/(\d+)\/chapters\/(\d+)\/submit$/,
+    );
+    if (method === "POST" && submitDraft) {
+      const bookId = Number(submitDraft[1]);
+      const chapterId = Number(submitDraft[2]);
+      const item = chaptersByBook[bookId]?.find(
+        (existing) => existing.id === chapterId,
+      );
+      if (!item) return Promise.resolve(rejected(`Unknown chapter: ${chapterId}`));
+      const published = bookItems.find((book) => book.id === bookId)?.status === "PUBLISHED";
+      const submitted = {
+        ...item,
+        status: published ? "PUBLISHED" : "NEEDS_REVIEW",
+        published,
+        scheduledPublishAt: null,
+      };
+      chaptersByBook[bookId] = chaptersByBook[bookId].map((existing) =>
+        existing.id === chapterId ? submitted : existing,
+      );
+      bookItems = bookItems.map((book) =>
+        book.id === bookId && !published ? { ...book, status: "PENDING_REVIEW" } : book,
+      );
+      return Promise.resolve(response(submitted));
     }
 
     const feedback = endpoint.match(
@@ -1722,12 +1753,12 @@ describe("author manuscript workspace", () => {
     expect(draftItem).not.toBeNull();
     fireEvent.click(
       within(draftItem as HTMLElement).getByRole("button", {
-        name: "选择草稿",
+        name: "选择该草稿",
       }),
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "待排期草稿" }).closest("article")
+        screen.getByRole("button", { name: "已选待上线草稿" }).closest("article")
           ?.textContent,
       ).toContain("备选存稿"),
     );
@@ -1735,7 +1766,7 @@ describe("author manuscript workspace", () => {
     fireEvent.change(screen.getByLabelText("发布时间"), {
       target: { value: "2030-01-02T13:30" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "安排定时发布" }));
+    fireEvent.click(screen.getByRole("button", { name: "安排定时上线" }));
 
     const expectedPublishAt = new Date("2030-01-02T13:30").toISOString();
     await waitFor(() =>
@@ -1760,11 +1791,11 @@ describe("author manuscript workspace", () => {
     const fetchMock = mockAuthorApi();
     render(<AuthorPage />);
 
-    await screen.findByRole("button", { name: "安排定时发布" });
+    await screen.findByRole("button", { name: "安排定时上线" });
     fireEvent.change(screen.getByLabelText("发布时间"), {
       target: { value: "2020-01-01T00:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "安排定时发布" }));
+    fireEvent.click(screen.getByRole("button", { name: "安排定时上线" }));
 
     await screen.findByText("发布时间必须是当前时间之后的有效日期。");
     expect(
@@ -1772,6 +1803,41 @@ describe("author manuscript workspace", () => {
         String(input).includes("/schedule"),
       ),
     ).toBe(false);
+  });
+
+  it("submits a saved draft through the explicit publication-review action", async () => {
+    const fetchMock = mockAuthorApi();
+    render(<AuthorPage />);
+
+    const draftHeading = await screen.findByRole("heading", {
+      name: "第 3 章 · 备选存稿",
+    });
+    const draftItem = draftHeading.closest("article");
+    expect(draftItem).not.toBeNull();
+    fireEvent.click(
+      within(draftItem as HTMLElement).getByRole("button", {
+        name: "提交上线审核",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/novel/author/books/1/chapters/1003/submit",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(await screen.findByText("《备选存稿》已通过自动筛查并发布")).toBeTruthy();
+  });
+
+  it("explains why the schedule action is unavailable before a publication time is entered", async () => {
+    mockAuthorApi();
+    render(<AuthorPage />);
+
+    const scheduleButton = await screen.findByRole("button", {
+      name: "安排定时上线",
+    });
+    expect((scheduleButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("请填写未来发布时间后再安排上线。")).toBeTruthy();
   });
 
   it("updates metadata for an eligible draft book through the author API", async () => {

@@ -96,9 +96,11 @@ type ParagraphAnnotationDraft = {
 };
 type PageTurnDirection = 'forward' | 'backward';
 type ReaderTheme = { page: string; text: string; muted: string; border: string };
-type ChapterTransition = {
+type PageTransition = {
   id: number;
   chapter: ReadableChapter;
+  pageIndex: number;
+  annotations: HighlightAnnotation[];
   direction: PageTurnDirection;
   mode: Preference['pageMode'];
 };
@@ -204,32 +206,6 @@ function createIdempotencyKey() {
 
 function chapterParagraphs(content: string) {
   return content.replace(/\r\n?/g, '\n').split('\n').filter((paragraph) => paragraph.length > 0);
-}
-
-type ChapterPageRange = { start: number; end: number };
-
-function chapterPageRanges(content: string, width: number, height: number, preference: Preference): ChapterPageRange[] {
-  const paragraphs = chapterParagraphs(content);
-  if (paragraphs.length === 0 || width <= 0 || height <= 0) return [{ start: 0, end: paragraphs.length }];
-
-  const lineHeight = preference.fontSize * preference.lineHeight / 100;
-  const linesPerPage = Math.max(3, Math.floor(height / lineHeight));
-  const charactersPerLine = Math.max(12, Math.floor(width / (preference.fontSize * 0.92)));
-  const ranges: ChapterPageRange[] = [];
-  let start = 0;
-  let usedLines = 3; // The book label and chapter title occupy the first page's opening lines.
-
-  paragraphs.forEach((paragraph, index) => {
-    const paragraphLines = Math.max(1, Math.ceil(Array.from(paragraph).length / charactersPerLine)) + 1;
-    if (index > start && usedLines + paragraphLines > linesPerPage) {
-      ranges.push({ start, end: index });
-      start = index;
-      usedLines = 0;
-    }
-    usedLines += paragraphLines;
-  });
-  ranges.push({ start, end: paragraphs.length });
-  return ranges;
 }
 
 function isReadableChapter(chapter: Chapter | undefined): chapter is ReadableChapter {
@@ -355,9 +331,6 @@ function ChapterCopy({
   compact = false,
   annotations = [],
   onParagraphSelection,
-  paragraphRange,
-  showHeader = true,
-  showCompletion = true,
 }: {
   bookTitle: string;
   chapter: ReadableChapter;
@@ -366,25 +339,18 @@ function ChapterCopy({
   compact?: boolean;
   annotations?: HighlightAnnotation[];
   onParagraphSelection?: (paragraphIndex: number, paragraph: string, element: HTMLParagraphElement) => void;
-  paragraphRange?: ChapterPageRange;
-  showHeader?: boolean;
-  showCompletion?: boolean;
 }) {
   const headingClassName = compact ? 'mt-3 text-2xl font-semibold leading-tight' : 'mt-3 text-3xl font-semibold leading-tight';
   const paragraphs = chapterParagraphs(chapter.content);
-  const start = paragraphRange?.start ?? 0;
-  const end = paragraphRange?.end ?? paragraphs.length;
-  const visibleParagraphs = paragraphs.slice(start, end);
 
   return (
     <>
-      {showHeader ? <>
+      <>
         <p className="text-xs font-semibold text-emerald-700">{bookTitle} · 第 {chapter.orderNo} 章</p>
         {headingId ? <h1 id={headingId} className={headingClassName}>{chapter.title}</h1> : <p className={headingClassName}>{chapter.title}</p>}
-      </> : null}
-      <div className={`${showHeader ? (compact ? 'mt-8' : 'mt-10') : ''} ${compact ? 'space-y-6' : 'space-y-7'}`}>
-        {visibleParagraphs.map((paragraph, visibleIndex) => {
-          const index = start + visibleIndex;
+      </>
+      <div className={`${compact ? 'mt-8 space-y-6' : 'mt-10 space-y-7'}`}>
+        {paragraphs.map((paragraph, index) => {
           return (
           <p
             key={`${paragraph}-${index}`}
@@ -397,7 +363,7 @@ function ChapterCopy({
           );
         })}
       </div>
-      {!compact && showCompletion ? <p className="mt-16 border-t pt-5 text-sm" style={{ borderColor: theme.border, color: theme.muted }}>本章阅读完毕</p> : null}
+      {!compact ? <p className="mt-16 border-t pt-5 text-sm" style={{ borderColor: theme.border, color: theme.muted }}>本章阅读完毕</p> : null}
     </>
   );
 }
@@ -475,11 +441,15 @@ const readerTransitionStyles = `
   .reader-chapter-pages {
     height: min(62vh, 720px);
     overflow: hidden;
-    overflow-y: hidden;
+    contain: layout paint;
   }
   .reader-chapter-page-flow {
-    min-height: 100%;
+    height: 100%;
+    column-fill: auto;
+    column-gap: 0;
+    will-change: transform;
   }
+  .reader-transition-pages { height: 100%; }
   .yuejie-reader-transition {
     position: absolute;
     inset: 0;
@@ -692,11 +662,11 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const [pendingAction, setPendingAction] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
-  const [chapterTransition, setChapterTransition] = useState<ChapterTransition>();
+  const [pageTransition, setPageTransition] = useState<PageTransition>();
   const [chapterAnnouncement, setChapterAnnouncement] = useState('');
   const [chapterPageIndex, setChapterPageIndex] = useState(0);
   const [chapterPageTotal, setChapterPageTotal] = useState(1);
-  const [chapterPageLayout, setChapterPageLayout] = useState({ width: 720, height: 420 });
+  const [chapterPageWidth, setChapterPageWidth] = useState(720);
   const [reducedMotion, setReducedMotion] = useState(false);
   const transitionTimer = useRef<number>();
   const transitionSequence = useRef(0);
@@ -709,6 +679,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
   const readingProgressHeartbeat = useRef<{ key: string; sentAt: number }>();
   const chapterPagesRef = useRef<HTMLDivElement>(null);
   const restoredOffsetRef = useRef(0);
+  const pageRatioRef = useRef(0);
+  const pendingChapterPageRef = useRef<'start' | 'end'>('start');
 
   const persistReadingProgress = useCallback((force = false) => {
     const bookId = detail?.book.id;
@@ -717,7 +689,10 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     if (!hasReaderSession || !bookId || !chapterId || !isReadableChapter(activeChapter)) return;
 
     const offset = isReadableChapter(activeChapter) && chapterPageTotal > 1
-      ? Math.min(activeChapter.content.length - 1, Math.round(activeChapter.content.length * chapterPageIndex / chapterPageTotal))
+      ? Math.min(
+        activeChapter.content.length - 1,
+        Math.round((activeChapter.content.length - 1) * chapterPageIndex / (chapterPageTotal - 1)),
+      )
       : 0;
     const key = `${bookId}:${chapterId}:${offset}`;
     const now = Date.now();
@@ -750,7 +725,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
       window.clearTimeout(transitionTimer.current);
       transitionTimer.current = undefined;
     }
-    setChapterTransition(undefined);
+    setPageTransition(undefined);
   }, [reducedMotion]);
 
   useEffect(() => () => {
@@ -913,30 +888,42 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     fontFamily: readerFontFamily[preference.font],
     filter: `brightness(${preference.brightness}%)`,
   };
-  const activeTransitionEffect = chapterTransition ? transitionEffect(chapterTransition.mode) : undefined;
+  const activeTransitionEffect = pageTransition ? transitionEffect(pageTransition.mode) : undefined;
   const displayedPurchasePrice = detail?.book.purchasePrice;
   const purchasePrice = Number.isSafeInteger(displayedPurchasePrice) && (displayedPurchasePrice ?? 0) > 0
     ? displayedPurchasePrice
     : undefined;
   const hasSufficientTokens = purchasePrice !== undefined && tokenBalance !== undefined && tokenBalance >= purchasePrice;
   const hasFullBookAccess = detail?.access?.fullBookAccess === true || hasBookEntitlement === true;
-  const chapterPages = useMemo(
-    () => isReadableChapter(chapter)
-      ? chapterPageRanges(chapter.content, chapterPageLayout.width, chapterPageLayout.height, preference)
-      : [{ start: 0, end: 0 }],
-    [chapter, chapterPageLayout.height, chapterPageLayout.width, preference],
-  );
-  const visibleChapterPage = chapterPages[Math.min(chapterPageIndex, chapterPages.length - 1)] ?? { start: 0, end: 0 };
-
   useLayoutEffect(() => {
     const element = chapterPagesRef.current;
     if (!element || !isReadableChapter(chapter)) return undefined;
     let frame = 0;
     const updatePages = () => {
-      const width = element.clientWidth || Math.max(320, window.innerWidth - 512);
-      const height = element.clientHeight || Math.min(720, Math.max(360, Math.floor(window.innerHeight * 0.62)));
-      setChapterPageLayout((current) => current.width === width && current.height === height ? current : { width, height });
+      const width = element.clientWidth;
+      if (width <= 0) return;
+
+      const total = Math.max(1, Math.ceil(element.scrollWidth / width));
+      if (width !== chapterPageWidth) setChapterPageWidth(width);
+      setChapterPageTotal(total);
+      setChapterPageIndex(() => {
+        const pendingBoundary = pendingChapterPageRef.current;
+        if (pendingBoundary === 'end') {
+          pendingChapterPageRef.current = 'start';
+          return total - 1;
+        }
+        if (restoredOffsetRef.current > 0) {
+          const restored = Math.min(
+            total - 1,
+            Math.round(restoredOffsetRef.current / Math.max(1, chapter.content.length - 1) * (total - 1)),
+          );
+          restoredOffsetRef.current = 0;
+          return restored;
+        }
+        return Math.min(total - 1, Math.round(pageRatioRef.current * (total - 1)));
+      });
     };
+    updatePages();
     frame = window.requestAnimationFrame(updatePages);
     const observer = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
@@ -944,18 +931,19 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     });
     observer.observe(element);
     return () => { window.cancelAnimationFrame(frame); observer.disconnect(); };
-  }, [chapter?.id, preference.font, preference.fontSize, preference.lineHeight]);
+  }, [chapter, chapterPageWidth, loading, preference.font, preference.fontSize, preference.lineHeight]);
 
   useEffect(() => {
-    if (!isReadableChapter(chapter)) return;
-    const total = Math.max(1, chapterPages.length);
-    const restored = restoredOffsetRef.current > 0
-      ? Math.min(total - 1, Math.floor(restoredOffsetRef.current / Math.max(1, chapter.content.length) * total))
-      : undefined;
-    restoredOffsetRef.current = 0;
-    setChapterPageTotal(total);
-    setChapterPageIndex((current) => restored ?? Math.min(total - 1, current));
-  }, [chapter?.id, chapterPages.length]);
+    pageRatioRef.current = chapterPageTotal > 1 ? chapterPageIndex / (chapterPageTotal - 1) : 0;
+  }, [chapterPageIndex, chapterPageTotal]);
+
+  useLayoutEffect(() => {
+    const element = chapterPagesRef.current;
+    if (!element) return;
+    const left = chapterPageIndex * element.clientWidth;
+    if (typeof element.scrollTo === 'function') element.scrollTo({ left, behavior: 'auto' });
+    else element.scrollLeft = left;
+  }, [chapter?.id, chapterPageIndex, chapterPageWidth, loading]);
 
   const announce = (message: string, tone: Notice['tone'] = 'success') => setNotice({ message, tone });
 
@@ -1073,7 +1061,32 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     }
   };
 
-  const selectChapter = async (nextChapter: Chapter) => {
+  const startPageTransition = (sourceChapter: ReadableChapter, direction: PageTurnDirection) => {
+    const transitionId = transitionSequence.current + 1;
+    transitionSequence.current = transitionId;
+    if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current);
+
+    if (reducedMotion) {
+      transitionTimer.current = undefined;
+      setPageTransition(undefined);
+      return;
+    }
+
+    setPageTransition({
+      id: transitionId,
+      chapter: sourceChapter,
+      pageIndex: chapterPageIndex,
+      annotations: activeParagraphAnnotations,
+      direction,
+      mode: preference.pageMode,
+    });
+    transitionTimer.current = window.setTimeout(() => {
+      setPageTransition((current) => current?.id === transitionId ? undefined : current);
+      transitionTimer.current = undefined;
+    }, chapterTransitionDuration);
+  };
+
+  const selectChapter = async (nextChapter: Chapter, targetPage: 'start' | 'end' = 'start', directionOverride?: PageTurnDirection) => {
     if (!detail || nextChapter.id === chapter?.id) return;
 
     if (!isReadableChapter(nextChapter)) {
@@ -1090,21 +1103,8 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     persistReadingProgress(true);
     const currentIndex = detail.chapters.findIndex((item) => item.id === chapter?.id);
     const nextIndex = detail.chapters.findIndex((item) => item.id === nextChapter.id);
-    const direction: PageTurnDirection = nextIndex > currentIndex ? 'forward' : 'backward';
-    const transitionId = transitionSequence.current + 1;
-    transitionSequence.current = transitionId;
-
-    if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current);
-    if (!reducedMotion && isReadableChapter(chapter)) {
-      setChapterTransition({ id: transitionId, chapter, direction, mode: preference.pageMode });
-      transitionTimer.current = window.setTimeout(() => {
-        setChapterTransition((current) => current?.id === transitionId ? undefined : current);
-        transitionTimer.current = undefined;
-      }, chapterTransitionDuration);
-    } else {
-      transitionTimer.current = undefined;
-      setChapterTransition(undefined);
-    }
+    const direction: PageTurnDirection = directionOverride ?? (nextIndex > currentIndex ? 'forward' : 'backward');
+    if (isReadableChapter(chapter)) startPageTransition(chapter, direction);
 
     commentRequestSequence.current += 1;
     setChapterComments([]);
@@ -1118,6 +1118,7 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     setPublicAnnotationsError('');
     activeChapterRef.current = nextChapter.id;
     setActiveChapterId(nextChapter.id);
+    pendingChapterPageRef.current = targetPage;
     setChapterPageIndex(0);
     setChapterPageTotal(1);
     setParagraphAnnotationDraft(undefined);
@@ -1128,20 +1129,20 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
     persistReadingProgress(true);
   };
 
-  const moveChapter = (offset: number) => {
+  const moveChapter = (offset: number, targetPage: 'start' | 'end') => {
     const next = detail?.chapters[activeChapterIndex + offset];
-    if (next) void selectChapter(next);
+    if (next) void selectChapter(next, targetPage, offset > 0 ? 'forward' : 'backward');
   };
 
   const moveReaderPage = (offset: number) => {
-    const element = chapterPagesRef.current;
     const target = chapterPageIndex + offset;
-    if (element && target >= 0 && target < chapterPageTotal) {
-      element.scrollTo({ left: target * element.clientWidth, behavior: reducedMotion ? 'auto' : 'smooth' });
+    if (isReadableChapter(chapter) && target >= 0 && target < chapterPageTotal) {
+      startPageTransition(chapter, offset > 0 ? 'forward' : 'backward');
       setChapterPageIndex(target);
+      setChapterAnnouncement(`第 ${chapter.orderNo} 章《${chapter.title}》，第 ${target + 1} / ${chapterPageTotal} 页。`);
       return;
     }
-    moveChapter(offset);
+    moveChapter(offset, offset > 0 ? 'start' : 'end');
   };
 
   const handleReaderKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -1607,14 +1608,14 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
             tabIndex={0}
             onKeyDown={handleReaderKeyDown}
           >
-            <p id="reader-keyboard-hint" className="sr-only">使用左右方向键或 Page Up 和 Page Down 切换章节。</p>
+            <p id="reader-keyboard-hint" className="sr-only">使用左右方向键或 Page Up 和 Page Down 在章节内翻页，在章节边界切换章节。</p>
             <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{chapterAnnouncement}</p>
 
             <article
-              key={`chapter-${chapter.id}-${chapterTransition?.id ?? 'rest'}`}
+              key={`chapter-${chapter.id}-${pageTransition?.id ?? 'rest'}`}
               data-testid="reader-current-chapter"
               data-transition-effect={activeTransitionEffect}
-              data-transition-direction={chapterTransition?.direction}
+              data-transition-direction={pageTransition?.direction}
               className="yuejie-reader-current min-h-[620px] px-6 py-10 sm:px-12 sm:py-14 lg:px-16"
               style={readerPageStyle}
             >
@@ -1622,17 +1623,14 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
                 ref={chapterPagesRef}
                 className="reader-chapter-pages"
               >
-                <div className="reader-chapter-page-flow">
+                <div className="reader-chapter-page-flow" style={{ columnWidth: `${chapterPageWidth}px` }}>
                   <ChapterCopy
                     bookTitle={detail.book.title}
                     chapter={chapter}
                     theme={theme}
-                    headingId={chapterPageIndex === 0 ? 'reader-chapter-title' : undefined}
+                    headingId="reader-chapter-title"
                     annotations={activeParagraphAnnotations}
                     onParagraphSelection={captureParagraphSelection}
-                    paragraphRange={visibleChapterPage}
-                    showHeader={chapterPageIndex === 0}
-                    showCompletion={chapterPageIndex === chapterPageTotal - 1}
                   />
                 </div>
               </div>
@@ -1665,23 +1663,27 @@ export default function Reader({ params }: { params: Promise<{ id: string }> }) 
               </section>
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-                <Button type="button" variant="ghost" size="sm" onClick={() => moveReaderPage(-1)} disabled={chapterPageIndex <= 0 && activeChapterIndex <= 0} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent"><ChevronLeft size={17} aria-hidden="true" />{chapterPageTotal > 1 ? '上一页' : '上一章'}</Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => moveReaderPage(1)} disabled={chapterPageIndex >= chapterPageTotal - 1 && activeChapterIndex >= detail.chapters.length - 1} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent">{chapterPageTotal > 1 ? '下一页' : '下一章'}<ChevronRight size={17} aria-hidden="true" /></Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => moveReaderPage(-1)} disabled={chapterPageIndex <= 0 && activeChapterIndex <= 0} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent"><ChevronLeft size={17} aria-hidden="true" />{chapterPageIndex > 0 ? '上一页' : '上一章'}</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => moveReaderPage(1)} disabled={chapterPageIndex >= chapterPageTotal - 1 && activeChapterIndex >= detail.chapters.length - 1} className="h-auto rounded-none px-0 text-inherit hover:bg-transparent">{chapterPageIndex < chapterPageTotal - 1 ? '下一页' : '下一章'}<ChevronRight size={17} aria-hidden="true" /></Button>
               </div>
             </article>
 
-            {chapterTransition && !reducedMotion ? (
+            {pageTransition && !reducedMotion ? (
               <div
-                key={chapterTransition.id}
+                key={pageTransition.id}
                 data-testid="reader-transition-layer"
-                data-transition-mode={chapterTransition.mode}
-                data-transition-effect={transitionEffect(chapterTransition.mode)}
-                data-transition-direction={chapterTransition.direction}
+                data-transition-mode={pageTransition.mode}
+                data-transition-effect={transitionEffect(pageTransition.mode)}
+                data-transition-direction={pageTransition.direction}
                 className="yuejie-reader-transition"
                 aria-hidden="true"
               >
                 <article className="min-h-full px-6 py-10 sm:px-12 sm:py-14 lg:px-16" style={readerPageStyle}>
-                  <ChapterCopy bookTitle={detail.book.title} chapter={chapterTransition.chapter} theme={theme} compact />
+                  <div className="reader-chapter-pages reader-transition-pages">
+                    <div className="reader-chapter-page-flow" style={{ columnWidth: `${chapterPageWidth}px`, transform: `translateX(-${pageTransition.pageIndex * chapterPageWidth}px)` }}>
+                      <ChapterCopy bookTitle={detail.book.title} chapter={pageTransition.chapter} theme={theme} annotations={pageTransition.annotations} />
+                    </div>
+                  </div>
                 </article>
               </div>
             ) : null}

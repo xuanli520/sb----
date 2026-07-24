@@ -313,6 +313,20 @@ export type BookCoverCandidate = {
   reviewedByUserId:number | null;
   reviewedAt:string | null;
 };
+/** A stationmaster queue item for a private published-book cover replacement. */
+export type BookCoverCandidateQueueItem = {
+  scope:'BOOK_COVER';
+  book:BookPresentation;
+  candidate:BookCoverCandidate;
+};
+export type CoverCandidatePage = {
+  items:BookCoverCandidateQueueItem[];
+  meta:{ total:number; page:number; size:number };
+};
+export type CoverCandidateReviewResult = {
+  book:BookPresentation;
+  candidate:BookCoverCandidate;
+};
 /** A draft cover is active immediately; a published cover returns a retained review candidate. */
 export type AuthorCoverUploadResult = {
   book:BookPresentation;

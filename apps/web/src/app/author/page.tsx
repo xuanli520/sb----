@@ -569,6 +569,7 @@ export default function AuthorPage() {
   }, [chapterEditVolumeId, selectedBookId, volumes]);
 
   const draftChapters = useMemo(() => chapters.filter((chapter) => chapter.status === 'DRAFT'), [chapters]);
+  const hasScheduledChapters = useMemo(() => chapters.some((chapter) => chapter.status === 'SCHEDULED'), [chapters]);
   const latestCandidateByTargetChapterId = useMemo(() => new Map(
     chapters.flatMap((chapter) => chapter.latestCandidate ? [[chapter.id, chapter.latestCandidate] as const] : []),
   ), [chapters]);
@@ -1147,16 +1148,40 @@ export default function AuthorPage() {
       return;
     }
     setPendingAction('schedule');
+    const submitsInitialWorkForReview = selectedBook?.status === 'DRAFT' || selectedBook?.status === 'REJECTED';
     try {
       const chapter = await novelApi<AuthorChapter>(`author/books/${selectedBookId}/chapters/${selectedDraft.id}/schedule`, 'author', {
         method: 'POST',
         body: JSON.stringify({ publishAt: timestamp.toISOString() }),
       });
       setPublishAt('');
-      announce(`《${chapter.title}》已排期，将在 ${formatPublishTime(chapter.scheduledPublishAt)} 自动复核后发布`);
-      await loadBookWorkspace(selectedBookId);
+      announce(submitsInitialWorkForReview
+        ? `《${chapter.title}》已排期，并已提交完整作品审核；审核通过后将在 ${formatPublishTime(chapter.scheduledPublishAt)} 自动筛查并发布`
+        : `《${chapter.title}》已排期，将在 ${formatPublishTime(chapter.scheduledPublishAt)} 自动复核后发布`);
+      await Promise.all([loadBooks(booksPageIndex), loadBookWorkspace(selectedBookId)]);
     } catch (reason) {
       announce(reason instanceof Error ? reason.message : '章节排期失败，请稍后重试。', 'error');
+    } finally {
+      setPendingAction(undefined);
+    }
+  };
+
+  const submitDraftChapter = async (chapter: AuthorChapter) => {
+    if (!selectedBookId) return;
+    setPendingAction(`submit-draft-${chapter.id}`);
+    const submitsInitialWorkForReview = selectedBook?.status !== 'PUBLISHED';
+    try {
+      const result = await novelApi<AuthorChapter>(`author/books/${selectedBookId}/chapters/${chapter.id}/submit`, 'author', {
+        method: 'POST',
+      });
+      announce(result.published
+        ? `《${result.title}》已通过自动筛查并发布`
+        : submitsInitialWorkForReview
+          ? `《${result.title}》已提交上线审核；作品通过站长审核后才会向读者公开`
+          : `《${result.title}》已提交增量审核`);
+      await Promise.all([loadBooks(booksPageIndex), loadBookWorkspace(selectedBookId)]);
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : '章节提交上线审核失败，请稍后重试。', 'error');
     } finally {
       setPendingAction(undefined);
     }
@@ -1482,7 +1507,10 @@ export default function AuthorPage() {
                         {pendingCandidate ? <p className="mt-2 text-xs leading-5 text-amber-800">{pendingCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${pendingCandidate.title}》待审核：当前已发布正文保持不变且对读者可读。` : `新章节候选《${pendingCandidate.title}》待审核：通过前不会向读者公开。`}{pendingCandidate.reviewReason ? ` ${pendingCandidate.reviewReason}` : ''}</p> : rejectedCandidate ? <p className="mt-2 text-xs leading-5 text-rose-700">{rejectedCandidate.type === 'CHAPTER_REVISION' ? `修订候选《${rejectedCandidate.title}》未通过：当前已发布正文保持不变，可修改后重新提交。` : `新章节候选《${rejectedCandidate.title}》未通过，可修改后重新提交。`}{rejectedCandidate.reviewReason ? ` ${rejectedCandidate.reviewReason}` : ''}</p> : chapter.reviewReason ? <p className="mt-2 text-xs leading-5 text-rose-700">{chapter.reviewReason}</p> : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                        {canSchedule ? <Button type="button" variant="outline" onClick={() => setSelectedDraftId(chapter.id)} aria-pressed={selectedDraftId === chapter.id} className={`h-auto rounded-none px-3 py-2 text-sm ${selectedDraftId === chapter.id ? 'border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'}`}>{selectedDraftId === chapter.id ? '待排期草稿' : '选择草稿'}</Button> : null}
+                        {canSchedule ? <>
+                          <Button type="button" variant="outline" onClick={() => setSelectedDraftId(chapter.id)} aria-pressed={selectedDraftId === chapter.id} disabled={pendingAction !== undefined} className={`h-auto rounded-none px-3 py-2 text-sm ${selectedDraftId === chapter.id ? 'border-emerald-700 bg-emerald-50 text-emerald-800 hover:bg-emerald-50' : 'border-stone-300 bg-white text-stone-700 hover:border-emerald-700 hover:text-emerald-800'}`}>{selectedDraftId === chapter.id ? '已选待上线草稿' : '选择该草稿'}</Button>
+                          <Button type="button" variant="outline" onClick={() => void submitDraftChapter(chapter)} disabled={pendingAction !== undefined} className="h-auto rounded-none border-emerald-700 bg-white px-3 py-2 text-sm text-emerald-800 hover:bg-emerald-50 disabled:cursor-wait"><Send size={15} aria-hidden="true" />{pendingAction === `submit-draft-${chapter.id}` ? '提交中' : '提交上线审核'}</Button>
+                        </> : null}
                         {editable ? <Button type="button" variant="outline" onClick={() => openChapterEditor(chapter)} aria-label={`编辑章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-emerald-700 hover:text-emerald-800"><SquarePen size={15} aria-hidden="true" />编辑</Button> : null}
                         {deletable ? <Button type="button" variant="outline" onClick={() => openDeleteConfirmation({ kind: 'chapter', item: chapter })} aria-label={`删除章节《${chapter.title}》`} disabled={pendingAction !== undefined} className="h-auto rounded-none border-rose-200 bg-white px-3 py-2 text-sm text-rose-700 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-800"><Trash2 size={15} aria-hidden="true" />删除</Button> : null}
                         {!editable && !deletable ? <p className="text-xs leading-5 text-stone-500">{pendingCandidate?.type === 'NEW_CHAPTER' ? '新章节候选待审核，通过前不可编辑或删除。' : '已有候选修改待审核；当前已发布正文保持不变且对读者可读。'}</p> : null}
@@ -1651,14 +1679,15 @@ export default function AuthorPage() {
                 ) : null}
                 {!bookStatusAuditsLoading && !bookStatusAuditsError && bookStatusAuditPage ? <FeedbackPagination label="作品处置反馈" meta={bookStatusAuditPage.meta} loading={bookStatusAuditsLoading} onPageChange={setBookStatusAuditPageIndex} /> : null}
               </div>
-              {['DRAFT', 'REJECTED'].includes(selectedBook.status) ? <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : '提交完整作品'}</Button> : <p className="mt-5 text-xs leading-5 text-stone-600">{selectedBook.status === 'OFFLINE' ? '该作品已下线，等待站长根据处置反馈决定是否重新进入审核。' : '该作品已进入审核或发布流程，当前仅可查看审核与处置反馈。'}</p>}
+              {['DRAFT', 'REJECTED'].includes(selectedBook.status) ? <Button type="button" variant="outline" onClick={() => void submitBook()} disabled={pendingAction !== undefined} className="mt-6 h-auto rounded-none border-stone-800 bg-white px-4 py-2.5 text-stone-800 hover:border-emerald-700 hover:text-emerald-800 disabled:cursor-wait"><Send size={16} aria-hidden="true" />{pendingAction === 'submit-book' ? '提交中' : hasScheduledChapters ? '提交作品审核以继续上线' : '提交完整作品'}</Button> : <p className="mt-5 text-xs leading-5 text-stone-600">{selectedBook.status === 'OFFLINE' ? '该作品已下线，等待站长根据处置反馈决定是否重新进入审核。' : selectedBook.status === 'PENDING_REVIEW' ? '作品正在等待站长审核；审核通过后，已到期的排期章节会自动筛查并发布。' : '该作品已进入审核或发布流程，当前仅可查看审核与处置反馈。'}</p>}
 
               <div className="mt-6 border-t border-emerald-950/10 pt-5">
-                <div className="flex items-start gap-2"><CalendarClock className="mt-0.5 text-emerald-700" size={18} aria-hidden="true" /><div><p className="text-xs font-semibold text-emerald-700">草稿排期</p><h2 className="mt-1 text-lg font-semibold text-stone-950">选择存稿，设置未来发布时间</h2></div></div>
+                <div className="flex items-start gap-2"><CalendarClock className="mt-0.5 text-emerald-700" size={18} aria-hidden="true" /><div><p className="text-xs font-semibold text-emerald-700">草稿排期</p><h2 className="mt-1 text-lg font-semibold text-stone-950">选择存稿，设置未来上线时间</h2></div></div>
                 {draftChapters.length === 0 ? <p className="mt-3 text-sm leading-6 text-stone-600">尚无可排期的草稿。先在选定卷册中保存一章内容。</p> : (
                   <form onSubmit={scheduleDraft} className="mt-4">
+                    <p className="mb-4 text-xs leading-5 text-stone-600">{['DRAFT', 'REJECTED'].includes(selectedBook.status) ? '安排定时上线会同时提交完整作品审核；审核通过后才会在设定时间向读者公开。' : selectedBook.status === 'PENDING_REVIEW' ? '作品正在审核中。审核通过后，已到期章节会自动筛查并发布。' : '到达发布时间后，系统会再次进行内容筛查；命中风险内容将转入人工复核。'}</p>
                     <Label id="draft-chapter-label" className="text-stone-700">选择草稿</Label>
-                    <Select value={selectedDraftId?.toString() ?? ''} onValueChange={(value) => setSelectedDraftId(Number(value))}>
+                    <Select value={selectedDraftId?.toString() ?? ''} onValueChange={(value) => setSelectedDraftId(Number(value))} disabled={pendingAction !== undefined}>
                       <SelectTrigger aria-labelledby="draft-chapter-label" aria-label="选择草稿" className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20"><SelectValue placeholder="请选择草稿" /></SelectTrigger>
                       <SelectContent className="rounded-none border-stone-300 bg-white text-stone-900">
                         {draftChapters.map((chapter) => <SelectItem key={chapter.id} value={chapter.id.toString()}>第 {chapter.orderNo} 章 · {chapter.title}</SelectItem>)}
@@ -1668,8 +1697,8 @@ export default function AuthorPage() {
                       <Label htmlFor="publish-at" className="text-stone-700">发布时间</Label>
                       <Input id="publish-at" aria-label="发布时间" type="datetime-local" required value={publishAt} onChange={(event) => setPublishAt(event.target.value)} className="mt-2 h-11 rounded-none border-stone-300 bg-white text-stone-900 focus-visible:border-emerald-700 focus-visible:ring-emerald-700/20" />
                     </div>
-                    <Button type="submit" disabled={pendingAction !== undefined || !selectedDraftId} className="mt-4 h-auto rounded-none bg-emerald-700 px-4 py-2.5 hover:bg-emerald-800 disabled:cursor-wait"><CalendarClock size={16} aria-hidden="true" />{pendingAction === 'schedule' ? '排期中' : '安排定时发布'}</Button>
-                    <p className="mt-3 text-xs leading-5 text-stone-500">到达发布时间后，系统会再次进行内容筛查；命中风险内容将转入人工复核。</p>
+                    <Button type="submit" disabled={pendingAction !== undefined || !selectedDraftId || !publishAt} className="mt-4 h-auto rounded-none bg-emerald-700 px-4 py-2.5 hover:bg-emerald-800 disabled:cursor-wait"><CalendarClock size={16} aria-hidden="true" />{pendingAction === 'schedule' ? '安排中' : '安排定时上线'}</Button>
+                    {!selectedDraftId ? <p className="mt-3 text-xs leading-5 text-stone-500">请先从章节列表或上方下拉框选择一篇草稿。</p> : !publishAt ? <p className="mt-3 text-xs leading-5 text-stone-500">请填写未来发布时间后再安排上线。</p> : null}
                   </form>
                 )}
               </div>

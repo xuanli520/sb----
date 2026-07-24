@@ -169,6 +169,54 @@ test('reader and administrator journeys render through real BFF accounts', async
   await expect(page.getByRole('textbox', { name: '敏感词 测试词条' })).toHaveValue('测试词条');
 });
 
+test('reader paginates long chapter copy and animates an in-chapter turn', async ({ page }) => {
+  const longChapter = Array.from({ length: 180 }, (_, index) => `第 ${index + 1} 段：海风穿过堤岸，远处的灯塔在雨幕中忽明忽暗。`).join('\n');
+  const readerBook = {
+    id: 77,
+    title: '分页测试集',
+    author: '阅界测试',
+    category: '幻想',
+    words: 48_000,
+    synopsis: '用于验证浏览器真实分页的长章节。',
+    status: 'PUBLISHED',
+    serialStatus: 'SERIALIZING',
+    cover: '/cover.png',
+    purchasePrice: 30,
+  };
+  const readerDetail = {
+    book: readerBook,
+    chapters: [{ id: 7701, title: '第一章 长页', content: longChapter, published: true, orderNo: 1 }],
+    comments: [],
+  };
+  const data = (value: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: value }) });
+
+  await page.route('**/api/novel/**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = `${url.pathname}${url.search}`;
+    if (path === '/api/novel/public/books/77') return route.fulfill(data(readerDetail));
+    if (path === '/api/novel/account/books/77/reading') return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ data: null, msg: 'login required' }) });
+    if (path === '/api/novel/account/preferences/reading') return route.fulfill(data({ theme: 'paper', font: 'serif', fontSize: 19, lineHeight: 190, brightness: 85, pageMode: 'slide' }));
+    if (path === '/api/novel/account/bookshelf/77') return route.fulfill(data({ saved: false }));
+    if (path === '/api/novel/account/books/77/bookmarks') return route.fulfill(data([]));
+    if (path === '/api/novel/account/books/77/progress') return route.fulfill(data(null));
+    if (path === '/api/novel/account/annotations?bookId=77&size=100') return route.fulfill(data({ items: [], meta: { total: 0, page: 0, size: 100 } }));
+    if (path === '/api/novel/account/wallet') return route.fulfill(data({ tokens: 0 }));
+    if (path === '/api/novel/account/entitlements') return route.fulfill(data({ membership: null, books: [] }));
+    if (path === '/api/novel/public/books/77/interactions') return route.fulfill(data({ visibleCommentCount: 0, ratingCount: 0, averageRating: 0, recommendationVoteCount: 0, monthlyVoteCount: 0 }));
+    if (path.startsWith('/api/novel/public/books/77/comments?')) return route.fulfill(data({ items: [], meta: { total: 0, page: 0, size: 20 } }));
+    if (path === '/api/novel/public/books/77/chapters/7701/annotations') return route.fulfill(data({ items: [], meta: { total: 0, page: 0, size: 20 } }));
+    return route.fulfill(data({}));
+  });
+
+  await page.goto('/reader/77');
+  await expect(page.getByRole('heading', { name: '第一章 长页' })).toBeVisible();
+  const pageTrack = page.locator('.reader-chapter-pages').first();
+  await expect.poll(() => pageTrack.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect.poll(() => pageTrack.evaluate((element) => element.scrollLeft > 0)).toBe(true);
+  await expect(page.getByTestId('reader-transition-layer')).toHaveAttribute('data-transition-effect', 'paired-slide');
+});
+
 test('the super administrator saves SMTP settings and receives a real verification delivery', async ({ page }, testInfo) => {
   const origin = new URL(String(testInfo.project.use.baseURL)).origin;
   const suffix = `${Date.now().toString(36)}-${testInfo.parallelIndex}-${testInfo.retry}`;

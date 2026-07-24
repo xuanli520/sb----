@@ -65,6 +65,33 @@ type ReaderApiOptions = {
   subscriptionHandler?: SubscriptionHandler;
 };
 
+let readerPageTrack: { pageCount: number; width: number; scrollTo: ReturnType<typeof vi.fn> } | undefined;
+
+function mockReaderPageTrack(pageCount: number, width = 360) {
+  const scrollTo = vi.fn(function scrollTo(this: HTMLElement, options: { left?: number }) {
+    this.scrollLeft = options.left ?? 0;
+  });
+  readerPageTrack = { pageCount, width, scrollTo };
+  Object.defineProperties(HTMLDivElement.prototype, {
+    clientWidth: {
+      configurable: true,
+      get() {
+        return this.classList.contains('reader-chapter-pages') ? readerPageTrack?.width ?? 0 : 0;
+      },
+    },
+    scrollWidth: {
+      configurable: true,
+      get() {
+        return this.classList.contains('reader-chapter-pages')
+          ? (readerPageTrack?.pageCount ?? 1) * (readerPageTrack?.width ?? 0)
+          : 0;
+      },
+    },
+    scrollTo: { configurable: true, value: scrollTo },
+  });
+  return scrollTo;
+}
+
 function response(data: unknown) {
   return {
     ok: true,
@@ -224,6 +251,7 @@ describe('reader page modes', () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    readerPageTrack = undefined;
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
     push.mockReset();
     refresh.mockReset();
@@ -250,6 +278,53 @@ describe('reader page modes', () => {
     expect(transition.getAttribute('data-transition-direction')).toBe('forward');
     expect(screen.getByTestId('reader-current-chapter').getAttribute('data-transition-effect')).toBe(effect);
     expect(screen.getByRole('status').textContent).toContain('已切换至第 2 章《灯塔来信》');
+  });
+
+  it.each([
+    ['slide', 'paired-slide'],
+    ['cover', 'cover-reveal'],
+    ['simulation', 'page-turn'],
+  ] as const)('turns an in-chapter page with the %s transition', async (mode, effect) => {
+    const scrollTo = mockReaderPageTrack(3);
+    await renderReader(mode);
+
+    expect(screen.getByTestId('reader-current-chapter').querySelector('.reader-chapter-pages')?.clientWidth).toBe(360);
+    expect(screen.getByTestId('reader-current-chapter').querySelector('.reader-chapter-pages')?.scrollWidth).toBe(1080);
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 1 / 3 页'));
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 2 / 3 页'));
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 360, behavior: 'auto' });
+    const transition = screen.getByTestId('reader-transition-layer');
+    expect(transition.getAttribute('data-transition-effect')).toBe(effect);
+    expect(transition.getAttribute('data-transition-direction')).toBe('forward');
+  });
+
+  it('moves backward across a chapter boundary to the previous chapter final page', async () => {
+    mockReaderPageTrack(3);
+    await renderReader('slide', { bookId: 7, chapterId: 102, offset: 0, updatedAt: '2026-07-20T00:01:00Z' }, '灯塔来信', {
+      protectedReading: detail,
+    });
+
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 1 / 3 页'));
+    fireEvent.click(screen.getByRole('button', { name: '上一章' }));
+
+    await screen.findByRole('heading', { name: '潮汐之前' });
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 3 / 3 页'));
+    expect(screen.getByTestId('reader-transition-layer').getAttribute('data-transition-direction')).toBe('backward');
+  });
+
+  it('keeps page navigation functional without visual animation under reduced motion', async () => {
+    mockMotionPreference(true);
+    mockReaderPageTrack(3);
+    await renderReader('simulation');
+
+    const surface = screen.getByTestId('reader-page-surface');
+    await waitFor(() => expect(surface.getAttribute('data-motion')).toBe('reduced'));
+    fireEvent.keyDown(surface, { key: 'ArrowRight' });
+
+    await waitFor(() => expect(screen.getByTestId('reader-current-chapter').textContent).toContain('第 2 / 3 页'));
+    expect(screen.queryByTestId('reader-transition-layer')).toBeNull();
   });
 
   it('persists the selected page mode and uses it for the next transition', async () => {

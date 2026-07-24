@@ -835,7 +835,7 @@
         "tags": ["Author workspace"],
         "operationId": "scheduleAuthorChapter",
         "summary": "Schedule a future chapter publication attempt",
-        "description": "The due attempt still follows the configured automatic screening path; scheduling does not bypass moderation.",
+        "description": "The due attempt still follows the configured automatic screening path. Scheduling a chapter for a DRAFT or REJECTED work also submits the parent work for full-work review; the due chapter remains scheduled until that work is approved, so scheduling never bypasses moderation.",
         "security": [{ "BffSession": [], "CsrfToken": [] }],
         "x-bff-csrf-required": true,
         "x-required-role": "AUTHOR",
@@ -1713,6 +1713,18 @@
         "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } }
       }
     },
+    "/api/v1/admin/home-carousel/books": {
+      "get": {
+        "tags": ["Media and carousel"],
+        "operationId": "getCarouselEligibleBooks",
+        "summary": "Page published books available for homepage-carousel selection",
+        "security": [{ "BffSession": [] }],
+        "x-required-role": "ADMIN",
+        "x-response-data-schema": "#/components/schemas/BookPresentationPage",
+        "parameters": [{ "$ref": "#/components/parameters/CarouselBookQuery" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/AdminPageSize" }],
+        "responses": { "200": { "$ref": "#/components/responses/Success" }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
     "/api/v1/admin/home-carousel/{slideId}": {
       "put": {
         "tags": ["Media and carousel"],
@@ -2025,6 +2037,7 @@
       "Version": { "name": "version", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
       "MediaAssetState": { "name": "state", "in": "query", "schema": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "PENDING_DELETE", "DELETED"] } },
       "CoverCandidateStatus": { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED", "SUPERSEDED"] } },
+      "CarouselBookQuery": { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 128 }, "description": "Matches published book ID, title, or author name." },
       "MediaQuery": { "name": "query", "in": "query", "schema": { "type": "string", "maxLength": 128 }, "description": "Case-insensitive label fragment or generated asset UUID prefix." },
       "MediaPageSize": { "name": "size", "in": "query", "schema": { "type": "integer", "default": 24, "minimum": 1, "maximum": 100 } },
       "AccountQuery": { "name": "query", "in": "query", "schema": { "type": "string" } },

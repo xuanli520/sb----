@@ -19,6 +19,7 @@ import { CommercialRulesPanel } from '@/components/novel/CommercialRulesPanel';
 import { EmailDeliverySettingsPanel } from '@/components/novel/EmailDeliverySettingsPanel';
 import { EditorialOperationsPanel } from '@/components/novel/EditorialOperationsPanel';
 import { HomeCarouselOperationsPanel } from '@/components/novel/HomeCarouselOperationsPanel';
+import { CoverCandidateReviewPanel } from '@/components/novel/CoverCandidateReviewPanel';
 import { AuthorApplication, AuthorApplicationPage, Book, BookPresentation, BookPresentationPage, BookStatusAuditPage, ChapterCandidate, ModerationReviewQueueItem, ModerationReviewQueuePage, ParagraphAnnotation, ParagraphAnnotationPage, PlatformRetentionReport, SensitiveWord, SensitiveWordAudit, SensitiveWordAuditPage, SensitiveWordPage, novelApi } from '@/features/novel/api';
 
 type Dashboard = { activeReaders: number; todayReads: number; publishedBooks: number; pendingReviews: number; auditLog: string[] };
@@ -53,6 +54,7 @@ export type AdminWorkspaceView =
   | 'all'
   | 'overview'
   | 'review-books'
+  | 'review-covers'
   | 'review-comments'
   | 'review-annotations'
   | 'content-books'
@@ -1232,6 +1234,7 @@ export function AdminWorkspacePage({ view = 'all' }: { view?: AdminWorkspaceView
       {visible('settings-email') ? <EmailDeliverySettingsPanel /> : null}
       {visible('operations-discovery') ? <EditorialOperationsPanel /> : null}
       {view === 'operations-home-carousel' ? <HomeCarouselOperationsPanel /> : null}
+      {view === 'review-covers' ? <CoverCandidateReviewPanel /> : null}
       {visible('accounts-users', 'content-catalog') ? <AdminOperationsPanels mode={view === 'content-catalog' ? 'catalog' : view === 'accounts-users' ? 'accounts' : 'all'} /> : null}
     </>
   );

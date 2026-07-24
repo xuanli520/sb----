@@ -4,6 +4,7 @@ import cn.edu.training.novel.domain.HomeCarouselSlide;
 import cn.edu.training.novel.domain.HomeCarouselSlideAudit;
 import cn.edu.training.novel.domain.Book;
 import cn.edu.training.novel.domain.BookPresentation;
+import cn.edu.training.novel.domain.BookPresentationPage;
 import cn.edu.training.novel.domain.BookCoverCandidateQueueItem;
 import cn.edu.training.novel.domain.BookCoverCandidateStatus;
 import cn.edu.training.novel.domain.CoverCandidatePage;
@@ -16,6 +17,7 @@ import cn.edu.training.novel.domain.MediaAssetState;
 import cn.edu.training.novel.domain.Role;
 import cn.edu.training.novel.service.CurrentUser;
 import cn.edu.training.novel.service.BookPresentationService;
+import cn.edu.training.novel.service.BookPageService;
 import cn.edu.training.novel.service.CoverObjectStorage;
 import cn.edu.training.novel.service.HomeCarouselService;
 import cn.edu.training.novel.service.MediaAssetService;
@@ -56,14 +58,27 @@ public class AdminHomeCarouselController implements UserResolver {
     private final HomeCarouselService carousel;
     private final MediaAssetService mediaAssets;
     private final BookPresentationService bookPresentations;
+    private final BookPageService bookPages;
 
     public AdminHomeCarouselController(
             HomeCarouselService carousel,
             MediaAssetService mediaAssets,
-            BookPresentationService bookPresentations) {
+            BookPresentationService bookPresentations,
+            BookPageService bookPages) {
         this.carousel = carousel;
         this.mediaAssets = mediaAssets;
         this.bookPresentations = bookPresentations;
+        this.bookPages = bookPages;
+    }
+
+    @GetMapping("/home-carousel/books")
+    ApiResponse<BookPresentationPage> carouselEligibleBooks(
+            HttpServletRequest request,
+            @RequestParam(required = false) @Size(max = 128) String q,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "12") @Min(1) @Max(BookPageService.MAX_PAGE_SIZE) int size) {
+        administrator(request);
+        return ApiResponse.ok(bookPages.carouselEligibleBooks(q, page, size));
     }
 
     @GetMapping("/home-carousel")

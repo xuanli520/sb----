@@ -189,6 +189,54 @@ class BookListPaginationIntegrationTest {
                 .andExpect(jsonPath("$.data.meta.size").value(1));
     }
 
+    @Test
+    void carouselBookPickerPagesAndSearchesOnlyPublishedBooksForAdministrators() throws Exception {
+        AuthService.AuthenticatedSession reader = authService.register(
+                "carousel-picker-reader@example.test", "轮播读者", PASSWORD);
+        AuthService.AuthenticatedSession administrator = authService.register(
+                "carousel-picker-admin@example.test", "轮播站长", PASSWORD);
+        authService.grantRole(administrator.user().id(), Role.ADMIN);
+
+        insertBook(4_001L, administrator.user().id(), BookStatus.PUBLISHED);
+        insertBook(4_002L, administrator.user().id(), BookStatus.PUBLISHED);
+        insertBook(4_003L, administrator.user().id(), BookStatus.DRAFT);
+        jdbc.update("UPDATE novel_book SET title = ?, author_name = ? WHERE id = ?", "星海远航", "林墨", 4_001L);
+        jdbc.update("UPDATE novel_book SET title = ?, author_name = ? WHERE id = ?", "雾港来信", "沈舟", 4_002L);
+        jdbc.update("UPDATE novel_book SET title = ?, author_name = ? WHERE id = ?", "隐藏星海", "林墨", 4_003L);
+
+        mvc.perform(get("/api/v1/admin/home-carousel/books")
+                        .param("q", "星海")
+                        .param("page", "0")
+                        .param("size", "1")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", administrator.bffSessionId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(4_001))
+                .andExpect(jsonPath("$.data.meta.total").value(1))
+                .andExpect(jsonPath("$.data.meta.page").value(0))
+                .andExpect(jsonPath("$.data.meta.size").value(1));
+
+        mvc.perform(get("/api/v1/admin/home-carousel/books")
+                        .param("q", "沈舟")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", administrator.bffSessionId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(4_002));
+
+        mvc.perform(get("/api/v1/admin/home-carousel/books")
+                        .param("q", "4001")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", administrator.bffSessionId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(4_001));
+
+        mvc.perform(get("/api/v1/admin/home-carousel/books")
+                        .header("X-Novel-Internal-Key", INTERNAL_KEY)
+                        .header("X-Novel-Bff-Session", reader.bffSessionId()))
+                .andExpect(status().isForbidden());
+    }
+
     private void insertBook(long id, long authorId, BookStatus status) {
         jdbc.update(
                 "INSERT INTO novel_book(id, title, author_name, category, word_count, serial_status, synopsis, cover, "
